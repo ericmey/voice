@@ -34,15 +34,33 @@ def setup_langsmith_tracing() -> None:
     Idempotent — safe to call multiple times. Subsequent calls return
     immediately without re-registering the tracer provider.
     """
+    # Diagnostic prints go straight to stderr so they bypass any
+    # logging-config ambiguity in the spawned job subprocess. Will
+    # remove once we've confirmed which branch fires in production.
+    import sys as _sys
+    _pid = os.getpid()
+    print(f"[TRACING-SETUP] pid={_pid} entered setup_langsmith_tracing", file=_sys.stderr, flush=True)
+
     global _initialized
     if _initialized:
+        print(f"[TRACING-SETUP] pid={_pid} already initialized, skipping", file=_sys.stderr, flush=True)
         return
 
-    if os.environ.get("LANGSMITH_TRACING", "").lower() not in ("true", "1", "yes"):
+    tracing_env = os.environ.get("LANGSMITH_TRACING", "")
+    if tracing_env.lower() not in ("true", "1", "yes"):
+        print(
+            f"[TRACING-SETUP] pid={_pid} LANGSMITH_TRACING={tracing_env!r} — disabled",
+            file=_sys.stderr, flush=True,
+        )
         return
 
     endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
     headers = os.environ.get("OTEL_EXPORTER_OTLP_HEADERS")
+    print(
+        f"[TRACING-SETUP] pid={_pid} endpoint={'SET' if endpoint else 'MISSING'} "
+        f"headers={'SET' if headers else 'MISSING'}",
+        file=_sys.stderr, flush=True,
+    )
     if not endpoint or not headers:
         logger.warning(
             "LANGSMITH_TRACING=true but OTEL_EXPORTER_OTLP_ENDPOINT or "
@@ -59,6 +77,10 @@ def setup_langsmith_tracing() -> None:
 
         from sdk.langsmith_processor import LangSmithSpanProcessor
     except ImportError as exc:
+        print(
+            f"[TRACING-SETUP] pid={_pid} ImportError: {exc} — disabled",
+            file=_sys.stderr, flush=True,
+        )
         logger.warning(
             "LANGSMITH_TRACING=true but tracing deps not installed (%s) — disabled. "
             "Install with: uv sync --extra tracing",
@@ -67,8 +89,14 @@ def setup_langsmith_tracing() -> None:
         return
 
     provider = TracerProvider()
-    provider.add_span_processor(LangSmithSpanProcessor())
+    processor = LangSmithSpanProcessor()
+    provider.add_span_processor(processor)
     set_tracer_provider(provider)
 
     _initialized = True
+    print(
+        f"[TRACING-SETUP] pid={_pid} ENABLED — provider={type(provider).__name__} "
+        f"processor={type(processor).__name__} downstream={type(processor.downstream).__name__}",
+        file=_sys.stderr, flush=True,
+    )
     logger.info("LangSmith tracing enabled (endpoint=%s)", endpoint)
