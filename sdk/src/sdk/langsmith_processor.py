@@ -88,6 +88,17 @@ class LangSmithSpanProcessor(SpanProcessor):
             span._attributes["conversation.id"] = conversation_id
             span._attributes["langsmith.parent_span_id"] = "conversation"
 
+        # LOCAL DELTA #3: universal metadata enrichment.
+        # Surface every LiveKit attribute LangSmith can render as
+        # `langsmith.metadata.*` (sidebar) or `langsmith.span.tags`
+        # (filterable). Specifically the latency metrics — `lk.response.ttft`,
+        # `lk.eou.endpointing_delay`, `lk.e2e_latency` — are how we answer
+        # "where is the dead air per turn." None of these get surfaced by
+        # upstream. This must run BEFORE the elif chain so the per-type
+        # branches don't preempt-set langsmith.span.kind without us picking
+        # up the latency values too.
+        self._enrich_universal_metadata(span)
+
         span_name = span.name.lower()
 
         # STT span: audio input -> transcribed text
@@ -240,7 +251,25 @@ class LangSmithSpanProcessor(SpanProcessor):
             tool_name = str(span.attributes.get("lk.function_tool.name", "unknown_tool"))
             tool_args = span.attributes.get("lk.function_tool.arguments", "")
             tool_output = span.attributes.get("lk.function_tool.output", "")
+            tool_call_id = str(span.attributes.get("lk.function_tool.id", ""))
             is_error = bool(span.attributes.get("lk.function_tool.is_error", False))
+
+            # OTel GenAI semantic-convention attributes — LangSmith reads
+            # these natively for tool-call grouping in the UI alongside
+            # our gen_ai.prompt/completion shape.
+            span._attributes["gen_ai.tool.name"] = tool_name
+            if tool_call_id:
+                span._attributes["gen_ai.tool.call.id"] = tool_call_id
+            span._attributes["gen_ai.operation.name"] = "execute_tool"
+
+            # Filterable metadata: tool_name as both metadata + tag so
+            # operators can slice traces by "show me every musubi_search call".
+            span._attributes["langsmith.metadata.tool_name"] = tool_name
+            existing_tags = span.attributes.get("langsmith.span.tags", "")
+            new_tags = f"tool:{tool_name}" + (",error" if is_error else "")
+            span._attributes["langsmith.span.tags"] = (
+                f"{existing_tags},{new_tags}" if existing_tags else new_tags
+            )
 
             # Render the tool call as a single-message exchange so the LangSmith
             # UI groups it as "called tool X with args Y, got Z".
@@ -316,6 +345,119 @@ class LangSmithSpanProcessor(SpanProcessor):
 
         # Export span downstream (unless it was deferred earlier)
         self._export_span(span)
+
+    # ---- LOCAL DELTA #3: universal LiveKit→LangSmith metadata mapping ----
+
+    # Mapping from LiveKit `lk.*` attribute names to LangSmith
+    # `langsmith.metadata.*` keys. Surfacing these in the sidebar is what
+    # turns LangSmith from "fancy log viewer" into "real diagnostic
+    # surface" — every per-stage latency lives in this map.
+    _LK_METADATA_MAP = {
+        # Identity / call routing
+        "lk.agent_name": "langsmith.metadata.agent",
+        "lk.room_name": "langsmith.metadata.room",
+        "lk.participant_identity": "langsmith.metadata.user_id",
+        "lk.participant_kind": "langsmith.metadata.participant_kind",
+        "lk.speech_id": "langsmith.metadata.speech_id",
+        "lk.generation_id": "langsmith.metadata.generation_id",
+        # Latency (the metrics that answer "where is the dead air")
+        "lk.response.ttft": "langsmith.metadata.ttft_ms",
+        "lk.response.ttfb": "langsmith.metadata.ttfb_ms",
+        "lk.e2e_latency": "langsmith.metadata.e2e_latency_ms",
+        "lk.eou.endpointing_delay": "langsmith.metadata.endpointing_delay_ms",
+        "lk.transcription_delay": "langsmith.metadata.transcription_delay_ms",
+        "lk.end_of_turn_delay": "langsmith.metadata.end_of_turn_delay_ms",
+        # Endpointing-decision detail (eou_detection span)
+        "lk.eou.probability": "langsmith.metadata.eou_probability",
+        "lk.eou.unlikely_threshold": "langsmith.metadata.eou_unlikely_threshold",
+        "lk.eou.language": "langsmith.metadata.eou_language",
+        "lk.transcript_confidence": "langsmith.metadata.transcript_confidence",
+        # Provider-side identity already on standard gen_ai.* attrs;
+        # mirror them as metadata so they show up even on spans where
+        # LangSmith's UI doesn't render the gen_ai shape directly.
+        "gen_ai.request.model": "langsmith.metadata.model",
+        "gen_ai.provider.name": "langsmith.metadata.provider",
+        "lk.tts.label": "langsmith.metadata.tts_label",
+        "lk.tts.streaming": "langsmith.metadata.tts_streaming",
+        # Speech tracking
+        "lk.interrupted": "langsmith.metadata.interrupted",
+        "lk.retry_count": "langsmith.metadata.retry_count",
+    }
+
+    # `lk.*` attributes carrying JSON metric blobs we parse + flatten.
+    # LiveKit emits these on the `realtime_metrics`, `tts_node`, and
+    # `llm_node` spans respectively — the JSON has the rich per-stage
+    # detail (audio token counts, durations, etc.) that we want to
+    # surface as flat metadata fields LangSmith can render.
+    _LK_METRICS_BLOBS = (
+        "lk.realtime_model_metrics",
+        "lk.tts_metrics",
+        "lk.llm_metrics",
+    )
+
+    def _enrich_universal_metadata(self, span: ReadableSpan) -> None:
+        """Run on every span before the per-type elif chain.
+
+        Maps every LiveKit attribute LangSmith can render to its
+        `langsmith.metadata.*` equivalent, parses JSON metric blobs into
+        flat metadata fields, and sets a `langsmith.span.tags` value
+        that operators can slice traces by ("show me every nyla call",
+        "show me every realtime turn over 1s ttft").
+
+        Idempotent — re-running on the same span just overwrites with
+        the same values.
+        """
+        attrs = span.attributes or {}
+
+        # 1. Direct lk.* → langsmith.metadata.* mapping
+        for src, dst in self._LK_METADATA_MAP.items():
+            value = attrs.get(src)
+            if value is None or value == "":
+                continue
+            span._attributes[dst] = str(value)
+
+        # 2. JSON metric blobs — parse + flatten top-level keys
+        import json as _json
+        for blob_key in self._LK_METRICS_BLOBS:
+            raw = attrs.get(blob_key)
+            if not raw:
+                continue
+            try:
+                parsed = _json.loads(raw) if isinstance(raw, str) else raw
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            # Flatten one level deep — every numeric / string field at
+            # top level of the metrics blob becomes its own metadata key.
+            blob_short = blob_key.removeprefix("lk.").removesuffix("_metrics")
+            for k, v in parsed.items():
+                if isinstance(v, (str, int, float, bool)):
+                    span._attributes[f"langsmith.metadata.{blob_short}.{k}"] = str(v)
+
+        # 3. Tags — agent name + span kind for filterable traces
+        existing_tags = attrs.get("langsmith.span.tags", "")
+        tag_parts: list[str] = []
+        if existing_tags:
+            tag_parts.append(str(existing_tags))
+        agent = attrs.get("lk.agent_name")
+        if agent:
+            tag_parts.append(f"agent:{agent}")
+        # Pipeline shape — "realtime" if a realtime model metric is
+        # present, "chained" if tts_metrics is present without it.
+        if attrs.get("lk.realtime_model_metrics"):
+            tag_parts.append("pipeline:realtime")
+        elif attrs.get("lk.tts_metrics") or attrs.get("lk.llm_metrics"):
+            tag_parts.append("pipeline:chained")
+        if tag_parts:
+            span._attributes["langsmith.span.tags"] = ",".join(tag_parts)
+
+        # 4. Session linking — `lk.job_id` is LiveKit's per-call
+        # identifier. Map it to `langsmith.trace.session_id` so all
+        # turns from one phone call group as a Thread in LangSmith UI.
+        job_id = attrs.get("lk.job_id")
+        if job_id:
+            span._attributes["langsmith.trace.session_id"] = str(job_id)
 
     def _set_prompt_attributes(self, span: ReadableSpan, messages: list, start_idx: int = 0, log: bool = False):
         """Set gen_ai.prompt.* attributes from a list of messages."""
