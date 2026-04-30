@@ -76,11 +76,12 @@ class BaseRealtimeAgent(
         self._caller_from: str | None = caller_from
 
     async def on_enter(self) -> None:
-        # Prefetch recent household context deterministically. The prompt
-        # used to ask the model to call musubi_recent first thing, but
-        # Gemini skips it often enough that Eric would get greetings with
-        # no awareness of what happened overnight. Fold a compact summary
-        # into the greeting instruction so it's guaranteed to be there.
+        # Prefetch recent context as background awareness — NOT as the
+        # spine of the greeting. Eric's feedback (2026-04-27): formulaic
+        # callbacks to recent rows make her feel calculated. Default is
+        # a natural, varied opener like a friend; recent context is only
+        # for noticing genuinely notable things (high-importance row, or
+        # call-frequency cue), not for deciding what to say.
         try:
             context = await self.fetch_recent_context(limit=10)
         except Exception as err:
@@ -94,15 +95,24 @@ class BaseRealtimeAgent(
         )
         has_context = context and not any(context.startswith(p) for p in degraded_prefixes)
 
+        base_instructions = (
+            "Open the call like a friend would, not an assistant. Be natural, "
+            "varied, sometimes playful, sometimes quick. A short 'oh hey Eric, "
+            "what's up?' is fine — so is a warm comment, a tease, or just 'hey.' "
+            "Vary your openers across calls; don't lock into one shape. Keep "
+            "it under two sentences."
+        )
+
         if has_context:
             instructions = (
-                "Greet Eric warmly and casually in one sentence. "
-                "Use the recent household context below only if something "
-                "there is worth picking up on — otherwise just say hi.\n\n"
-                f"Recent household context:\n{context}"
+                base_instructions + " The recent context below is for your awareness — only "
+                "mention something from it if it's genuinely notable (high "
+                "importance, or Eric has been calling a lot recently). Don't "
+                "lead with a recall as a formula.\n\n"
+                f"Recent context (background, not a script):\n{context}"
             )
         else:
-            instructions = "Greet Eric warmly and casually in one sentence."
+            instructions = base_instructions
 
         await self.session.generate_reply(instructions=instructions)
 

@@ -31,6 +31,7 @@ from sdk.config import AgentConfig
 from sdk.constants import NYLA_DISCORD_ROOM
 from sdk.env import load_env
 from sdk.postcall import wire_postcall_review
+from sdk.postcall_memory import wire_postcall_memory
 from sdk.telemetry import wire_telemetry_capture
 from sdk.telephony import resolve_caller
 from sdk.trace import trace
@@ -111,57 +112,15 @@ class PartyAgent(
         self._caller_from: str | None = caller_from
 
     async def on_enter(self) -> None:
-        # Prefetch recent household context deterministically — same
-        # reasoning as Nyla/Aoi: the prompt asks for musubi_recent first,
-        # but the model skips it often enough to be unreliable.
+        # Party uses the chained text-LLM pipeline (Gemini text + Whisper STT
+        # + ElevenLabs TTS). generate_reply() is not supported at session
+        # start without a preceding user turn, so the greeting has to be a
+        # fixed string via session.say().
         #
-        # NOTE: Party uses the chained text-LLM pipeline (Gemini text +
-        # Whisper STT + ElevenLabs TTS). generate_reply() is not supported
-        # at session start without a preceding user turn, so we build a
-        # greeting string and use session.say() instead.
-        try:
-            context = await self.fetch_recent_context(limit=10)
-        except Exception as err:
-            logger.warning("on_enter: startup context fetch failed: %s", err)
-            context = ""
-
-        callout = _greeting_callout(context)
-        if callout:
-            greeting = f"Hey Eric, good to hear from you — I was just thinking about {callout}."
-        else:
-            greeting = "Hey Eric, good to hear from you."
-
-        await self.session.say(greeting)
-
-
-# Length window for the "I was just thinking about ..." opener. Below
-# the floor reads as a fragment ("Got it, stored."); above the ceiling
-# reads like the agent is reading off a log line. The window's a
-# heuristic, not a guarantee — fetch_recent_context already filters
-# out operational rows by tag, this just guards against the ones that
-# don't quote naturally.
-_CALLOUT_MIN_LEN = 30
-_CALLOUT_MAX_LEN = 200
-
-
-def _greeting_callout(context: str) -> str | None:
-    """Pick a callout-worthy fragment from the formatted recent context,
-    or return ``None`` if nothing reads naturally as "I was just thinking
-    about X". Strips the ``[speaker]`` prefix added by ``_format_row``
-    and trims any trailing period so the outer template adds it cleanly."""
-    if not context:
-        return None
-    if context.startswith("Couldn't check memory") or context == "No recent memories found.":
-        return None
-    line = context.strip().splitlines()[0].strip()
-    if line.startswith("["):
-        end = line.find("]")
-        if end > 0:
-            line = line[end + 1 :].strip()
-    line = line.rstrip(".")
-    if not (_CALLOUT_MIN_LEN <= len(line) <= _CALLOUT_MAX_LEN):
-        return None
-    return line
+        # Per Eric's feedback (2026-04-27): no formulaic recall callbacks in
+        # the opener — they read as calculated. Keep this one short, warm,
+        # and open-ended; let the conversation establish the texture.
+        await self.session.say("Hey Eric, what's going on?")
 
 
 # --- server + session --------------------------------------------------
@@ -205,7 +164,12 @@ async def entrypoint(ctx: JobContext) -> None:
     extra_tools = [
         EndCallTool(
             delete_room=True,
-            end_instructions="Say a brief, warm goodbye to Eric.",
+            # end_instructions=None suppresses EndCallTool's redundant
+            # goodbye — the model already says its own goodbye when it
+            # decides to end the call. With the default value, the tool
+            # forces a SECOND goodbye line before hanging up, producing
+            # the "talked over itself" effect Eric noticed (2026-04-27).
+            end_instructions=None,
         ),
     ]
 
@@ -225,6 +189,14 @@ async def entrypoint(ctx: JobContext) -> None:
     wire_transcript_logging(session, transcript_sid)
     wire_telemetry_capture(session, transcript_sid, agent_name="phone-party")
     wire_postcall_review(session, transcript_sid, agent_name="phone-party")
+    wire_postcall_memory(
+        session,
+        call_sid=transcript_sid,
+        namespace=f"{PARTY_CONFIG.musubi_v2_namespace}/episodic"
+        if PARTY_CONFIG.musubi_v2_namespace
+        else None,
+        speaker_tag=PARTY_CONFIG.memory_agent_tag,
+    )
 
     trace("party: entrypoint complete, greeting delivered via on_enter")
 

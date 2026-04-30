@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import logging
 
-from _shared import AoiAgent, build_model, build_tools, load_env_once, load_persona
+from _shared import AOI_CONFIG, AoiAgent, build_model, build_tools, load_env_once, load_persona
 from livekit.agents import AgentSession, JobContext, cli
 from livekit.agents.worker import AgentServer
 from sdk.postcall import wire_postcall_review
+from sdk.postcall_memory import wire_postcall_memory
 from sdk.telemetry import wire_telemetry_capture
 from sdk.telephony import resolve_caller
 from sdk.trace import trace
@@ -60,6 +61,14 @@ async def entrypoint(ctx: JobContext) -> None:
     wire_transcript_logging(session, transcript_sid)
     wire_telemetry_capture(session, transcript_sid, agent_name="phone-aoi")
     wire_postcall_review(session, transcript_sid, agent_name="phone-aoi")
+    wire_postcall_memory(
+        session,
+        call_sid=transcript_sid,
+        namespace=f"{AOI_CONFIG.musubi_v2_namespace}/episodic"
+        if AOI_CONFIG.musubi_v2_namespace
+        else None,
+        speaker_tag=AOI_CONFIG.memory_agent_tag,
+    )
 
     trace(f"session started room={ctx.room.name}")
 

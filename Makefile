@@ -23,8 +23,15 @@ sync-venvs: ## Re-sync the root workspace venv (one .venv/ for sdk+tools+all age
 
 # ---- infrastructure ------------------------------------------------
 
-up: ## docker compose up -d (livekit-server + livekit-sip + redis)
+up: ## docker compose up -d + auto-register SIP routing (idempotent self-heal)
 	docker compose up -d
+	@printf "[up] waiting for redis + livekit-server... "
+	@for i in $$(seq 1 15); do \
+	  if docker exec openclaw-redis redis-cli ping >/dev/null 2>&1; then echo "ready"; break; fi; \
+	  sleep 1; \
+	done
+	@sleep 2
+	@scripts/register-sip-routing.sh
 
 down: ## docker compose down
 	docker compose down
