@@ -482,6 +482,87 @@ def test_function_tool_error_adds_error_tag() -> None:
     assert "error" in span._attributes["langsmith.span.tags"]
 
 
+def test_token_usage_propagates_for_cost_analysis() -> None:
+    """Token-usage attributes are how we attribute spend per call /
+    per agent / per turn. Both the OTel-standard `gen_ai.usage.*` and
+    the LiveKit-flavoured `lk.agents.usage.*` must surface as metadata
+    so cost queries work regardless of which version of LiveKit
+    emitted the span."""
+    processor = _make_processor()
+    span = _make_span(
+        "llm_node",
+        {
+            "gen_ai.usage.input_tokens": 1500,
+            "gen_ai.usage.output_tokens": 220,
+            "gen_ai.usage.input_audio_tokens": 800,
+            "gen_ai.usage.input_cached_tokens": 600,
+            "lk.agents.usage.tts_characters": 145,
+            "lk.agents.usage.stt_audio_duration": 4.2,
+        },
+    )
+
+    processor.on_end(span)
+
+    md = span._attributes
+    assert md["langsmith.metadata.usage.input_tokens"] == "1500"
+    assert md["langsmith.metadata.usage.output_tokens"] == "220"
+    assert md["langsmith.metadata.usage.input_audio_tokens"] == "800"
+    assert md["langsmith.metadata.usage.input_cached_tokens"] == "600"
+    assert md["langsmith.metadata.usage.tts_characters"] == "145"
+    assert md["langsmith.metadata.usage.stt_audio_duration_s"] == "4.2"
+
+
+def test_interruption_metadata_propagates() -> None:
+    """LiveKit emits a rich interruption block when the user talks over
+    the agent. These are the metrics that answer "why does Aoi keep
+    cutting me off" — surfacing them is required for that diagnosis."""
+    processor = _make_processor()
+    span = _make_span(
+        "agent_speaking",
+        {
+            "lk.is_interruption": True,
+            "lk.interruption.detection_delay": 0.34,
+            "lk.interruption.prediction_duration": 0.12,
+            "lk.interruption.probability": 0.91,
+            "lk.interruption.total_duration": 0.46,
+        },
+    )
+
+    processor.on_end(span)
+
+    md = span._attributes
+    assert md["langsmith.metadata.is_interruption"] == "True"
+    assert md["langsmith.metadata.interruption_detection_delay_ms"] == "0.34"
+    assert md["langsmith.metadata.interruption_probability"] == "0.91"
+
+
+def test_turn_latency_block_propagates() -> None:
+    """The newer `lk.agents.turn.*` latency attrs are emitted by current
+    LiveKit on the agent_session span and contain the full per-turn
+    latency breakdown. Must surface so the LangSmith sidebar is the
+    one place to answer "where did this turn spend its time"."""
+    processor = _make_processor()
+    span = _make_span(
+        "agent_session",
+        {
+            "lk.agents.turn.e2e_latency": 1.8,
+            "lk.agents.turn.llm_ttft": 0.42,
+            "lk.agents.turn.tts_ttfb": 0.18,
+            "lk.agents.turn.transcription_delay": 0.21,
+            "lk.agents.turn.on_user_turn_completed_delay": 0.05,
+            "lk.agents.connection.acquire_time": 0.003,
+        },
+    )
+
+    processor.on_end(span)
+
+    md = span._attributes
+    assert md["langsmith.metadata.turn_e2e_latency_ms"] == "1.8"
+    assert md["langsmith.metadata.turn_llm_ttft_ms"] == "0.42"
+    assert md["langsmith.metadata.turn_tts_ttfb_ms"] == "0.18"
+    assert md["langsmith.metadata.proc_acquire_time_ms"] == "0.003"
+
+
 def test_universal_metadata_skips_missing_attrs_silently() -> None:
     """Most spans only carry a subset of the LK attributes. The helper
     must not write empty / None metadata keys when a source is missing —

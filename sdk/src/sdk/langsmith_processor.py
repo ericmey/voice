@@ -416,36 +416,118 @@ class LangSmithSpanProcessor(SpanProcessor):
     # `langsmith.metadata.*` keys. Surfacing these in the sidebar is what
     # turns LangSmith from "fancy log viewer" into "real diagnostic
     # surface" — every per-stage latency lives in this map.
+    # Comprehensive map of every LiveKit / OTel-genai attribute that
+    # carries diagnostic value into LangSmith. The set was generated
+    # by grepping the installed ``livekit.*`` package for every
+    # ``set_attribute`` call — anything not here was deliberately
+    # excluded as too noisy (raw audio stream metadata, internal
+    # buffer flags) or already extracted via the per-span-type
+    # branches in ``on_end`` (chat_ctx, user_transcript, response.text).
     _LK_METADATA_MAP = {
-        # Identity / call routing
+        # ------------------------------------------------------------
+        # Identity / call routing — answer "whose call is this?"
+        # ------------------------------------------------------------
         "lk.agent_name": "langsmith.metadata.agent",
+        "lk.agent.name": "langsmith.metadata.agent",  # alt spelling in newer LK versions
+        "lk.agent_label": "langsmith.metadata.agent_label",
+        "lk.agent.state": "langsmith.metadata.agent_state",
         "lk.room_name": "langsmith.metadata.room",
         "lk.participant_identity": "langsmith.metadata.user_id",
+        "lk.participant_id": "langsmith.metadata.participant_id",
         "lk.participant_kind": "langsmith.metadata.participant_kind",
         "lk.speech_id": "langsmith.metadata.speech_id",
         "lk.generation_id": "langsmith.metadata.generation_id",
-        # Latency (the metrics that answer "where is the dead air")
+        "lk.parent_generation_id": "langsmith.metadata.parent_generation_id",
+        "lk.segment_id": "langsmith.metadata.segment_id",
+        "lk.simulator": "langsmith.metadata.simulator",
+        # ------------------------------------------------------------
+        # Per-turn latency — answer "where is the dead air?". Both
+        # the legacy short-name attrs and the newer `lk.agents.turn.*`
+        # attrs are mapped because LiveKit emits both depending on
+        # plugin version.
+        # ------------------------------------------------------------
         "lk.response.ttft": "langsmith.metadata.ttft_ms",
         "lk.response.ttfb": "langsmith.metadata.ttfb_ms",
         "lk.e2e_latency": "langsmith.metadata.e2e_latency_ms",
         "lk.eou.endpointing_delay": "langsmith.metadata.endpointing_delay_ms",
         "lk.transcription_delay": "langsmith.metadata.transcription_delay_ms",
         "lk.end_of_turn_delay": "langsmith.metadata.end_of_turn_delay_ms",
+        "lk.agents.turn.e2e_latency": "langsmith.metadata.turn_e2e_latency_ms",
+        "lk.agents.turn.end_of_turn_delay": "langsmith.metadata.turn_end_of_turn_delay_ms",
+        "lk.agents.turn.llm_ttft": "langsmith.metadata.turn_llm_ttft_ms",
+        "lk.agents.turn.tts_ttfb": "langsmith.metadata.turn_tts_ttfb_ms",
+        "lk.agents.turn.transcription_delay": "langsmith.metadata.turn_transcription_delay_ms",
+        "lk.agents.turn.on_user_turn_completed_delay": "langsmith.metadata.turn_on_user_turn_completed_delay_ms",
+        "lk.agents.connection.acquire_time": "langsmith.metadata.proc_acquire_time_ms",
+        # ------------------------------------------------------------
         # Endpointing-decision detail (eou_detection span)
+        # ------------------------------------------------------------
         "lk.eou.probability": "langsmith.metadata.eou_probability",
         "lk.eou.unlikely_threshold": "langsmith.metadata.eou_unlikely_threshold",
         "lk.eou.language": "langsmith.metadata.eou_language",
         "lk.transcript_confidence": "langsmith.metadata.transcript_confidence",
-        # Provider-side identity already on standard gen_ai.* attrs;
-        # mirror them as metadata so they show up even on spans where
-        # LangSmith's UI doesn't render the gen_ai shape directly.
+        "lk.transcription_final": "langsmith.metadata.transcription_final",
+        # ------------------------------------------------------------
+        # Token usage — for cost/throughput analysis. Mirror both
+        # the LiveKit-flavoured `lk.agents.usage.*` and the standard
+        # OTel-genai `gen_ai.usage.*` so filters work either way.
+        # ------------------------------------------------------------
+        "gen_ai.usage.input_tokens": "langsmith.metadata.usage.input_tokens",
+        "gen_ai.usage.output_tokens": "langsmith.metadata.usage.output_tokens",
+        "gen_ai.usage.input_text_tokens": "langsmith.metadata.usage.input_text_tokens",
+        "gen_ai.usage.output_text_tokens": "langsmith.metadata.usage.output_text_tokens",
+        "gen_ai.usage.input_audio_tokens": "langsmith.metadata.usage.input_audio_tokens",
+        "gen_ai.usage.output_audio_tokens": "langsmith.metadata.usage.output_audio_tokens",
+        "gen_ai.usage.input_cached_tokens": "langsmith.metadata.usage.input_cached_tokens",
+        "lk.agents.usage.llm_input_tokens": "langsmith.metadata.usage.llm_input_tokens",
+        "lk.agents.usage.llm_output_tokens": "langsmith.metadata.usage.llm_output_tokens",
+        "lk.agents.usage.llm_input_text_tokens": "langsmith.metadata.usage.llm_input_text_tokens",
+        "lk.agents.usage.llm_output_text_tokens": "langsmith.metadata.usage.llm_output_text_tokens",
+        "lk.agents.usage.llm_input_audio_tokens": "langsmith.metadata.usage.llm_input_audio_tokens",
+        "lk.agents.usage.llm_output_audio_tokens": "langsmith.metadata.usage.llm_output_audio_tokens",
+        "lk.agents.usage.llm_input_cached_tokens": "langsmith.metadata.usage.llm_input_cached_tokens",
+        "lk.agents.usage.llm_session_duration": "langsmith.metadata.usage.llm_session_duration_s",
+        "lk.agents.usage.stt_audio_duration": "langsmith.metadata.usage.stt_audio_duration_s",
+        "lk.agents.usage.tts_audio_duration": "langsmith.metadata.usage.tts_audio_duration_s",
+        "lk.agents.usage.tts_characters": "langsmith.metadata.usage.tts_characters",
+        "lk.agents.usage.interruption_num_requests": "langsmith.metadata.usage.interruption_num_requests",
+        # ------------------------------------------------------------
+        # Provider-side identity — mirror gen_ai.* as metadata so
+        # spans without native gen_ai rendering still expose them.
+        # ------------------------------------------------------------
         "gen_ai.request.model": "langsmith.metadata.model",
         "gen_ai.provider.name": "langsmith.metadata.provider",
+        "gen_ai.operation.name": "langsmith.metadata.operation",
         "lk.tts.label": "langsmith.metadata.tts_label",
         "lk.tts.streaming": "langsmith.metadata.tts_streaming",
-        # Speech tracking
+        # ------------------------------------------------------------
+        # Interruption detection — LiveKit emits a rich set of
+        # attrs when the agent's speech gets cut off. High value for
+        # diagnosing "Aoi keeps talking over me" complaints.
+        # ------------------------------------------------------------
         "lk.interrupted": "langsmith.metadata.interrupted",
+        "lk.is_interruption": "langsmith.metadata.is_interruption",
+        "lk.interruption.detection_delay": "langsmith.metadata.interruption_detection_delay_ms",
+        "lk.interruption.prediction_duration": "langsmith.metadata.interruption_prediction_duration_ms",
+        "lk.interruption.probability": "langsmith.metadata.interruption_probability",
+        "lk.interruption.total_duration": "langsmith.metadata.interruption_total_duration_ms",
+        # ------------------------------------------------------------
+        # Outbound-call answer-machine detection (AMD). Only set on
+        # outbound SIP scenarios — present-but-empty filter handles
+        # the inbound-only case.
+        # ------------------------------------------------------------
+        "lk.amd.category": "langsmith.metadata.amd_category",
+        "lk.amd.delay": "langsmith.metadata.amd_delay_ms",
+        "lk.amd.reason": "langsmith.metadata.amd_reason",
+        "lk.amd.speech_duration": "langsmith.metadata.amd_speech_duration_ms",
+        "lk.amd.transcript": "langsmith.metadata.amd_transcript",
+        # ------------------------------------------------------------
+        # Operational / outcome
+        # ------------------------------------------------------------
         "lk.retry_count": "langsmith.metadata.retry_count",
+        "lk.success": "langsmith.metadata.success",
+        "lk.fail": "langsmith.metadata.fail",
+        "lk.playback_finished": "langsmith.metadata.playback_finished",
     }
 
     # `lk.*` attributes carrying JSON metric blobs we parse + flatten.
