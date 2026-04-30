@@ -295,18 +295,17 @@ def test_universal_metadata_propagates_call_identity() -> None:
     assert span._attributes["langsmith.metadata.user_id"] == "+13179957066"
 
 
-def test_session_id_links_to_job_id_as_uuid() -> None:
-    """`langsmith.trace.session_id` makes the LangSmith Threads view
-    group all turns from one call. LiveKit's `lk.job_id` is the only
-    per-call identifier we have, but LangSmith requires the field to
-    be a valid UUID — raw `AJ_xyz123` is rejected with HTTP 422 and
-    the entire span batch is dropped (which we caught the hard way
-    after PR #15 silently broke ingest). Use a deterministic uuid5
-    so the value is a valid UUID *and* every turn in the same call
-    maps to the same UUID, preserving Thread grouping. The raw
-    job_id remains queryable as `langsmith.metadata.lk_job_id`."""
-    import uuid as _uuid
+def test_lk_job_id_surfaced_as_metadata() -> None:
+    """`lk.job_id` is the LiveKit per-call identifier. We expose it
+    as `langsmith.metadata.lk_job_id` so it's queryable in LangSmith
+    and joinable against agent / gateway logs that also key by job_id.
 
+    We deliberately do NOT set `langsmith.trace.session_id` from
+    job_id — that field is a foreign key into LangSmith's session
+    table; populating it with a value LangSmith hasn't created itself
+    returns HTTP 404 and drops the entire span batch on the floor.
+    Thread grouping happens via `langsmith.metadata.thread_id`
+    (the OTel trace_id) instead — see test below."""
     processor = _make_processor()
     span = _make_span(
         "agent_session",
@@ -315,45 +314,27 @@ def test_session_id_links_to_job_id_as_uuid() -> None:
 
     processor.on_end(span)
 
-    session_id = span._attributes["langsmith.trace.session_id"]
-    # Must be a valid UUID — _uuid.UUID raises if not.
-    parsed = _uuid.UUID(session_id)
-    expected = _uuid.uuid5(_uuid.NAMESPACE_URL, "livekit-job:AJ_xyz123")
-    assert parsed == expected, "session_id must be deterministic per job_id"
-    # Raw job_id still surfaced as queryable metadata.
     assert span._attributes["langsmith.metadata.lk_job_id"] == "AJ_xyz123"
+    # The trace.session_id field MUST NOT be set — see HTTP 404 above.
+    assert "langsmith.trace.session_id" not in span._attributes
 
 
-def test_session_id_uuid_is_stable_across_turns() -> None:
-    """Two spans from the same call (same lk.job_id) must produce the
-    same session_id UUID, otherwise Thread grouping in LangSmith UI
-    would split a single call across multiple Threads."""
+def test_thread_id_groups_spans_in_same_trace() -> None:
+    """Thread grouping in the LangSmith UI is driven by
+    `langsmith.metadata.thread_id`, set to the OTel trace_id. All
+    spans from one call share the same trace_id so they cluster as
+    one Thread automatically — no foreign-key gymnastics needed."""
     processor = _make_processor()
-    span_a = _make_span("user_turn", {"lk.job_id": "AJ_call1", "lk.user_transcript": "hi"})
+    span_a = _make_span("user_turn", {"lk.user_transcript": "hi"})
     span_b = _make_span("agent_session", {"lk.job_id": "AJ_call1"})
+    # Both spans share the default trace_id from _make_span (0xDEADBEEFCAFE).
 
     processor.on_end(span_a)
     processor.on_end(span_b)
 
     assert (
-        span_a._attributes["langsmith.trace.session_id"]
-        == span_b._attributes["langsmith.trace.session_id"]
-    )
-
-
-def test_session_id_uuid_differs_across_calls() -> None:
-    """Two different calls (different lk.job_id values) must produce
-    different session_id UUIDs so Threads stay separated."""
-    processor = _make_processor()
-    span_a = _make_span("agent_session", {"lk.job_id": "AJ_call1"})
-    span_b = _make_span("agent_session", {"lk.job_id": "AJ_call2"})
-
-    processor.on_end(span_a)
-    processor.on_end(span_b)
-
-    assert (
-        span_a._attributes["langsmith.trace.session_id"]
-        != span_b._attributes["langsmith.trace.session_id"]
+        span_a._attributes["langsmith.metadata.thread_id"]
+        == span_b._attributes["langsmith.metadata.thread_id"]
     )
 
 
