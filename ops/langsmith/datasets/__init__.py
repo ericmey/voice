@@ -36,4 +36,18 @@ DATASETS: list[DatasetConfig] = [
         ),
         "examples_module": "golden_recall",
     },
+    {
+        "name": "cross-modal-recall",
+        "description": (
+            "Cross-modal recall regression. Each example pairs a "
+            "saved_on surface (where the memory was originally saved) "
+            "with a different asked_on surface (where Eric is asking "
+            "now). Tests ADR 0032 (cross-modal default) end-to-end: "
+            "saving on Claude-Code-Aoi must be recallable on voice-Aoi "
+            "via the ``aoi/*/episodic`` wildcard, and likewise for Nyla. "
+            "Replay this dataset whenever ADR 0030 (agent-as-tenant "
+            "namespace model) or ADR 0032 (cross-modal default) changes."
+        ),
+        "examples_module": "cross_modal_recall",
+    },
 ]

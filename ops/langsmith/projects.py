@@ -122,42 +122,6 @@ FEEDBACK_CONFIGS: list[FeedbackConfig] = [
 
 
 # ---------------------------------------------------------------------------
-# Online evaluators — auto-run scoring on every new trace.
-#
-# These are NOT yet provisioned by code because LangSmith's online-eval
-# REST API isn't stable as of vendor-time. Documented here so the intent
-# survives until the API is stable / the SDK exposes it; configure in
-# the LangSmith dashboard for now and copy the JSON config into a
-# follow-up PR when ready to migrate to code.
-# ---------------------------------------------------------------------------
-
-ONLINE_EVAL_NOTES = """
-TODO once LangSmith online-eval API stabilises: provision these via code.
-
-1. SLOW_TURN_FLAG
-   Trigger: any user_turn span where langsmith.metadata.e2e_latency_ms > 5000
-   Action: tag trace with `slow-turn`, write to annotation queue `slow-turns`
-   Rationale: surfaces every "felt slow" call without manual searching
-
-2. ENDPOINTING_BLOCKER
-   Trigger: user_turn spans where langsmith.metadata.endpointing_delay_ms > 1500
-   Action: tag `endpointing-blocked`, route to annotation queue
-   Rationale: catches the silence_duration_ms regression Eric is tracking
-
-3. TOOL_ERROR_ALERT
-   Trigger: any function_tool span with tag `error`
-   Action: post Slack/Discord alert (configured in UI)
-   Rationale: real-time tool failure detection
-
-4. RECALL_ACCURACY_JUDGE (LLM-as-judge)
-   Trigger: any function_tool span where tool_name == 'musubi_search'
-   Judge: GPT-4o-mini compares tool result to agent's spoken response
-          and scores recall_accuracy 0-1
-   Cost: budget cap before enabling — every musubi_search adds ~$0.001
-"""
-
-
-# ---------------------------------------------------------------------------
 # Annotation queues — manual-review surfaces for traces that need eyes
 # ---------------------------------------------------------------------------
 
@@ -269,7 +233,7 @@ WORKSPACE_PROMPTS: list[WorkspacePrompt] = [
         "name": "recall-accuracy-judge",
         "source_path": "ops/langsmith/prompts/recall_accuracy_judge.md",
         "description": (
-            "LLM-as-judge prompt for the RECALL_ACCURACY_JUDGE online "
+            "LLM-as-judge prompt for the recall-accuracy-judge online "
             "evaluator. Scores 0.0–1.0 how accurately the agent's "
             "spoken response used a recall-tool's returned rows. "
             "Referenced by the recall-accuracy-judge evaluator via "
@@ -278,6 +242,20 @@ WORKSPACE_PROMPTS: list[WorkspacePrompt] = [
             "fills these from the function_tool span attributes."
         ),
         "tags": ["role:judge", "metric:recall_accuracy", "model-target:gpt-4o-mini"],
+    },
+    {
+        "name": "tool-choice-judge",
+        "source_path": "ops/langsmith/prompts/tool_choice_judge.md",
+        "description": (
+            "LLM-as-judge prompt for the tool-choice-judge online "
+            "evaluator. Scores 0.0–1.0 whether the agent called the "
+            "right tool (or none) for the user's question. Encodes "
+            "Nyla's and Aoi's tool inventories in the prompt itself so "
+            "the judge knows what was available to choose from. "
+            "Variable mapping: agent_name, user_question, tool_name, "
+            "tool_result, agent_response."
+        ),
+        "tags": ["role:judge", "metric:tool_choice", "model-target:gpt-4o-mini"],
     },
 ]
 
@@ -367,21 +345,155 @@ class LLMEvaluatorConfig(TypedDict):
     by reading these from each run."""
 
 
-EVALUATORS: list[LLMEvaluatorConfig] = [
+class CodeEvaluatorConfig(TypedDict):
+    name: str
+    """Display name in the LangSmith UI."""
+
+    type: str  # "code"
+
+    code: str
+    """Python source the LangSmith evaluator runtime executes per run.
+    The function is named ``perform_eval`` (LangSmith's required entry
+    point — name mismatch returns a 400 at provision time) and
+    receives a Run object with ``run.inputs``, ``run.outputs``,
+    ``run.extra``, ``run.tags``, ``run.name``. Must return a dict (or
+    list of dicts) with keys ``key``, ``score``, optionally ``value``
+    and ``comment``. Return ``None`` to skip scoring (e.g. metric
+    not present on this run)."""
+
+    description: str
+    """Operator-facing context — what this evaluator scores and why."""
+
+
+EvaluatorConfig = LLMEvaluatorConfig | CodeEvaluatorConfig
+
+
+# Span enrichment in sdk/src/sdk/langsmith_processor.py guarantees the
+# following metadata fields are present on every function_tool span:
+#   langsmith.metadata.user_question  ← latest user_turn transcript
+#   langsmith.metadata.tool_name      ← lk.function_tool.name
+#   langsmith.metadata.tool_result    ← lk.function_tool.output (string)
+#   langsmith.metadata.tool_error     ← "true" if lk.function_tool.is_error
+#   langsmith.metadata.agent          ← lk.agent_name
+#   langsmith.metadata.agent_response ← latest llm_node text in the same turn
+#                                       (released on next user_turn / job end)
+# Plus per-stage latency metadata on user_turn / agent_session spans:
+#   langsmith.metadata.e2e_latency_ms
+#   langsmith.metadata.endpointing_delay_ms
+#   langsmith.metadata.ttft_ms
+EVALUATORS: list[EvaluatorConfig] = [
     {
         "name": "recall-accuracy-judge",
         "type": "llm",
         "prompt_repo_handle": "recall-accuracy-judge",
         "commit_hash_or_tag": "latest",
         "variable_mapping": {
-            # The evaluator runtime extracts these from each function_tool
-            # run when the rule fires. Field paths follow LangSmith's run
-            # schema: ``inputs.<key>`` / ``outputs.<key>`` / ``extra.metadata.<key>``.
+            # All four come from the enriched function_tool span. Paths
+            # follow LangSmith's run schema: ``extra.metadata.<key>`` for
+            # span attributes prefixed ``langsmith.metadata.*``.
             "user_question": "extra.metadata.user_question",
             "tool_name": "extra.metadata.tool_name",
-            "tool_result": "outputs.output",
+            "tool_result": "extra.metadata.tool_result",
             "agent_response": "extra.metadata.agent_response",
         },
+    },
+    {
+        "name": "tool-choice-judge",
+        "type": "llm",
+        "prompt_repo_handle": "tool-choice-judge",
+        "commit_hash_or_tag": "latest",
+        "variable_mapping": {
+            # Same four as recall, plus agent_name so the judge knows
+            # which tool inventory to evaluate against (Nyla and Aoi
+            # have different tool sets).
+            "user_question": "extra.metadata.user_question",
+            "tool_name": "extra.metadata.tool_name",
+            "tool_result": "extra.metadata.tool_result",
+            "agent_response": "extra.metadata.agent_response",
+            "agent_name": "extra.metadata.agent",
+        },
+    },
+    # Code evaluators — rule-based scoring without an LLM call. Cheap;
+    # no per-run cost. Run on every span the rule targets in LangSmith.
+    {
+        "name": "slow-turn-flag",
+        "type": "code",
+        "description": (
+            "Flags any turn with end-to-end latency > 5s. Score 1.0 = "
+            "slow (bad), 0.0 = ok. Use to filter the slow-turns "
+            "annotation queue and to chart degradations over time."
+        ),
+        "code": '''def perform_eval(run):
+    """Score 1.0 if the turn took longer than 5s end-to-end."""
+    extra = getattr(run, "extra", None) or {}
+    md = extra.get("metadata", {}) if isinstance(extra, dict) else {}
+    raw = md.get("e2e_latency_ms")
+    if raw in (None, ""):
+        return None
+    try:
+        e2e_ms = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return {
+        "key": "slow_turn",
+        "score": 1.0 if e2e_ms > 5000 else 0.0,
+        "value": "slow" if e2e_ms > 5000 else "ok",
+        "comment": f"e2e_latency_ms={e2e_ms:.0f}",
+    }
+''',
+    },
+    {
+        "name": "endpointing-blocker",
+        "type": "code",
+        "description": (
+            "Flags turns where the EOU detector sat on the user's audio "
+            "longer than 1.5s before letting the LLM start. Score 1.0 = "
+            "blocked (bad), 0.0 = responsive. Catches the silence_duration_ms "
+            "regressions Eric is tracking on the realtime path."
+        ),
+        "code": '''def perform_eval(run):
+    """Score 1.0 if endpointing held the turn for more than 1.5s."""
+    extra = getattr(run, "extra", None) or {}
+    md = extra.get("metadata", {}) if isinstance(extra, dict) else {}
+    raw = md.get("endpointing_delay_ms")
+    if raw in (None, ""):
+        return None
+    try:
+        delay_ms = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return {
+        "key": "endpointing_blocked",
+        "score": 1.0 if delay_ms > 1500 else 0.0,
+        "value": "blocked" if delay_ms > 1500 else "ok",
+        "comment": f"endpointing_delay_ms={delay_ms:.0f}",
+    }
+''',
+    },
+    {
+        "name": "tool-error-flag",
+        "type": "code",
+        "description": (
+            "Flags every function_tool span that came back with "
+            "lk.function_tool.is_error=True. Score 1.0 = errored, "
+            "0.0 = ok. Pair with the tool-errors annotation queue for "
+            "real-time reliability tracking."
+        ),
+        "code": '''def perform_eval(run):
+    """Score 1.0 if this tool call returned an error."""
+    if getattr(run, "name", "") != "function_tool":
+        return None
+    extra = getattr(run, "extra", None) or {}
+    md = extra.get("metadata", {}) if isinstance(extra, dict) else {}
+    is_error = str(md.get("tool_error", "false")).lower() == "true"
+    tool_name = md.get("tool_name", "unknown")
+    return {
+        "key": "tool_error",
+        "score": 1.0 if is_error else 0.0,
+        "value": "error" if is_error else "ok",
+        "comment": f"tool={tool_name}",
+    }
+''',
     },
 ]
 

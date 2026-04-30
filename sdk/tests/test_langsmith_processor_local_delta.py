@@ -450,3 +450,250 @@ def test_universal_metadata_skips_missing_attrs_silently() -> None:
     assert "langsmith.metadata.ttft_ms" not in span._attributes
     # But the one that IS present must have been propagated.
     assert span._attributes["langsmith.metadata.eou_probability"] == "0.5"
+
+
+# ---------------------------------------------------------------------------
+# Evaluator-input enrichment
+#
+# The recall-accuracy-judge and tool-choice-judge LLM evaluators map
+# four/five inputs from each function_tool run: user_question, tool_name,
+# tool_result, agent_response (+ agent_name). The processor is the only
+# place these can be assembled because they span multiple LiveKit spans
+# in one turn. These tests pin the contract: every function_tool span
+# the processor exports MUST carry these fields, ready for the evaluator
+# runtime to pick them up at scoring time.
+# ---------------------------------------------------------------------------
+
+
+def _set_trace_id(span: MagicMock, trace_id: int) -> None:
+    """Override the default trace id so multi-span tests can simulate
+    spans from the same trace vs different traces."""
+    span.context.trace_id = trace_id
+
+
+def test_user_turn_captures_user_question_for_subsequent_function_tool() -> None:
+    """The latest user_turn transcript must be picked up by the next
+    function_tool span as `langsmith.metadata.user_question` — that's
+    the input the recall-accuracy-judge reads to know what the user
+    actually asked before the tool fired."""
+    processor = _make_processor()
+    trace_id = 0xAAAA1111
+
+    user_turn = _make_span(
+        "user_turn",
+        {"lk.user_transcript": "do you remember the prank we discussed?"},
+    )
+    _set_trace_id(user_turn, trace_id)
+    processor.on_end(user_turn)
+
+    tool_span = _make_span(
+        "function_tool",
+        {
+            "lk.function_tool.name": "musubi_search",
+            "lk.function_tool.arguments": '{"query": "prank"}',
+            "lk.function_tool.output": "Found cocoa-pods row",
+        },
+    )
+    _set_trace_id(tool_span, trace_id)
+    processor.on_end(tool_span)
+
+    assert (
+        tool_span._attributes["langsmith.metadata.user_question"]
+        == "do you remember the prank we discussed?"
+    )
+
+
+def test_function_tool_span_writes_tool_result_metadata() -> None:
+    """`langsmith.metadata.tool_result` must mirror the tool output so
+    the evaluator's variable_mapping can pull it from `extra.metadata`
+    rather than relying on `outputs.output` (which the run schema
+    populates from gen_ai.completion — fine, but a metadata mirror
+    is more robust)."""
+    processor = _make_processor()
+    span = _make_span(
+        "function_tool",
+        {
+            "lk.function_tool.name": "musubi_recent",
+            "lk.function_tool.arguments": "{}",
+            "lk.function_tool.output": "row1\nrow2\nrow3",
+        },
+    )
+
+    processor.on_end(span)
+
+    assert span._attributes["langsmith.metadata.tool_result"] == "row1\nrow2\nrow3"
+
+
+def test_function_tool_span_is_deferred_until_assistant_response_resolves() -> None:
+    """The function_tool span must NOT export immediately — it has to
+    wait for the next llm_node to capture agent_response. Otherwise
+    the evaluator gets a function_tool run with empty agent_response
+    every time."""
+    downstream = MagicMock()
+    processor = LangSmithSpanProcessor(downstream_processor=downstream)
+    trace_id = 0xBBBB2222
+
+    span = _make_span(
+        "function_tool",
+        {
+            "lk.function_tool.name": "musubi_search",
+            "lk.function_tool.arguments": "{}",
+            "lk.function_tool.output": "ok",
+        },
+    )
+    _set_trace_id(span, trace_id)
+    processor.on_end(span)
+
+    # downstream.on_end was NOT called for the function_tool span yet
+    end_calls = [c for c in downstream.on_end.call_args_list if c.args[0] is span]
+    assert end_calls == [], "function_tool span should be deferred, not exported"
+
+
+def test_llm_node_tracks_latest_assistant_response_for_release() -> None:
+    """The processor must remember the most recent llm_node text per
+    trace so it can backfill agent_response on deferred tool spans
+    when the turn ends."""
+    processor = _make_processor()
+    trace_id = 0xCCCC3333
+
+    span = _make_span(
+        "llm_node",
+        {
+            "lk.chat_ctx": '{"items": [{"type": "message", "role": "user", "content": "x"}]}',
+            "lk.response.text": "the schedule is X",
+        },
+    )
+    _set_trace_id(span, trace_id)
+    processor.on_end(span)
+
+    trace_id_hex = format(trace_id, "032x")
+    assert processor.latest_assistant_response[trace_id_hex] == "the schedule is X"
+
+
+def test_next_user_turn_releases_deferred_tool_with_agent_response() -> None:
+    """On the next user_turn START (signal that the previous turn
+    fully resolved), any deferred tool spans must be released with
+    the latest tracked LLM output as agent_response, then exported."""
+    downstream = MagicMock()
+    processor = LangSmithSpanProcessor(downstream_processor=downstream)
+    trace_id = 0xDDDD4444
+
+    # Turn 1: user_turn, function_tool (deferred), llm_node
+    user_turn_1 = _make_span("user_turn", {"lk.user_transcript": "what's my favorite band?"})
+    _set_trace_id(user_turn_1, trace_id)
+    processor.on_end(user_turn_1)
+
+    tool_span = _make_span(
+        "function_tool",
+        {
+            "lk.function_tool.name": "musubi_search",
+            "lk.function_tool.arguments": '{"query": "favorite band"}',
+            "lk.function_tool.output": "Gojira",
+        },
+    )
+    _set_trace_id(tool_span, trace_id)
+    processor.on_end(tool_span)
+
+    llm_span = _make_span(
+        "llm_node",
+        {"lk.chat_ctx": "{}", "lk.response.text": "Your favorite band is Gojira."},
+    )
+    _set_trace_id(llm_span, trace_id)
+    processor.on_end(llm_span)
+
+    # Turn 2 begins — this should trigger release of the deferred tool span
+    user_turn_2 = _make_span("user_turn", {"lk.user_transcript": "and my Tesla?"})
+    _set_trace_id(user_turn_2, trace_id)
+    processor.on_start(user_turn_2)
+
+    assert (
+        tool_span._attributes["langsmith.metadata.agent_response"]
+        == "Your favorite band is Gojira."
+    )
+    end_calls = [c for c in downstream.on_end.call_args_list if c.args[0] is tool_span]
+    assert len(end_calls) == 1, "deferred tool span should be exported exactly once"
+
+
+def test_job_span_end_flushes_deferred_tool_spans() -> None:
+    """If the call ends without a follow-up user_turn (final turn of
+    the call), the deferred tool spans must still get exported on job
+    cleanup — using whatever assistant_response we have, even if empty."""
+    downstream = MagicMock()
+    processor = LangSmithSpanProcessor(downstream_processor=downstream)
+    trace_id = 0xEEEE5555
+
+    user_turn = _make_span("user_turn", {"lk.user_transcript": "save this for me"})
+    _set_trace_id(user_turn, trace_id)
+    processor.on_end(user_turn)
+
+    tool_span = _make_span(
+        "function_tool",
+        {
+            "lk.function_tool.name": "musubi_remember",
+            "lk.function_tool.arguments": '{"content": "x"}',
+            "lk.function_tool.output": "saved",
+        },
+    )
+    _set_trace_id(tool_span, trace_id)
+    processor.on_end(tool_span)
+
+    llm_span = _make_span(
+        "llm_node",
+        {"lk.chat_ctx": "{}", "lk.response.text": "saved it for you"},
+    )
+    _set_trace_id(llm_span, trace_id)
+    processor.on_end(llm_span)
+
+    # Job span ends — no next user_turn ever fires
+    job_span = _make_span("job", {"lk.job_id": "AJ_x"})
+    _set_trace_id(job_span, trace_id)
+    job_span.parent = None
+    processor.on_end(job_span)
+
+    end_calls = [c for c in downstream.on_end.call_args_list if c.args[0] is tool_span]
+    assert len(end_calls) == 1, "deferred tool span should be flushed on job end"
+    assert tool_span._attributes["langsmith.metadata.agent_response"] == "saved it for you"
+
+
+def test_function_tool_error_path_writes_tool_error_metadata() -> None:
+    """The tool-error-flag code evaluator reads
+    `langsmith.metadata.tool_error == "true"` to score 1.0. The
+    processor must set this when `lk.function_tool.is_error` is
+    True — otherwise the eval can never score errors."""
+    processor = _make_processor()
+    span = _make_span(
+        "function_tool",
+        {
+            "lk.function_tool.name": "musubi_get",
+            "lk.function_tool.arguments": "{}",
+            "lk.function_tool.output": "not implemented",
+            "lk.function_tool.is_error": True,
+        },
+    )
+
+    processor.on_end(span)
+
+    assert span._attributes["langsmith.metadata.tool_error"] == "true"
+
+
+def test_user_question_does_not_leak_across_traces() -> None:
+    """user_question state is keyed by trace_id. A function_tool span
+    in trace B must NOT pick up user_question from trace A."""
+    processor = _make_processor()
+
+    user_turn_a = _make_span("user_turn", {"lk.user_transcript": "trace A question"})
+    _set_trace_id(user_turn_a, 0xAAAA)
+    processor.on_end(user_turn_a)
+
+    tool_b = _make_span(
+        "function_tool",
+        {
+            "lk.function_tool.name": "musubi_search",
+            "lk.function_tool.arguments": "{}",
+            "lk.function_tool.output": "result",
+        },
+    )
+    _set_trace_id(tool_b, 0xBBBB)  # different trace
+    processor.on_end(tool_b)
+
+    assert "langsmith.metadata.user_question" not in tool_b._attributes

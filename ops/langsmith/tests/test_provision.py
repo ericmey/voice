@@ -9,6 +9,7 @@ langsmith-plan`` you run before the apply.
 from __future__ import annotations
 
 import importlib
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -375,7 +376,8 @@ def test_llm_evaluators_reference_pushed_prompts() -> None:
     that was never pushed and fail at runtime when LangSmith tries to
     pull it. Catch the broken reference at test time."""
     pushed_names = {p["name"] for p in projects_mod.WORKSPACE_PROMPTS}
-    for ev in projects_mod.EVALUATORS:
+    for ev_typed in projects_mod.EVALUATORS:
+        ev: dict[str, Any] = dict(ev_typed)
         if ev["type"] != "llm":
             continue
         handle = ev["prompt_repo_handle"]
@@ -389,7 +391,8 @@ def test_evaluators_have_variable_mapping() -> None:
     """LLM evaluators without a variable_mapping have nothing to fill
     the prompt template variables with — they'd render with empty
     placeholders and the judge would score garbage."""
-    for ev in projects_mod.EVALUATORS:
+    for ev_typed in projects_mod.EVALUATORS:
+        ev: dict[str, Any] = dict(ev_typed)
         if ev["type"] == "llm":
             assert ev.get("variable_mapping"), f"evaluator {ev['name']!r} missing variable_mapping"
             for k, v in ev["variable_mapping"].items():
@@ -424,10 +427,12 @@ def test_evaluators_dry_run_does_not_post(monkeypatch) -> None:
 
 
 def test_evaluators_skip_when_unchanged(monkeypatch) -> None:
-    """Idempotency: if the existing evaluator already has the matching
-    prompt_repo_handle + variable_mapping, no PATCH or POST fires."""
+    """Idempotency: if every existing evaluator already matches our
+    declared config (prompt_repo_handle + variable_mapping for LLM,
+    code source for code-type), no PATCH or POST fires."""
     existing = []
-    for ev in projects_mod.EVALUATORS:
+    for ev_typed in projects_mod.EVALUATORS:
+        ev: dict[str, Any] = dict(ev_typed)
         if ev["type"] == "llm":
             existing.append(
                 {
@@ -438,6 +443,14 @@ def test_evaluators_skip_when_unchanged(monkeypatch) -> None:
                         "commit_hash_or_tag": ev["commit_hash_or_tag"],
                         "variable_mapping": ev["variable_mapping"],
                     },
+                }
+            )
+        elif ev["type"] == "code":
+            existing.append(
+                {
+                    "id": f"id-{ev['name']}",
+                    "name": ev["name"],
+                    "code_evaluator": {"code": ev["code"]},
                 }
             )
 
@@ -462,7 +475,85 @@ def test_evaluators_skip_when_unchanged(monkeypatch) -> None:
     )
 
     assert posts == [] and patches == []
-    assert counters.unchanged == len([e for e in projects_mod.EVALUATORS if e["type"] == "llm"])
+    assert counters.unchanged == len(projects_mod.EVALUATORS)
+
+
+def test_code_evaluators_have_required_fields() -> None:
+    """Every code-type evaluator must have a non-empty `code` source
+    string. LangSmith's API rejects code evaluators without code; catch
+    the bad config at test time rather than at provision time."""
+    for ev_typed in projects_mod.EVALUATORS:
+        ev: dict[str, Any] = dict(ev_typed)
+        if ev["type"] != "code":
+            continue
+        code_src: str = str(ev.get("code", ""))
+        assert code_src.strip(), f"code evaluator {ev['name']!r} has empty/missing `code` field"
+        # Sanity-check: the code defines a top-level `perform_eval`
+        # callable. LangSmith's API rejects code evaluators whose source
+        # doesn't define this entry point with HTTP 400 — see the live
+        # provision attempt that failed with "Function perform_eval not
+        # found in code" before this contract was discovered.
+        assert "def perform_eval" in code_src, (
+            f"code evaluator {ev['name']!r} must define a top-level "
+            "`perform_eval` function (LangSmith API requirement)"
+        )
+
+
+def test_code_evaluator_post_shape(monkeypatch) -> None:
+    """When creating a code evaluator the POST body must wrap the source
+    in `code_evaluator: {code: <src>}`, NOT the LLM-shape
+    `llm_evaluator: {...}`. LangSmith's API discriminates on which
+    wrapper is present, so getting this wrong = "evaluator created but
+    inert" — silent failure mode."""
+    fake_resp = MagicMock()
+    fake_resp.json.return_value = {"evaluators": []}
+    fake_resp.raise_for_status.return_value = None
+    posts: list[dict[str, Any]] = []
+
+    import requests
+
+    fake_post_resp = MagicMock()
+    fake_post_resp.raise_for_status.return_value = None
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        posts.append({"url": url, "json": json})
+        return fake_post_resp
+
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: fake_resp)
+    monkeypatch.setattr(requests, "post", _fake_post)
+
+    counters = provision.Counters()
+    provision.apply_evaluators(
+        client=MagicMock(),
+        config={"endpoint": "x", "api_key": "k", "workspace_id": "w"},
+        counters=counters,
+        dry_run=False,
+    )
+
+    code_ev_names = {dict(e)["name"] for e in projects_mod.EVALUATORS if dict(e)["type"] == "code"}
+    code_posts = [p for p in posts if p["json"]["name"] in code_ev_names]
+    assert code_posts, "no code evaluators were posted"
+    for p in code_posts:
+        body = p["json"]
+        assert body["type"] == "code"
+        assert "code_evaluator" in body and "code" in body["code_evaluator"]
+        assert body["code_evaluator"]["code"].strip(), "code source was empty"
+        assert "llm_evaluator" not in body, "code evaluator must not carry llm_evaluator section"
+
+
+def test_evaluator_body_section_helpers_round_trip() -> None:
+    """The helpers used by apply_evaluators must agree on shape: a body
+    section built from a config must compare equal under the matcher
+    when fed back as the 'current' state. Otherwise idempotency breaks
+    (every run thinks the remote state diverged)."""
+    for ev_typed in projects_mod.EVALUATORS:
+        ev: dict[str, Any] = dict(ev_typed)
+        body = provision._build_evaluator_body_section(ev, ev["type"])
+        # Simulate what the LangSmith API would return as `current`.
+        current_remote = {"name": ev["name"], "id": "x", **body}
+        assert provision._evaluator_matches(current_remote, ev, ev["type"]), (
+            f"matcher disagreed with builder for {ev['name']!r} ({ev['type']})"
+        )
 
 
 def test_workspace_secrets_dry_run_does_not_write(monkeypatch) -> None:

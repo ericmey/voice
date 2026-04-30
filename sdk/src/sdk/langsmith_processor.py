@@ -63,8 +63,33 @@ class LangSmithSpanProcessor(SpanProcessor):
         self.trace_to_conversation_id = {}  # trace_id -> conversation_id
         # Hold root/job spans until conversation data is ready
         self.deferred_job_spans = {}  # trace_id -> ReadableSpan
+        # Evaluator input enrichment state (recall-accuracy-judge etc.)
+        # Latest user transcript per trace, captured on user_turn end and
+        # written onto subsequent function_tool spans as user_question.
+        self.latest_user_question: dict[str, str] = {}
+        # Latest assistant response per trace, captured on every llm_node
+        # close. Multiple llm_nodes can fire in one turn (tool-call
+        # decision then post-tool reply); we want the LATEST text — the
+        # one the user actually heard — as agent_response.
+        self.latest_assistant_response: dict[str, str] = {}
+        # function_tool spans deferred until we're confident the
+        # assistant's spoken reply has fully resolved. Released on the
+        # NEXT user_turn start (signals current turn is over) or on
+        # job/session cleanup. Needed because the LLM-as-judge evaluator
+        # wants agent_response in the same run as the tool call so it can
+        # score whether the assistant actually used the tool result.
+        self.deferred_tool_spans: dict[str, list[ReadableSpan]] = {}
 
     def on_start(self, span: ReadableSpan, parent_context=None) -> None:
+        # If a new user_turn is starting and we have function_tool spans
+        # deferred from the previous turn, the agent's spoken reply for
+        # that turn is fully resolved — release with the latest tracked
+        # assistant response as agent_response.
+        if span.name and "user_turn" in span.name.lower():
+            trace_id = format(span.context.trace_id, "032x")
+            if trace_id in self.deferred_tool_spans:
+                agent_response = self.latest_assistant_response.get(trace_id, "")
+                self._release_deferred_tool_spans(trace_id, agent_response)
         if self.downstream:
             self.downstream.on_start(span, parent_context)
 
@@ -122,6 +147,12 @@ class LangSmithSpanProcessor(SpanProcessor):
                 completion = [{"role": "assistant", "content": str(output_data)}]
                 self._set_completion_attributes(span, completion)
                 self._track_messages(self.conversation_messages, trace_id, messages, str(output_data))
+                # Track the latest LLM output as the candidate
+                # agent_response. Multiple llm_node spans can fire per
+                # turn (tool-call decision, then post-tool reply); we
+                # want the last one. Deferred function_tool spans get
+                # released later on the next user_turn / job cleanup.
+                self.latest_assistant_response[trace_id] = str(output_data)
 
         # TTS span: text -> audio
         elif "tts" in span_name or "text_to_speech" in span_name or "synthesis" in span_name:
@@ -237,10 +268,19 @@ class LangSmithSpanProcessor(SpanProcessor):
             # Cleanup
             should_cleanup_trace = is_job_span or span.parent is None
             if should_cleanup_trace:
+                # Release any function_tool spans deferred this trace —
+                # use the latest tracked LLM output as agent_response.
+                # If empty, the evaluator just sees an empty reply.
+                pending_response = self.latest_assistant_response.get(trace_id, "")
+                self._release_deferred_tool_spans(trace_id, pending_response)
                 if trace_id in self.conversation_messages:
                     del self.conversation_messages[trace_id]
                 if trace_id in self.trace_to_conversation_id:
                     del self.trace_to_conversation_id[trace_id]
+                if trace_id in self.latest_user_question:
+                    del self.latest_user_question[trace_id]
+                if trace_id in self.latest_assistant_response:
+                    del self.latest_assistant_response[trace_id]
 
         # LOCAL DELTA #1: function_tool span — LiveKit emits one per tool
         # invocation with lk.function_tool.{id,name,arguments,output,is_error}
@@ -271,6 +311,17 @@ class LangSmithSpanProcessor(SpanProcessor):
                 f"{existing_tags},{new_tags}" if existing_tags else new_tags
             )
 
+            # Evaluator-input enrichment for the recall-accuracy-judge:
+            # write the latest user_question + flattened tool_result so
+            # the judge has every input it needs (agent_response gets
+            # filled in below when the next llm_node closes).
+            user_question = self.latest_user_question.get(trace_id, "")
+            if user_question:
+                span._attributes["langsmith.metadata.user_question"] = user_question
+            span._attributes["langsmith.metadata.tool_result"] = str(tool_output)
+            if is_error:
+                span._attributes["langsmith.metadata.tool_error"] = "true"
+
             # Render the tool call as a single-message exchange so the LangSmith
             # UI groups it as "called tool X with args Y, got Z".
             self._set_prompt_attributes(
@@ -293,6 +344,13 @@ class LangSmithSpanProcessor(SpanProcessor):
                 f"{tool_name} → {completion_content}",
             )
 
+            # Defer export until the next llm_node closes — we need its
+            # output as agent_response for the recall-accuracy-judge.
+            # Released by _release_deferred_tool_spans below; flushed on
+            # job-span close / shutdown if no llm_node ever fires.
+            self._defer_tool_span(trace_id, span)
+            return
+
         # LOCAL DELTA #2: user_turn span — LiveKit emits one per user
         # speech turn with lk.user_transcript holding the STT output.
         # Upstream's "stt" branch matches by name and checks `transcript`/`text`
@@ -305,6 +363,11 @@ class LangSmithSpanProcessor(SpanProcessor):
             confidence = span.attributes.get("lk.transcript_confidence", "")
 
             if transcript:
+                # Capture as the latest user question so the next
+                # function_tool span can be enriched with it for the
+                # recall-accuracy-judge evaluator.
+                self.latest_user_question[trace_id] = transcript
+
                 # Surface the transcript as the user-turn's prompt so it
                 # shows up in the LangSmith UI alongside the agent response.
                 self._set_prompt_attributes(
@@ -811,15 +874,47 @@ class LangSmithSpanProcessor(SpanProcessor):
                 target_dict[key].append({"role": "assistant", "content": output_data})
 
     def shutdown(self) -> None:
+        self._flush_all_deferred_tool_spans()
         self._flush_deferred_job_spans()
         if self.downstream:
             self.downstream.shutdown()
 
     def force_flush(self, timeout_millis: int = 30000) -> bool:
+        self._flush_all_deferred_tool_spans()
         self._flush_deferred_job_spans()
         if self.downstream:
             return self.downstream.force_flush(timeout_millis)
         return True
+
+    def _defer_tool_span(self, trace_id: str, span: ReadableSpan) -> None:
+        import sys
+        self.deferred_tool_spans.setdefault(trace_id, []).append(span)
+        print(
+            f"⏸️  Deferring function_tool span for trace {trace_id} (awaiting agent_response)",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    def _release_deferred_tool_spans(self, trace_id: str, agent_response: str) -> None:
+        spans = self.deferred_tool_spans.pop(trace_id, [])
+        if not spans:
+            return
+        import sys
+        print(
+            f"🧩 Releasing {len(spans)} deferred function_tool span(s) for trace {trace_id} with agent_response",
+            file=sys.stderr,
+            flush=True,
+        )
+        for tool_span in spans:
+            tool_span._attributes["langsmith.metadata.agent_response"] = agent_response
+            self._export_span(tool_span)
+
+    def _flush_all_deferred_tool_spans(self) -> None:
+        if not self.deferred_tool_spans:
+            return
+        for trace_id in list(self.deferred_tool_spans.keys()):
+            agent_response = self.latest_assistant_response.get(trace_id, "")
+            self._release_deferred_tool_spans(trace_id, agent_response)
 
     def _defer_job_span(self, trace_id: str, span: ReadableSpan):
         import sys

@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import sys
+from collections.abc import Mapping
 from typing import Any
 
 # Imports work whether you run `python -m ops.langsmith.provision` or
@@ -514,54 +515,42 @@ def apply_evaluators(
 
     for ev in _projects_mod.EVALUATORS:
         name = ev["name"]
+        ev_type = ev.get("type", "llm")
+        body_section = _build_evaluator_body_section(ev, ev_type)
+
         if name in existing:
             current = existing[name]
-            current_llm = current.get("llm_evaluator") or {}
-            mapping_match = current_llm.get("variable_mapping") == ev["variable_mapping"]
-            handle_match = current_llm.get("prompt_repo_handle") == ev["prompt_repo_handle"]
-            if mapping_match and handle_match:
+            if _evaluator_matches(current, ev, ev_type):
                 print(f"{UNCHANGED} evaluator {name!r} already at current config")
                 counters.unchanged += 1
                 continue
 
             if dry_run:
-                print(f"{DRY} would PATCH evaluator {name!r} (handle/mapping diff)")
+                print(f"{DRY} would PATCH evaluator {name!r} ({ev_type})")
                 counters.would_change += 1
                 continue
 
             patch_url = f"{endpoint}/v1/platform/evaluators/{current['id']}"
-            patch_body = {
-                "llm_evaluator": {
-                    "prompt_repo_handle": ev["prompt_repo_handle"],
-                    "commit_hash_or_tag": ev["commit_hash_or_tag"],
-                    "variable_mapping": ev["variable_mapping"],
-                },
-            }
             try:
-                resp = requests.patch(patch_url, headers=headers, json=patch_body, timeout=15)
+                resp = requests.patch(patch_url, headers=headers, json=body_section, timeout=15)
                 resp.raise_for_status()
                 print(f"{UPDATED} evaluator {name!r} updated")
                 counters.updated += 1
             except Exception as exc:
                 print(f"{ERROR} PATCH evaluator {name!r} failed: {exc}")
+                response = getattr(exc, "response", None)
+                if response is not None:
+                    print(f"    body: {response.text[:300]}")
                 counters.errored += 1
             continue
 
         # Not present — CREATE
         if dry_run:
-            print(f"{DRY} would CREATE evaluator {name!r}")
+            print(f"{DRY} would CREATE evaluator {name!r} ({ev_type})")
             counters.would_change += 1
             continue
 
-        create_body = {
-            "name": name,
-            "type": ev["type"],
-            "llm_evaluator": {
-                "prompt_repo_handle": ev["prompt_repo_handle"],
-                "commit_hash_or_tag": ev["commit_hash_or_tag"],
-                "variable_mapping": ev["variable_mapping"],
-            },
-        }
+        create_body = {"name": name, "type": ev_type, **body_section}
         try:
             resp = requests.post(list_url, headers=headers, json=create_body, timeout=15)
             resp.raise_for_status()
@@ -569,9 +558,44 @@ def apply_evaluators(
             counters.created += 1
         except Exception as exc:
             print(f"{ERROR} POST evaluator {name!r} failed: {exc}")
-            if hasattr(exc, "response") and exc.response is not None:
-                print(f"    body: {exc.response.text[:300]}")
+            response = getattr(exc, "response", None)
+            if response is not None:
+                print(f"    body: {response.text[:300]}")
             counters.errored += 1
+
+
+def _build_evaluator_body_section(ev: Mapping[str, Any], ev_type: str) -> dict[str, Any]:
+    """Build the type-specific body subsection for an evaluator
+    create/patch payload. LangSmith's API uses one of two nested keys:
+      ``llm_evaluator`` for type=llm
+      ``code_evaluator`` for type=code
+
+    Typed as ``Mapping[str, Any]`` rather than the ``EvaluatorConfig``
+    union because pyright doesn't narrow TypedDict union members on
+    ``ev["type"]`` checks. Callers pass either variant safely.
+    """
+    if ev_type == "code":
+        return {"code_evaluator": {"code": ev["code"]}}
+    return {
+        "llm_evaluator": {
+            "prompt_repo_handle": ev["prompt_repo_handle"],
+            "commit_hash_or_tag": ev["commit_hash_or_tag"],
+            "variable_mapping": ev["variable_mapping"],
+        },
+    }
+
+
+def _evaluator_matches(current: Mapping[str, Any], ev: Mapping[str, Any], ev_type: str) -> bool:
+    """Compare a remote evaluator's current state to the desired config.
+    Used to decide whether to skip (unchanged) or PATCH."""
+    if ev_type == "code":
+        current_code = (current.get("code_evaluator") or {}).get("code")
+        return current_code == ev["code"]
+    current_llm = current.get("llm_evaluator") or {}
+    return (
+        current_llm.get("prompt_repo_handle") == ev["prompt_repo_handle"]
+        and current_llm.get("variable_mapping") == ev["variable_mapping"]
+    )
 
 
 # ---------------------------------------------------------------------------
