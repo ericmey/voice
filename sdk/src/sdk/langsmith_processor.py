@@ -1,16 +1,29 @@
 """
 LangSmith span processor for LiveKit Agents.
 
-Vendored verbatim from the LangSmith voice-agents-tracing demo repo:
+Vendored from the LangSmith voice-agents-tracing demo repo:
 https://github.com/langchain-ai/voice-agents-tracing/blob/main/livekit/langsmith_processor.py
 
 Enriches OpenTelemetry spans from LiveKit Agents with LangSmith-compatible
 attributes for proper conversation tracking and visualization.
 
-NOTE: This file is intentionally kept verbatim from upstream so we can
-re-sync if LangSmith updates the processor. The aggressive ``print(..., file=sys.stderr)``
-calls are upstream's design — they emit diagnostic chatter to stderr on
-every span. Acceptable for first iteration; quiet later if needed.
+LOCAL DELTA from upstream (search for "LOCAL DELTA" markers):
+  1. ``function_tool`` span branch — extracts ``lk.function_tool.{name,arguments,output,is_error}``
+     so tool calls render in LangSmith. Upstream's elif chain misses
+     this span name and falls through to a content-less "chain".
+  2. ``user_turn`` span branch — extracts ``lk.user_transcript`` so
+     the user's speech-to-text transcription renders. Upstream's "stt"
+     branch checks ``transcript`` / ``text`` / ``output`` attributes
+     but LiveKit's user_turn span uses ``lk.user_transcript`` and a
+     name that doesn't match upstream's ``stt`` heuristic.
+
+Re-syncing from upstream: re-apply the two LOCAL DELTA blocks against
+the new file. Upstream is largely dormant (single "rename" commit
+since vendor) so churn risk is low.
+
+The aggressive ``print(..., file=sys.stderr)`` calls are upstream's
+design — they emit diagnostic chatter to stderr on every span.
+Acceptable for first iteration; quiet later if needed.
 """
 # ruff: noqa: T201, E501
 
@@ -217,6 +230,75 @@ class LangSmithSpanProcessor(SpanProcessor):
                     del self.conversation_messages[trace_id]
                 if trace_id in self.trace_to_conversation_id:
                     del self.trace_to_conversation_id[trace_id]
+
+        # LOCAL DELTA #1: function_tool span — LiveKit emits one per tool
+        # invocation with lk.function_tool.{id,name,arguments,output,is_error}
+        # attributes. Upstream's elif chain misses this span name; without
+        # this branch tool calls show up as empty "chain" spans.
+        elif span_name == "function_tool" or "function_tool" in span_name:
+            span._attributes["langsmith.span.kind"] = "tool"
+            tool_name = str(span.attributes.get("lk.function_tool.name", "unknown_tool"))
+            tool_args = span.attributes.get("lk.function_tool.arguments", "")
+            tool_output = span.attributes.get("lk.function_tool.output", "")
+            is_error = bool(span.attributes.get("lk.function_tool.is_error", False))
+
+            # Render the tool call as a single-message exchange so the LangSmith
+            # UI groups it as "called tool X with args Y, got Z".
+            self._set_prompt_attributes(
+                span,
+                [{"role": "user", "content": f"call {tool_name}({tool_args})"}],
+            )
+            completion_role = "tool"
+            completion_content = f"[error] {tool_output}" if is_error else str(tool_output)
+            self._set_completion_attributes(
+                span,
+                [{"role": completion_role, "content": completion_content}],
+            )
+
+            # Track this tool call as an assistant turn in the conversation
+            # aggregation so the conversation/job span shows the tool was used.
+            self._track_messages(
+                self.conversation_messages,
+                trace_id,
+                [{"role": "user", "content": f"called {tool_name}"}],
+                f"{tool_name} → {completion_content}",
+            )
+
+        # LOCAL DELTA #2: user_turn span — LiveKit emits one per user
+        # speech turn with lk.user_transcript holding the STT output.
+        # Upstream's "stt" branch matches by name and checks `transcript`/`text`
+        # but LiveKit uses `lk.user_transcript` here — different attribute name
+        # AND the span is called `user_turn` not `stt`. Without this branch
+        # we lose the user's actual words from every turn span.
+        elif span_name == "user_turn" or "user_turn" in span_name:
+            span._attributes["langsmith.span.kind"] = "chain"
+            transcript = str(span.attributes.get("lk.user_transcript", "")) or ""
+            confidence = span.attributes.get("lk.transcript_confidence", "")
+
+            if transcript:
+                # Surface the transcript as the user-turn's prompt so it
+                # shows up in the LangSmith UI alongside the agent response.
+                self._set_prompt_attributes(
+                    span,
+                    [{"role": "user", "content": transcript}],
+                )
+                self._set_completion_attributes(
+                    span,
+                    [{"role": "user", "content": transcript}],
+                )
+                # Push into the conversation aggregator so the parent
+                # session span renders the user's actual words, not "Turn N".
+                self._track_messages(
+                    self.conversation_messages,
+                    trace_id,
+                    [{"role": "user", "content": transcript}],
+                    "",
+                )
+
+                # Add confidence as a metadata attribute the LangSmith UI
+                # can surface in the span sidebar.
+                if confidence:
+                    span._attributes["langsmith.metadata.transcript_confidence"] = str(confidence)
 
         # Default: mark as chain if no specific type detected
         else:
