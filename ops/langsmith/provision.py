@@ -18,7 +18,13 @@ What gets applied (in order):
    if already present with matching shape.
 3. **Annotation queues** — one per ``ANNOTATION_QUEUES`` entry. Skips
    if name already exists.
-4. **Datasets** — created and populated from
+4. **Workspace secrets** — provider API keys (OpenAI, Gemini, xAI,
+   OpenRouter) sourced from ``~/.openclaw/.env`` and POSTed to
+   ``/api/v1/workspaces/current/secrets``. These power online
+   LLM-as-judge evaluators. Already-present keys are not re-uploaded
+   (avoids silent value rotation). Override source via
+   ``OPENCLAW_ENV_PATH`` env var.
+5. **Datasets** — created and populated from
    ``ops/langsmith/datasets/<name>.py::EXAMPLES``.
 
 Each phase prints a per-resource status: ``[+] created``, ``[~] updated``,
@@ -216,7 +222,127 @@ def apply_annotation_queues(
 
 
 # ---------------------------------------------------------------------------
-# Phase 4: datasets
+# Phase 4: workspace secrets — provider API keys for online evaluators
+# ---------------------------------------------------------------------------
+
+
+def _load_openclaw_secrets() -> dict[str, str]:
+    """Source the operator's ~/.openclaw/.env (or ``OPENCLAW_ENV_PATH`` override)
+    via bash so quoted values + multiline continuations behave like normal
+    shell sourcing. Same trick as client.py uses for our own provisioning env.
+
+    Only ``LANGSMITH_*``-irrelevant keys are returned — the caller picks
+    which ones to forward to the LangSmith workspace per ``WORKSPACE_SECRETS``.
+    """
+    import os
+    import shlex
+    import subprocess
+    from pathlib import Path
+
+    src = os.environ.get("OPENCLAW_ENV_PATH") or str(Path.home() / ".openclaw" / ".env")
+    src_path = Path(src)
+    if not src_path.exists():
+        raise FileNotFoundError(
+            f"openclaw env file not found: {src} — set OPENCLAW_ENV_PATH "
+            "to override, or skip the secrets phase: `make langsmith-provision "
+            "--phase=feedback` etc."
+        )
+
+    cmd = f"set -a; source {shlex.quote(str(src_path))}; set +a; env"
+    proc = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, check=True)
+    out: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        key, _, value = line.partition("=")
+        out[key] = value
+    return out
+
+
+def apply_workspace_secrets(
+    client: Any, config: dict[str, str], counters: Counters, *, dry_run: bool
+) -> None:
+    """Forward provider API keys from the operator's ~/.openclaw/.env into
+    the LangSmith workspace via POST /api/v1/workspaces/current/secrets.
+
+    Idempotency: GET current secrets first (LangSmith returns keys without
+    values for security). For each configured key, if it's already present,
+    mark unchanged. Otherwise POST upsert. Source values that are missing
+    in the env file are skipped with a warning — operator may have rotated
+    a key out without updating the IaC list.
+    """
+    print("\n=== phase 4: workspace secrets (provider API keys) ===")
+
+    # Source values from ~/.openclaw/.env
+    try:
+        source_env = _load_openclaw_secrets()
+    except FileNotFoundError as exc:
+        print(f"{ERROR} {exc}")
+        counters.errored += 1
+        return
+
+    # Current state in LangSmith — endpoint returns key list, no values.
+    endpoint = config["endpoint"]
+    api_key = config["api_key"]
+    workspace_id = config["workspace_id"]
+
+    import requests
+
+    headers = {
+        "x-api-key": api_key,
+        "X-Tenant-Id": workspace_id,
+        "Content-Type": "application/json",
+    }
+    secrets_url = f"{endpoint}/api/v1/workspaces/current/secrets"
+
+    try:
+        resp = requests.get(secrets_url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        existing_keys = {entry["key"] for entry in resp.json()}
+    except Exception as exc:
+        print(f"{ERROR} GET workspace secrets failed: {exc}")
+        counters.errored += 1
+        return
+
+    # Build payload — skip keys missing from source env
+    upserts: list[dict] = []
+    for spec in _projects_mod.WORKSPACE_SECRETS:
+        key = spec["key"]
+        value = source_env.get(key, "")
+        if not value:
+            print(f"{SKIPPED} {key!r} not present in source env — skipped")
+            counters.skipped += 1
+            continue
+
+        if key in existing_keys:
+            # Already loaded — re-upserting would rotate the value silently.
+            # Treat as unchanged unless operator forces a re-apply by
+            # deleting the key first (UI or via direct DELETE).
+            print(f"{UNCHANGED} {key!r} already loaded in workspace")
+            counters.unchanged += 1
+            continue
+
+        if dry_run:
+            print(f"{DRY} would load {key!r} from source env into workspace")
+            counters.would_change += 1
+            continue
+
+        upserts.append({"key": key, "value": value})
+
+    # Single batched POST per LangSmith's upsert API.
+    if not upserts:
+        return
+    try:
+        resp = requests.post(secrets_url, headers=headers, json=upserts, timeout=15)
+        resp.raise_for_status()
+        for u in upserts:
+            print(f"{CREATED} {u['key']!r} loaded into workspace")
+            counters.created += 1
+    except Exception as exc:
+        print(f"{ERROR} POST workspace secrets failed: {exc}")
+        counters.errored += 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: datasets — golden-recall, etc.
 # ---------------------------------------------------------------------------
 
 
@@ -224,7 +350,7 @@ def apply_datasets(
     client: Any, config: dict[str, str], counters: Counters, *, dry_run: bool
 ) -> None:
     """Create datasets and populate with examples from the seed modules."""
-    print("\n=== phase 4: datasets ===")
+    print("\n=== phase 5: datasets ===")
 
     for ds in _datasets_mod.DATASETS:
         name = ds["name"]
@@ -316,7 +442,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument(
         "--phase",
-        choices=["project", "feedback", "queues", "datasets", "all"],
+        choices=["project", "feedback", "queues", "secrets", "datasets", "all"],
         default="all",
         help="Run a subset of phases.",
     )
@@ -338,6 +464,8 @@ def main(argv: list[str] | None = None) -> int:
         apply_feedback_configs(client, config, counters, dry_run=args.dry_run)
     if args.phase in ("all", "queues"):
         apply_annotation_queues(client, config, counters, dry_run=args.dry_run)
+    if args.phase in ("all", "secrets"):
+        apply_workspace_secrets(client, config, counters, dry_run=args.dry_run)
     if args.phase in ("all", "datasets"):
         apply_datasets(client, config, counters, dry_run=args.dry_run)
 

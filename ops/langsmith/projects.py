@@ -167,6 +167,76 @@ class AnnotationQueueConfig(TypedDict):
     description: str
 
 
+# ---------------------------------------------------------------------------
+# Workspace secrets — provider API keys loaded into LangSmith for online
+# evaluators (LLM-as-judge, etc.) to authenticate with.
+#
+# These secrets are consumed by LangSmith's online-evaluator runtime when
+# it spins up a judge LLM. Without them, LLM-as-judge evals fail with
+# auth errors at run time.
+#
+# Source: each entry's ``key`` is looked up in the ``~/.openclaw/.env``
+# file (override via ``OPENCLAW_ENV_PATH``). The actual key VALUE is
+# never checked into this repo — only the NAMES we forward.
+#
+# Stored on LangSmith side via POST /api/v1/workspaces/current/secrets.
+# Once stored, you select these provider credentials in the LangSmith
+# UI when configuring an online evaluator's model.
+# ---------------------------------------------------------------------------
+
+
+class WorkspaceSecret(TypedDict):
+    key: str
+    """The name LangSmith stores it under. Convention is the standard
+    provider env-var name (OPENAI_API_KEY, etc.) so evaluators can
+    pick it up by environment-variable convention."""
+
+    description: str
+    """Operator-facing context — why this key is loaded, what model
+    families it covers."""
+
+
+WORKSPACE_SECRETS: list[WorkspaceSecret] = [
+    {
+        "key": "OPENAI_API_KEY",
+        "description": (
+            "OpenAI access for LLM-as-judge (gpt-4o-mini default for "
+            "RECALL_ACCURACY_JUDGE per ONLINE_EVAL_NOTES). Also covers "
+            "Whisper-1 evals if we add transcript-quality scoring later."
+        ),
+    },
+    {
+        "key": "GOOGLE_API_KEY",
+        "description": (
+            "Gemini access for LLM-as-judge alternative + cheaper baseline. "
+            "Same key already used by the live agents for Gemini 2.5 Flash "
+            "Native Audio (realtime voice path)."
+        ),
+    },
+    {
+        "key": "XAI_API_KEY",
+        "description": (
+            "xAI (Grok) access — second-opinion judge candidate. Useful "
+            "for diversity on contested LLM-as-judge calls where GPT and "
+            "Gemini both come out of the same training-data lineage."
+        ),
+    },
+    {
+        "key": "OPENROUTER_API_KEY",
+        "description": (
+            "OpenRouter — hits any of ~100 providers via single key. "
+            "Handy for evaluator experimentation (try Claude, Llama, etc.) "
+            "without provisioning per-provider creds."
+        ),
+    },
+]
+
+
+# ---------------------------------------------------------------------------
+# Annotation queues — manual-review surfaces for traces that need eyes
+# ---------------------------------------------------------------------------
+
+
 ANNOTATION_QUEUES: list[AnnotationQueueConfig] = [
     {
         "name": "slow-turns",
