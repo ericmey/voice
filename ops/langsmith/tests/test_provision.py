@@ -153,7 +153,19 @@ def test_apply_feedback_configs_skips_existing(monkeypatch) -> None:
     fake_client.create_feedback_config.assert_not_called()
 
 
-@pytest.mark.parametrize("phase", ["project", "feedback", "queues", "secrets", "datasets", "all"])
+@pytest.mark.parametrize(
+    "phase",
+    [
+        "project",
+        "feedback",
+        "queues",
+        "secrets",
+        "prompts",
+        "evaluators",
+        "datasets",
+        "all",
+    ],
+)
 def test_provision_main_accepts_phase_arg(phase, monkeypatch) -> None:
     """Argparse contract — every phase value documented in --help must
     be accepted without error."""
@@ -171,6 +183,8 @@ def test_provision_main_accepts_phase_arg(phase, monkeypatch) -> None:
         "apply_feedback_configs",
         "apply_annotation_queues",
         "apply_workspace_secrets",
+        "apply_workspace_prompts",
+        "apply_evaluators",
         "apply_datasets",
     ):
         monkeypatch.setattr(provision, fn, lambda *a, **kw: None)
@@ -271,6 +285,184 @@ def test_workspace_secrets_skips_already_loaded(monkeypatch) -> None:
     assert counters.unchanged == len(projects_mod.WORKSPACE_SECRETS)
     assert counters.created == 0
     assert post_calls == []  # no POST should fire
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: workspace prompts — IaC contract
+# ---------------------------------------------------------------------------
+
+
+def test_workspace_prompts_have_unique_names() -> None:
+    """LangSmith prompt identifiers are workspace-unique. Two configs
+    sharing a name would race on apply (one overwrites the other's
+    commit history). Catch at test time."""
+    names = [p["name"] for p in projects_mod.WORKSPACE_PROMPTS]
+    assert len(names) == len(set(names)), f"duplicate prompt names: {names}"
+
+
+def test_workspace_prompts_source_files_exist() -> None:
+    """Every WORKSPACE_PROMPTS entry must reference a real file under
+    the repo root. Missing files would fail at provision-time as
+    [!] error — better to fail the test suite first."""
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+
+    for spec in projects_mod.WORKSPACE_PROMPTS:
+        src = repo_root / spec["source_path"]
+        assert src.exists(), f"prompt source missing: {src}"
+        assert src.read_text(encoding="utf-8").strip(), f"prompt source empty: {src}"
+
+
+def test_workspace_prompts_dry_run_does_not_push(monkeypatch) -> None:
+    """Dry-run safety: no push_prompt call when --dry-run is set, even
+    when content has diverged."""
+    fake_client = MagicMock()
+    fake_client.pull_prompt.side_effect = Exception("not found")  # → would create
+
+    counters = provision.Counters()
+    provision.apply_workspace_prompts(fake_client, {}, counters, dry_run=True)
+
+    fake_client.push_prompt.assert_not_called()
+    assert counters.would_change == len(projects_mod.WORKSPACE_PROMPTS)
+
+
+def test_workspace_prompts_skip_when_content_matches(monkeypatch) -> None:
+    """Idempotency: if pulled content equals local content, do not push.
+    The whole IaC value is "running again is safe" — an unconditional
+    push would create duplicate commits and pollute the version history."""
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+
+    # Build a fake "current commit" that matches local content for
+    # every configured prompt.
+    fake_client = MagicMock()
+
+    def _fake_pull(name):
+        spec = next(p for p in projects_mod.WORKSPACE_PROMPTS if p["name"] == name)
+        local = (repo_root / spec["source_path"]).read_text(encoding="utf-8")
+        # Build a mock object that _extract_system_text walks through
+        msg = MagicMock()
+        msg.prompt.template = local
+        obj = MagicMock(messages=[msg])
+        return obj
+
+    fake_client.pull_prompt.side_effect = _fake_pull
+
+    counters = provision.Counters()
+    provision.apply_workspace_prompts(fake_client, {}, counters, dry_run=False)
+
+    fake_client.push_prompt.assert_not_called()
+    assert counters.unchanged == len(projects_mod.WORKSPACE_PROMPTS)
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: online evaluators — IaC contract
+# ---------------------------------------------------------------------------
+
+
+def test_evaluators_have_unique_names() -> None:
+    """LangSmith identifies evaluators by name within a workspace.
+    Duplicates would silently overwrite one another."""
+    names = [e["name"] for e in projects_mod.EVALUATORS]
+    assert len(names) == len(set(names)), f"duplicate evaluator names: {names}"
+
+
+def test_llm_evaluators_reference_pushed_prompts() -> None:
+    """Every LLM evaluator's prompt_repo_handle must match a name in
+    WORKSPACE_PROMPTS. Otherwise the evaluator would reference a prompt
+    that was never pushed and fail at runtime when LangSmith tries to
+    pull it. Catch the broken reference at test time."""
+    pushed_names = {p["name"] for p in projects_mod.WORKSPACE_PROMPTS}
+    for ev in projects_mod.EVALUATORS:
+        if ev["type"] != "llm":
+            continue
+        handle = ev["prompt_repo_handle"]
+        assert handle in pushed_names, (
+            f"evaluator {ev['name']!r} references prompt {handle!r} which "
+            f"is not in WORKSPACE_PROMPTS — push the prompt or fix the handle"
+        )
+
+
+def test_evaluators_have_variable_mapping() -> None:
+    """LLM evaluators without a variable_mapping have nothing to fill
+    the prompt template variables with — they'd render with empty
+    placeholders and the judge would score garbage."""
+    for ev in projects_mod.EVALUATORS:
+        if ev["type"] == "llm":
+            assert ev.get("variable_mapping"), f"evaluator {ev['name']!r} missing variable_mapping"
+            for k, v in ev["variable_mapping"].items():
+                assert isinstance(k, str) and isinstance(v, str), (
+                    f"variable_mapping must be Dict[str, str], got {type(k)}/{type(v)}"
+                )
+
+
+def test_evaluators_dry_run_does_not_post(monkeypatch) -> None:
+    """Same dry-run contract as every other phase — no API writes
+    when --dry-run."""
+    fake_resp = MagicMock()
+    fake_resp.json.return_value = {"evaluators": []}
+    fake_resp.raise_for_status.return_value = None
+    posts = []
+
+    import requests
+
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: fake_resp)
+    monkeypatch.setattr(requests, "post", lambda *a, **kw: posts.append((a, kw)))
+
+    counters = provision.Counters()
+    provision.apply_evaluators(
+        client=MagicMock(),
+        config={"endpoint": "x", "api_key": "k", "workspace_id": "w"},
+        counters=counters,
+        dry_run=True,
+    )
+
+    assert posts == []
+    assert counters.would_change == len(projects_mod.EVALUATORS)
+
+
+def test_evaluators_skip_when_unchanged(monkeypatch) -> None:
+    """Idempotency: if the existing evaluator already has the matching
+    prompt_repo_handle + variable_mapping, no PATCH or POST fires."""
+    existing = []
+    for ev in projects_mod.EVALUATORS:
+        if ev["type"] == "llm":
+            existing.append(
+                {
+                    "id": f"id-{ev['name']}",
+                    "name": ev["name"],
+                    "llm_evaluator": {
+                        "prompt_repo_handle": ev["prompt_repo_handle"],
+                        "commit_hash_or_tag": ev["commit_hash_or_tag"],
+                        "variable_mapping": ev["variable_mapping"],
+                    },
+                }
+            )
+
+    fake_resp = MagicMock()
+    fake_resp.json.return_value = {"evaluators": existing}
+    fake_resp.raise_for_status.return_value = None
+    posts = []
+    patches = []
+
+    import requests
+
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: fake_resp)
+    monkeypatch.setattr(requests, "post", lambda *a, **kw: posts.append((a, kw)))
+    monkeypatch.setattr(requests, "patch", lambda *a, **kw: patches.append((a, kw)))
+
+    counters = provision.Counters()
+    provision.apply_evaluators(
+        client=MagicMock(),
+        config={"endpoint": "x", "api_key": "k", "workspace_id": "w"},
+        counters=counters,
+        dry_run=False,
+    )
+
+    assert posts == [] and patches == []
+    assert counters.unchanged == len([e for e in projects_mod.EVALUATORS if e["type"] == "llm"])
 
 
 def test_workspace_secrets_dry_run_does_not_write(monkeypatch) -> None:
