@@ -124,6 +124,10 @@ render_plist() {
     -e "s|{{OPENCLAW_BIN}}|${OPENCLAW_BIN}|g" \
     -e "s|{{OPENAI_API_KEY}}|${OPENAI_API_KEY}|g" \
     -e "s|{{ELEVENLABS_API_KEY}}|${ELEVENLABS_API_KEY}|g" \
+    -e "s|{{LANGSMITH_TRACING}}|${LANGSMITH_TRACING:-false}|g" \
+    -e "s|{{OTEL_EXPORTER_OTLP_ENDPOINT}}|${OTEL_EXPORTER_OTLP_ENDPOINT:-}|g" \
+    -e "s|{{OTEL_EXPORTER_OTLP_HEADERS}}|${OTEL_EXPORTER_OTLP_HEADERS:-}|g" \
+    -e "s|{{LANGSMITH_PROCESSOR_DEBUG}}|${LANGSMITH_PROCESSOR_DEBUG:-false}|g" \
     "${TEMPLATE}" > "${out}"
 
   log "rendered ${out}"
