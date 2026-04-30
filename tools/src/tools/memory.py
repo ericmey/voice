@@ -1,10 +1,24 @@
-"""MemoryToolsMixin — musubi_recent, musubi_search, musubi_remember (canonical-API backed).
+"""MusubiToolsMixin — canonical agent-tools surface for voice agents.
 
-The voice-side tool naming mirrors the openclaw-musubi plugin:
-``musubi_remember`` (write), ``musubi_recent`` (recent scroll),
-``musubi_search`` (cross-channel semantic). Same intent on either
-surface; same name. Eric (or any model) saying "save that" gets the
-same tool name regardless of which Nyla is on the line.
+Implements the five-tool canonical surface from Musubi
+[[07-interfaces/agent-tools]] / ADR 0032: ``musubi_recent``,
+``musubi_search``, ``musubi_get``, ``musubi_remember``, ``musubi_think``.
+Identical names + parameter shapes across every Musubi adapter (this
+mixin, the openclaw-musubi browser plugin, the Python MCP adapter)
+so Eric (or any model) gets the same tool surface regardless of which
+modality Aoi/Nyla is on.
+
+``musubi_get`` ships in this mixin as a clearly-deferred stub — the
+Python MusubiV2Client doesn't expose per-plane ``get(object_id)``
+methods today, and SDK extensions are out of this slice's scope (see
+[[_slices/slice-livekit-canonical-tools]] § Forbidden paths). The stub
+returns a user-readable deferred message so a curious model + the
+operator both see the dependency immediately.
+
+``MemoryToolsMixin`` is preserved as a one-release deprecation alias
+(``MemoryToolsMixin = MusubiToolsMixin`` at the bottom of this file)
+so existing imports keep working through the deprecation window. Drops
+in the next minor release.
 """
 
 from __future__ import annotations
@@ -48,18 +62,25 @@ _MAX_RECENT_PAGES = 5
 _SEARCH_STATE_FILTER = ["provisional", "matured", "promoted"]
 
 
-class MemoryToolsMixin(Agent):
-    """Provides ``musubi_recent``, ``musubi_search``, and ``musubi_remember`` tools.
+class MusubiToolsMixin(Agent):
+    """Provides the canonical agent-tools surface.
 
-    Per-agent scope: each agent reads and writes only its own episodic
-    namespace (``eric/<agent>/episodic``). Cross-agent "what's been
-    going on" is a separate concern — see ``HouseholdToolsMixin``.
+    Five tools per [[07-interfaces/agent-tools]] / ADR 0032:
+    ``musubi_recent``, ``musubi_search``, ``musubi_get`` (deferred
+    stub), ``musubi_remember``, ``musubi_think``.
+
+    Per-agent scope: each agent reads/writes its own
+    ``<agent>/<channel>/episodic`` per ADR 0030. Cross-channel reads
+    (``musubi_search``) fan via ``<agent>/*/episodic``. Cross-agent
+    surveying lives in ``HouseholdToolsMixin``.
 
     Reads:
-      - ``self.config.musubi_v2_presence`` — resolves the 3-segment
-        namespace ``<presence>/episodic``. Falls back to
-        ``eric/<agent_name>/episodic`` when unset so existing configs
-        work without an explicit presence.
+      - ``self.config.musubi_v2_namespace`` (or ``musubi_v2_presence``
+        for back-compat) — resolves the 3-segment namespace
+        ``<agent>/<channel>/<plane>``. Falls back to
+        ``eric/<agent_name>`` when unset (legacy human-as-tenant
+        compatibility; live configs use the canonical agent-as-tenant
+        form).
       - ``MUSUBI_V2_BASE_URL`` / ``MUSUBI_V2_TOKEN`` env.
     """
 
@@ -93,6 +114,39 @@ class MemoryToolsMixin(Agent):
             )
             return None
         return f"{prefix}/episodic"
+
+    def _own_thought_namespace(self) -> str | None:
+        """Resolve this agent's own thought namespace for ``musubi_think`` sends.
+
+        Same prefix-resolution path as :meth:`_own_episodic_namespace`,
+        but the trailing plane is ``thought`` instead of ``episodic``.
+        Returns ``None`` when the prefix is malformed (degrades the
+        tool to a friendly error).
+        """
+        prefix = self.config.musubi_v2_namespace or self.config.musubi_v2_presence
+        if not prefix:
+            prefix = f"eric/{self.config.agent_name}"
+        segments = prefix.split("/")
+        if len(segments) != 2:
+            logger.warning(
+                "musubi_v2_namespace/presence %r is not 2-segment; thought namespace will degrade",
+                prefix,
+            )
+            return None
+        return f"{prefix}/thought"
+
+    def _own_presence(self) -> str:
+        """Resolve a ``<agent>/<channel>`` presence string for ``from_presence`` claims.
+
+        Prefers the explicit 2-segment namespace prefix; falls back to
+        ``eric/<agent_name>`` legacy form when unset (matches the
+        episodic-namespace fallback so behaviour is consistent across
+        the mixin).
+        """
+        prefix = self.config.musubi_v2_namespace or self.config.musubi_v2_presence
+        if not prefix:
+            prefix = f"eric/{self.config.agent_name}"
+        return prefix
 
     def _tenant_wildcard_episodic_namespace(self) -> str | None:
         """Resolve a tenant-wide wildcard namespace for cross-channel search.
@@ -361,6 +415,139 @@ class MemoryToolsMixin(Agent):
         trace(f"tool=musubi_remember DONE id={object_id}")
         return "Got it, stored."
 
+    # ------------------------------------------------------------------
+    # musubi_think — presence-to-presence message
+    # ------------------------------------------------------------------
+
+    async def think_impl(
+        self,
+        to_presence: str,
+        content: str,
+        channel: str = "default",
+        importance: int = 5,
+    ) -> str:
+        """Plain-async body of ``musubi_think``. Extracted so tests can
+        target it without going through the ``@function_tool`` descriptor."""
+        trace(f"tool=musubi_think to={to_presence!r} content={content[:60]!r} channel={channel!r}")
+        namespace = self._own_thought_namespace()
+        if namespace is None:
+            logger.debug("musubi_think: no v2 namespace configured; degrading")
+            return _DEGRADED_LOOKUP
+        if not to_presence.strip():
+            return "Error: to_presence is required."
+        if not content.strip():
+            return "Error: content is required."
+
+        from_presence = self._own_presence()
+        # Bare ``<agent>`` aliases resolve to ``<agent>/<this-channel>``
+        # (this adapter is the voice channel). Canonical agent-as-tenant
+        # form per ADR 0030 — distinct from the pre-v1.0 musubi_voice.py
+        # version which resolved to ``eric/<agent>``.
+        own_channel = (
+            self._own_presence().split("/", 1)[1] if "/" in self._own_presence() else "voice"
+        )
+        resolved_to = to_presence if "/" in to_presence else f"{to_presence}/{own_channel}"
+
+        try:
+            ack = await self._musubi_v2_client().send_thought(
+                namespace=namespace,
+                from_presence=from_presence,
+                to_presence=resolved_to,
+                content=content,
+                channel=channel,
+                importance=importance,
+            )
+        except (MusubiV2TimeoutError, MusubiV2ServerError) as err:
+            logger.warning("musubi_think: transient %s", err)
+            return "Thought didn't deliver — Musubi is unavailable."
+        except MusubiV2AuthError as err:
+            logger.error("musubi_think: auth failure: %s", err)
+            return "Thought didn't deliver — auth failed."
+        except MusubiV2ClientError as err:
+            logger.error("musubi_think: bad request: %s", err)
+            return "Thought didn't deliver — request rejected."
+        except MusubiV2Error as err:
+            logger.warning("musubi_think: %s", err)
+            return "Thought didn't deliver — unknown error."
+
+        object_id = ack.get("object_id") or "<unknown>"
+        return f"Sent to {resolved_to}. (id={object_id})"
+
+    @function_tool
+    async def musubi_think(
+        self,
+        to_presence: str,
+        content: str,
+        channel: str = "default",
+        importance: int = 5,
+    ) -> str:
+        """Send a presence-to-presence thought to another agent.
+
+        Invocation Condition: Invoke this tool when the user asks you
+        to tell another agent something. Examples: "Tell my Claude
+        Code session the deploy is done", "Let Aoi know I'm heading
+        out", "Send a note to Nyla". You MUST call this tool to
+        actually deliver the message — saying it without calling means
+        nothing was sent.
+
+        Args:
+            to_presence: Recipient. Either canonical ``<agent>/<channel>``
+                form (``aoi/voice``, ``nyla/discord``) or a bare
+                ``<agent>`` alias the adapter resolves to its own
+                channel. ``all`` broadcasts.
+            content: The thought to deliver. Short, natural. Recipient
+                reads it as if you paged them.
+            channel: Channel within the recipient's inbox. Defaults
+                to ``default``; use ``scheduler`` for time-boxed
+                reminders.
+            importance: 1-10. Default 5.
+        """
+        return await self.think_impl(
+            to_presence=to_presence,
+            content=content,
+            channel=channel,
+            importance=importance,
+        )
+
+    # ------------------------------------------------------------------
+    # musubi_get — deferred stub (depends on SDK plane.get extension)
+    # ------------------------------------------------------------------
+
+    @function_tool
+    async def musubi_get(
+        self,
+        plane: str,
+        namespace: str,
+        object_id: str,
+    ) -> str:
+        """Fetch one Musubi object's full content + metadata by id.
+
+        NOT YET WIRED in the voice mixin — depends on the Python
+        ``MusubiV2Client`` gaining per-plane ``get(object_id)``
+        accessors. Tracked separately; SDK extensions are out of
+        scope for [[_slices/slice-livekit-canonical-tools]]. The
+        tool registers so its name is reserved at the canonical
+        surface; calls return a clear deferred message.
+
+        Use ``musubi_search`` to find content; this tool will surface
+        the full underlying object once the SDK extension lands.
+        """
+        trace(f"tool=musubi_get plane={plane!r} object_id={object_id!r}")
+        # Per CLAUDE.md prohibited patterns: ADR-punted dependencies
+        # fail loud. The tool's contract is canonical, but the SDK
+        # extension it needs is on the way. We log at WARNING so the
+        # operator notices repeated calls in degraded mode.
+        logger.warning(
+            "musubi_get invoked but is not yet available in the voice "
+            "mixin (depends on MusubiV2Client per-plane .get() accessors)"
+        )
+        return (
+            f"musubi_get is not yet available in the voice mixin — its SDK "
+            f"dependency (per-plane MusubiV2Client.{plane}.get) hasn't shipped. "
+            f"Use musubi_search to find content; the deep-link tool lights up "
+            f"when the SDK extension lands."
+        )
+
 
 def _format_row(row: dict[str, Any]) -> str:
     """One-line render for a scrolled episodic row.
@@ -392,4 +579,10 @@ def _format_search_row(row: dict[str, Any]) -> str:
     return f"[{channel}] {content}"
 
 
-__all__ = ["MemoryToolsMixin"]
+#: One-release deprecation alias. ADR 0032 standardises on
+#: ``MusubiToolsMixin``; ``MemoryToolsMixin`` keeps existing imports
+#: compiling through the deprecation window. Drops in the next minor
+#: release — at which point this line goes away too.
+MemoryToolsMixin = MusubiToolsMixin
+
+__all__ = ["MusubiToolsMixin", "MemoryToolsMixin"]

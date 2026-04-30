@@ -4,10 +4,13 @@ This is the **new-stack** client. The legacy `musubi_client.py` talks
 directly to Qdrant on localhost for the alpha Musubi; this module talks
 to Musubi's canonical API (HTTP/JSON at ``/v1/*``) with bearer auth.
 Both co-exist so voice agents can migrate one at a time per
-`AgentConfig` — see `tools/src/tools/musubi_voice.py`.
+`AgentConfig` — see ``tools/src/tools/memory.py``.
 
-Scope: just enough surface for the three voice tools (recall, remember,
-think). The full Musubi SDK lives upstream in the Musubi monorepo under
+Scope: just enough surface for the canonical agent-tools mixin
+(``musubi_search`` / ``musubi_recent`` / ``musubi_remember`` /
+``musubi_think``; ``musubi_get`` is reserved pending per-plane
+``.get()`` accessors). The full Musubi SDK lives upstream in the
+Musubi monorepo under
 ``src/musubi/sdk/`` and will be publishable as a ``musubi-client`` wheel
 once `slice-ops-workspace-packaging` ships. Until a second consumer
 creates demand for that workspace split, a thin local client here is
