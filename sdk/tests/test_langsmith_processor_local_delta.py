@@ -215,3 +215,238 @@ def test_llm_node_span_still_routes_to_llm_branch() -> None:
     processor.on_end(span)
 
     assert span._attributes["langsmith.span.kind"] == "llm"
+
+
+# ---------------------------------------------------------------------------
+# LOCAL DELTA #3: universal metadata enrichment
+#
+# The whole point of `_enrich_universal_metadata` is making "where is the
+# dead air" answerable in LangSmith. Each test below pins a metadata
+# field that, if dropped, would re-blind us to a specific stage of
+# per-turn latency. Treat failures here as "we lost a diagnostic axis."
+# ---------------------------------------------------------------------------
+
+
+def test_universal_metadata_propagates_ttft_to_sidebar() -> None:
+    """`lk.response.ttft` is THE LLM-side TTFT metric. Without it
+    surfaced as `langsmith.metadata.ttft_ms` the sidebar can't show
+    per-turn LLM latency at a glance — exactly the diagnostic that
+    answers Eric's `silence_duration_ms` vs `LLM-slow` question."""
+    processor = _make_processor()
+    span = _make_span(
+        "llm_node",
+        {"lk.response.ttft": 0.4503, "lk.chat_ctx": "{}"},
+    )
+
+    processor.on_end(span)
+
+    assert span._attributes["langsmith.metadata.ttft_ms"] == "0.4503"
+
+
+def test_universal_metadata_propagates_endpointing_delay() -> None:
+    """`lk.eou.endpointing_delay` is the VAD silence wait — the metric
+    most likely to expose the `silence_duration_ms=1000` blocker. Has
+    to surface or we can't see it in LangSmith."""
+    processor = _make_processor()
+    span = _make_span(
+        "eou_detection",
+        {"lk.eou.endpointing_delay": 1.0, "lk.eou.probability": 0.92},
+    )
+
+    processor.on_end(span)
+
+    assert span._attributes["langsmith.metadata.endpointing_delay_ms"] == "1.0"
+    assert span._attributes["langsmith.metadata.eou_probability"] == "0.92"
+
+
+def test_universal_metadata_propagates_e2e_latency() -> None:
+    """Per-turn end-to-end latency. The single most useful number on
+    a turn span — what the user actually felt as "the gap"."""
+    processor = _make_processor()
+    span = _make_span(
+        "user_turn",
+        {"lk.e2e_latency": 2.86, "lk.user_transcript": "hi"},
+    )
+
+    processor.on_end(span)
+
+    assert span._attributes["langsmith.metadata.e2e_latency_ms"] == "2.86"
+
+
+def test_universal_metadata_propagates_call_identity() -> None:
+    """Agent name, room name, and participant identity (the phone number
+    on SIP calls) must surface so traces are filterable in LangSmith.
+    Without them you can't say "show me every nyla call from +1317...."."""
+    processor = _make_processor()
+    span = _make_span(
+        "agent_session",
+        {
+            "lk.agent_name": "phone-nyla",
+            "lk.room_name": "phone_+13179957066_abc",
+            "lk.participant_identity": "+13179957066",
+            "lk.job_id": "AJ_xyz123",
+        },
+    )
+
+    processor.on_end(span)
+
+    assert span._attributes["langsmith.metadata.agent"] == "phone-nyla"
+    assert span._attributes["langsmith.metadata.room"] == "phone_+13179957066_abc"
+    assert span._attributes["langsmith.metadata.user_id"] == "+13179957066"
+
+
+def test_session_id_links_to_job_id() -> None:
+    """`langsmith.trace.session_id` makes the LangSmith Threads view
+    group all turns from one call. Mapping from `lk.job_id` is the
+    only sane source — it's the per-call identifier LiveKit uses."""
+    processor = _make_processor()
+    span = _make_span(
+        "agent_session",
+        {"lk.job_id": "AJ_xyz123", "lk.agent_name": "phone-nyla"},
+    )
+
+    processor.on_end(span)
+
+    assert span._attributes["langsmith.trace.session_id"] == "AJ_xyz123"
+
+
+def test_universal_metadata_tags_realtime_pipeline() -> None:
+    """Pipeline shape (realtime vs chained) is a high-value filter for
+    diagnosis. Set it as a tag so operators can do `pipeline:realtime`
+    queries in LangSmith and see only native-audio traces."""
+    processor = _make_processor()
+    span = _make_span(
+        "llm_node",
+        {
+            "lk.agent_name": "phone-nyla",
+            "lk.realtime_model_metrics": '{"ttft": 0.45, "audio_duration": 11.4}',
+            "lk.chat_ctx": "{}",
+        },
+    )
+
+    processor.on_end(span)
+
+    tags = span._attributes["langsmith.span.tags"]
+    assert "agent:phone-nyla" in tags
+    assert "pipeline:realtime" in tags
+
+
+def test_universal_metadata_tags_chained_pipeline() -> None:
+    """Chained pipeline (Whisper + text LLM + TTS) must be tagged
+    differently from realtime so traces from Party don't pollute
+    realtime-only diagnostic queries."""
+    processor = _make_processor()
+    span = _make_span(
+        "tts_node",
+        {
+            "lk.agent_name": "phone-party",
+            "lk.tts_metrics": '{"ttfb": 0.15, "audio_duration": 2.3}',
+        },
+    )
+
+    processor.on_end(span)
+
+    tags = span._attributes["langsmith.span.tags"]
+    assert "pipeline:chained" in tags
+
+
+def test_realtime_metrics_json_blob_flattens_to_metadata() -> None:
+    """LiveKit emits a JSON blob with rich realtime-model metrics
+    (ttft, audio token counts, durations). Parse and flatten so each
+    field becomes its own searchable metadata key — without this,
+    operators can't query "show me turns where audio_duration > 10s"."""
+    processor = _make_processor()
+    span = _make_span(
+        "realtime_metrics",
+        {
+            "lk.realtime_model_metrics": (
+                '{"ttft": 0.45, "input_tokens": 6222, "output_tokens": 295,'
+                ' "input_audio_tokens": 1200}'
+            ),
+        },
+    )
+
+    processor.on_end(span)
+
+    assert span._attributes["langsmith.metadata.realtime_model.ttft"] == "0.45"
+    assert span._attributes["langsmith.metadata.realtime_model.output_tokens"] == "295"
+    assert span._attributes["langsmith.metadata.realtime_model.input_audio_tokens"] == "1200"
+
+
+def test_function_tool_emits_otel_semantic_convention_attrs() -> None:
+    """OTel's `gen_ai.tool.name` and `gen_ai.tool.call.id` are the
+    standardized names LangSmith reads for tool grouping. Surface them
+    alongside our `lk.*`-derived attributes so the UI's tool-call view
+    works regardless of which schema LangSmith picks first."""
+    processor = _make_processor()
+    span = _make_span(
+        "function_tool",
+        {
+            "lk.function_tool.id": "call_xyz",
+            "lk.function_tool.name": "musubi_search",
+            "lk.function_tool.arguments": '{"query": "x"}',
+            "lk.function_tool.output": "ok",
+        },
+    )
+
+    processor.on_end(span)
+
+    assert span._attributes["gen_ai.tool.name"] == "musubi_search"
+    assert span._attributes["gen_ai.tool.call.id"] == "call_xyz"
+    assert span._attributes["gen_ai.operation.name"] == "execute_tool"
+
+
+def test_function_tool_tags_with_tool_name() -> None:
+    """`tool:musubi_search` as a tag lets operators filter LangSmith
+    traces by which tool fired — single most useful slice for tracking
+    a tool's behaviour over many calls."""
+    processor = _make_processor()
+    span = _make_span(
+        "function_tool",
+        {
+            "lk.function_tool.name": "musubi_remember",
+            "lk.function_tool.arguments": "{}",
+            "lk.function_tool.output": "ok",
+        },
+    )
+
+    processor.on_end(span)
+
+    assert "tool:musubi_remember" in span._attributes["langsmith.span.tags"]
+
+
+def test_function_tool_error_adds_error_tag() -> None:
+    """When a tool errors, it should be discoverable via `error` tag —
+    operators want to find every tool failure across all calls in one
+    LangSmith query, not by clicking through traces."""
+    processor = _make_processor()
+    span = _make_span(
+        "function_tool",
+        {
+            "lk.function_tool.name": "musubi_get",
+            "lk.function_tool.arguments": "{}",
+            "lk.function_tool.output": "not yet wired",
+            "lk.function_tool.is_error": True,
+        },
+    )
+
+    processor.on_end(span)
+
+    assert "error" in span._attributes["langsmith.span.tags"]
+
+
+def test_universal_metadata_skips_missing_attrs_silently() -> None:
+    """Most spans only carry a subset of the LK attributes. The helper
+    must not write empty / None metadata keys when a source is missing —
+    that just clutters the LangSmith sidebar with empty fields."""
+    processor = _make_processor()
+    span = _make_span("eou_detection", {"lk.eou.probability": 0.5})
+
+    processor.on_end(span)
+
+    # eou_detection has no agent_name, ttft, etc. — those keys must
+    # NOT appear in the output.
+    assert "langsmith.metadata.agent" not in span._attributes
+    assert "langsmith.metadata.ttft_ms" not in span._attributes
+    # But the one that IS present must have been propagated.
+    assert span._attributes["langsmith.metadata.eou_probability"] == "0.5"
