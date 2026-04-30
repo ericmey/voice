@@ -23,10 +23,61 @@ from pathlib import Path
 from typing import Any
 
 from livekit.agents import AgentSession
+from opentelemetry import trace as otel_trace
 
 from .trace import trace
 
 logger = logging.getLogger("openclaw-livekit.agent")
+
+# OTel tracer for emitting live metric spans alongside the JSON
+# telemetry capture. Each session.on(...) hook below uses it to push
+# the same data into the OTel pipeline so it lands in LangSmith
+# turn-by-turn (within ~1-2s of the event firing) instead of only
+# arriving as a postcall summary.
+#
+# When LANGSMITH_TRACING=false this tracer is a no-op (OTel SDK
+# returns a NoOp tracer when no provider is configured), so the
+# instrumentation costs nothing in dev / CI / unit tests.
+_tracer = otel_trace.get_tracer("openclaw-livekit.metrics")
+
+
+def _emit_metric_span(name: str, call_sid: str, agent_name: str, attrs: dict[str, Any]) -> None:
+    """Emit a short-lived OTel span carrying live LiveKit metric data.
+
+    Each metric event creates one span. The span is started + populated
+    + ended synchronously (sub-millisecond), then BatchSpanProcessor
+    flushes it to LangSmith on its next 1s tick. End-to-end the data
+    shows up in the LangSmith UI within ~1-3 seconds of the underlying
+    event firing — that's the "live updates" Eric asked for.
+
+    Async-safe: this runs on the asyncio event loop alongside the
+    session.on(...) handlers. Span creation is a few attribute writes,
+    not I/O, so it doesn't block the loop.
+
+    All attrs surface as ``langsmith.metadata.*`` keys so the LangSmith
+    UI renders them in the span sidebar and they're filterable in
+    queries (e.g. ``metadata.ttft_ms > 1000``). Booleans are coerced
+    to strings because LangSmith's metadata store treats them as
+    strings on render.
+    """
+    with _tracer.start_as_current_span(name) as span:
+        span.set_attribute("langsmith.span.kind", "chain")
+        # Correlation handles so these synthetic spans can be joined
+        # against the trace's other spans by call_sid / agent / job.
+        if call_sid:
+            span.set_attribute("langsmith.metadata.call_sid", call_sid)
+        if agent_name:
+            span.set_attribute("langsmith.metadata.agent", agent_name)
+        # Tag for filtering — every metric span carries this so
+        # operators can do tag:metrics in LangSmith filters.
+        span.set_attribute("langsmith.span.tags", f"metrics,{name}")
+        for key, value in attrs.items():
+            if value is None or value == "":
+                continue
+            if isinstance(value, bool):
+                span.set_attribute(f"langsmith.metadata.{key}", str(value))
+            elif isinstance(value, (str, int, float)):
+                span.set_attribute(f"langsmith.metadata.{key}", value)
 
 
 def _telemetry_dir() -> Path | None:
@@ -359,33 +410,111 @@ def wire_telemetry_capture(
 
         collector.record_turn(metrics, role, text)
 
+        # Live-mirror to OTel. ChatMessage.metrics is a dict on chained
+        # pipelines (Party). Realtime models (Nyla / Aoi) emit metrics
+        # via the metrics_collected channel instead — see _on_metrics.
+        turn_attrs: dict[str, Any] = {
+            "turn_index": len(collector.turns) - 1,
+            "role": role,
+            "text_preview": text[:200] if text else "",
+        }
+        if isinstance(metrics, dict):
+            for key in (
+                "e2e_latency",
+                "llm_node_ttft",
+                "tts_node_ttfb",
+                "transcription_delay",
+                "end_of_turn_delay",
+                "on_user_turn_completed_delay",
+            ):
+                val = metrics.get(key)
+                if val is not None:
+                    turn_attrs[key] = val
+        _emit_metric_span("turn_metrics", call_sid, agent_name, turn_attrs)
+
     @session.on("user_state_changed")
     def _on_user_state(ev: Any) -> None:
         old = str(getattr(ev, "old_state", "?"))
         new = str(getattr(ev, "new_state", "?"))
         collector.record_user_state(old, new)
+        _emit_metric_span(
+            "user_state_changed", call_sid, agent_name,
+            {"old_state": old, "new_state": new},
+        )
 
     @session.on("agent_state_changed")
     def _on_agent_state(ev: Any) -> None:
         old = str(getattr(ev, "old_state", "?"))
         new = str(getattr(ev, "new_state", "?"))
         collector.record_agent_state(old, new)
+        _emit_metric_span(
+            "agent_state_changed", call_sid, agent_name,
+            {"old_state": old, "new_state": new},
+        )
 
     @session.on("overlapping_speech")
     def _on_overlap(ev: Any) -> None:
         collector.record_overlap(ev)
+        overlap_attrs: dict[str, Any] = {
+            "is_interruption": bool(getattr(ev, "is_interruption", False)),
+        }
+        for field in ("probability", "detection_delay", "prediction_duration", "total_duration"):
+            val = getattr(ev, field, None)
+            if val is not None:
+                overlap_attrs[field] = val
+        _emit_metric_span("overlapping_speech", call_sid, agent_name, overlap_attrs)
 
     @session.on("agent_false_interruption")
     def _on_false_interrupt(ev: Any) -> None:
         collector.false_interruptions += 1
+        _emit_metric_span(
+            "false_interruption", call_sid, agent_name,
+            {"false_interruptions_total": collector.false_interruptions},
+        )
 
     @session.on("function_tools_executed")
     def _on_tools(ev: Any) -> None:
         collector.record_tool_execution(ev)
+        # Per-tool span — one event can carry multiple tool calls; emit
+        # one OTel span per tool invocation so each shows up
+        # independently in LangSmith filters (`tag:tool:musubi_search`).
+        calls = getattr(ev, "function_calls", []) or []
+        outputs = getattr(ev, "function_call_outputs", []) or []
+        for i, call in enumerate(calls):
+            name = str(getattr(call, "name", "unknown"))
+            output = outputs[i] if i < len(outputs) else None
+            _emit_metric_span(
+                "tool_executed", call_sid, agent_name,
+                {
+                    "tool_name": name,
+                    "success": output is not None,
+                    "output_preview": str(output)[:300] if output is not None else "",
+                },
+            )
 
     @session.on("session_usage_updated")
     def _on_usage(ev: Any) -> None:
         collector.record_usage(ev)
+        # Cumulative usage — one OTel span per update. Each model in
+        # the usage rollup gets its fields flattened with a model:
+        # prefix so e.g. `metadata.gemini-2.5.input_tokens` is filterable.
+        usage = getattr(ev, "usage", None)
+        if usage is None:
+            return
+        model_usage = getattr(usage, "model_usage", []) or []
+        usage_attrs: dict[str, Any] = {}
+        for mu in model_usage:
+            mtype = type(mu).__name__
+            model = getattr(mu, "model", None) or "unknown"
+            provider = getattr(mu, "provider", None) or "unknown"
+            prefix = f"{mtype.lower()}.{model}"
+            usage_attrs[f"{prefix}.provider"] = provider
+            for field in ("input_tokens", "output_tokens", "audio_duration", "characters_count"):
+                val = getattr(mu, field, None)
+                if val is not None:
+                    usage_attrs[f"{prefix}.{field}"] = val
+        if usage_attrs:
+            _emit_metric_span("session_usage", call_sid, agent_name, usage_attrs)
 
     @session.on("metrics_collected")
     def _on_metrics(ev: Any) -> None:
@@ -399,15 +528,41 @@ def wire_telemetry_capture(
             return
         if type(metrics).__name__ == "RealtimeModelMetrics":
             collector.record_realtime_metrics(metrics)
+            # Live-mirror: this is THE per-turn signal for Nyla / Aoi.
+            # Without forwarding to OTel here, realtime calls show up
+            # in LangSmith with no latency or token data.
+            realtime_attrs: dict[str, Any] = {
+                "request_id": getattr(metrics, "request_id", None),
+            }
+            for field in ("ttft", "duration", "input_tokens", "output_tokens", "total_tokens"):
+                val = getattr(metrics, field, None)
+                if val is not None:
+                    realtime_attrs[field] = val
+            _emit_metric_span("realtime_metrics", call_sid, agent_name, realtime_attrs)
 
     @session.on("error")
     def _on_error(ev: Any) -> None:
         collector.record_error(ev)
+        _emit_metric_span(
+            "session_error", call_sid, agent_name,
+            {"error": str(getattr(ev, "error", ev))[:500]},
+        )
 
     @session.on("close")
     def _on_close(ev: Any) -> None:
         collector.record_close(ev)
         collector.flush()
+        _emit_metric_span(
+            "session_close", call_sid, agent_name,
+            {
+                "reason": str(getattr(ev, "reason", "unknown")),
+                "error": str(getattr(ev, "error", "")) or "",
+                "duration_seconds": round(time.time() - collector.started_at, 1),
+                "total_turns": len(collector.turns),
+                "false_interruptions": collector.false_interruptions,
+                "tool_calls_total": len(collector.tool_calls),
+            },
+        )
 
     trace(f"telemetry capture wired for call_sid={call_sid}")
     logger.info("telemetry capture wired for call_sid=%s", call_sid)
