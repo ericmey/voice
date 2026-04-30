@@ -153,23 +153,154 @@ def test_apply_feedback_configs_skips_existing(monkeypatch) -> None:
     fake_client.create_feedback_config.assert_not_called()
 
 
-@pytest.mark.parametrize("phase", ["project", "feedback", "queues", "datasets", "all"])
+@pytest.mark.parametrize("phase", ["project", "feedback", "queues", "secrets", "datasets", "all"])
 def test_provision_main_accepts_phase_arg(phase, monkeypatch) -> None:
     """Argparse contract — every phase value documented in --help must
     be accepted without error."""
     monkeypatch.setattr(
         provision,
         "make_client",
-        lambda: (MagicMock(), {"endpoint": "x", "project": "y", "workspace_id": "z"}),
+        lambda: (
+            MagicMock(),
+            {"endpoint": "x", "project": "y", "workspace_id": "z", "api_key": "k"},
+        ),
     )
     # Stub out every apply_* so we don't hit the network
     for fn in (
         "apply_project_settings",
         "apply_feedback_configs",
         "apply_annotation_queues",
+        "apply_workspace_secrets",
         "apply_datasets",
     ):
         monkeypatch.setattr(provision, fn, lambda *a, **kw: None)
 
     rc = provision.main(["--dry-run", "--phase", phase])
     assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: workspace secrets — IaC contract
+# ---------------------------------------------------------------------------
+
+
+def test_workspace_secrets_have_unique_keys() -> None:
+    """Two entries with the same key would race on apply (one wins, no
+    deterministic outcome). Catch at test time."""
+    keys = [s["key"] for s in projects_mod.WORKSPACE_SECRETS]
+    assert len(keys) == len(set(keys)), f"duplicate WORKSPACE_SECRETS keys: {keys}"
+
+
+def test_workspace_secrets_use_canonical_env_var_names() -> None:
+    """LangSmith's online evaluators reach for env-style names
+    (OPENAI_API_KEY etc.). Configs that use freeform names work but
+    require manual binding in every evaluator config — defeats the
+    point of workspace-level secrets. Lock to the standard convention."""
+    canonical_suffixes = ("_API_KEY", "_TOKEN", "_SECRET")
+    for s in projects_mod.WORKSPACE_SECRETS:
+        key = s["key"]
+        assert key == key.upper(), f"{key!r} must be uppercase"
+        assert any(key.endswith(suf) for suf in canonical_suffixes), (
+            f"{key!r} should end with {canonical_suffixes}"
+        )
+
+
+def test_workspace_secrets_skips_missing_source_env(monkeypatch) -> None:
+    """When a configured key isn't present in the source env file,
+    we skip with a warning rather than POST an empty value (LangSmith
+    would either 422 or store an empty cred — both bad)."""
+    # Source env missing every WORKSPACE_SECRETS entry
+    monkeypatch.setattr(provision, "_load_openclaw_secrets", lambda: {})
+
+    # Mock requests.get to return empty current state
+    fake_resp = MagicMock()
+    fake_resp.json.return_value = []
+    fake_resp.raise_for_status.return_value = None
+    fake_post = MagicMock()
+    fake_post.raise_for_status.return_value = None
+
+    import requests
+
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: fake_resp)
+    monkeypatch.setattr(requests, "post", lambda *a, **kw: fake_post)
+
+    counters = provision.Counters()
+    provision.apply_workspace_secrets(
+        client=MagicMock(),
+        config={"endpoint": "x", "api_key": "k", "workspace_id": "w"},
+        counters=counters,
+        dry_run=False,
+    )
+
+    # Every configured secret is missing → all skipped, none created
+    assert counters.skipped == len(projects_mod.WORKSPACE_SECRETS)
+    assert counters.created == 0
+
+
+def test_workspace_secrets_skips_already_loaded(monkeypatch) -> None:
+    """If LangSmith already has the configured keys, we DON'T re-POST.
+    Re-POSTing would silently rotate the stored value to whatever the
+    source env currently has — invisible churn that could break a
+    correctly-configured workspace."""
+    monkeypatch.setattr(
+        provision,
+        "_load_openclaw_secrets",
+        lambda: {s["key"]: f"value-of-{s['key']}" for s in projects_mod.WORKSPACE_SECRETS},
+    )
+
+    # All configured keys already loaded
+    fake_resp = MagicMock()
+    fake_resp.json.return_value = [{"key": s["key"]} for s in projects_mod.WORKSPACE_SECRETS]
+    fake_resp.raise_for_status.return_value = None
+    post_calls = []
+    fake_post = MagicMock(side_effect=lambda *a, **kw: post_calls.append((a, kw)))
+
+    import requests
+
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: fake_resp)
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    counters = provision.Counters()
+    provision.apply_workspace_secrets(
+        client=MagicMock(),
+        config={"endpoint": "x", "api_key": "k", "workspace_id": "w"},
+        counters=counters,
+        dry_run=False,
+    )
+
+    assert counters.unchanged == len(projects_mod.WORKSPACE_SECRETS)
+    assert counters.created == 0
+    assert post_calls == []  # no POST should fire
+
+
+def test_workspace_secrets_dry_run_does_not_write(monkeypatch) -> None:
+    """In dry-run mode, even when keys would be created, no POST fires
+    and would_change increments. This is the safety contract for
+    `make langsmith-plan`."""
+    monkeypatch.setattr(
+        provision,
+        "_load_openclaw_secrets",
+        lambda: {s["key"]: "v" for s in projects_mod.WORKSPACE_SECRETS},
+    )
+
+    fake_resp = MagicMock()
+    fake_resp.json.return_value = []
+    fake_resp.raise_for_status.return_value = None
+    post_calls = []
+
+    import requests
+
+    monkeypatch.setattr(requests, "get", lambda *a, **kw: fake_resp)
+    monkeypatch.setattr(requests, "post", lambda *a, **kw: post_calls.append((a, kw)))
+
+    counters = provision.Counters()
+    provision.apply_workspace_secrets(
+        client=MagicMock(),
+        config={"endpoint": "x", "api_key": "k", "workspace_id": "w"},
+        counters=counters,
+        dry_run=True,
+    )
+
+    assert counters.would_change == len(projects_mod.WORKSPACE_SECRETS)
+    assert counters.created == 0
+    assert post_calls == []  # dry-run must not write
