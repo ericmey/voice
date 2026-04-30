@@ -1,6 +1,6 @@
-"""Live-target smoke suite — runs the v2 client + voice-tools mixin
-against a real Musubi server. Skipped by default so `make test` stays
-hermetic.
+"""Live-target smoke suite — runs the v2 client + canonical Musubi
+tools mixin against a real Musubi server. Skipped by default so
+`make test` stays hermetic.
 
 To run:
 
@@ -119,13 +119,17 @@ async def test_live_scope_violation_raises_auth_error() -> None:
 
 
 @skip_unless_live
-async def test_live_voice_recall_fan_out_hits_three_planes() -> None:
-    """The voice-tools recall fanout should issue three retrieve
-    calls — one per (namespace, plane) target — and handle empty
-    responses without erroring."""
+async def test_live_canonical_search_against_wildcard_namespace() -> None:
+    """`musubi_search` (canonical surface) must round-trip a real
+    retrieve against the live server using the tenant-wildcard
+    episodic namespace and surface a clean envelope on zero hits.
+
+    Replaces the legacy three-plane fan-out smoke — the canonical
+    surface uses a single retrieve against `<tenant>/*/episodic`
+    rather than per-plane fan-out (Musubi ADR 0031 + ADR 0032)."""
     # Import lazily so the module is skippable for non-live runs
-    # even when the voice mixin's livekit deps aren't installed.
-    from tools.musubi_voice import MusubiVoiceToolsMixin  # noqa: PLC0415
+    # even when the mixin's livekit deps aren't installed.
+    from tools.memory import MusubiToolsMixin  # noqa: PLC0415
 
     cfg = AgentConfig(
         agent_name="smoke",
@@ -134,17 +138,18 @@ async def test_live_voice_recall_fan_out_hits_three_planes() -> None:
         musubi_v2_namespace=_NS_ROOT,
     )
 
-    inst = MusubiVoiceToolsMixin.__new__(MusubiVoiceToolsMixin)
+    inst = MusubiToolsMixin.__new__(MusubiToolsMixin)
     inst.config = cfg  # type: ignore[misc]
     inst._musubi_v2_client = lambda: _live_client()  # type: ignore[method-assign]
 
-    # Drive the helper directly so we avoid the `@function_tool`
-    # descriptor wrapping (same pattern as the unit tests).
-    result = await inst.recall_impl(query=f"nothing-{uuid.uuid4().hex}", limit=3)
+    # Bypass the @function_tool descriptor to drive the coroutine
+    # directly (same pattern as the unit tests).
+    search = MusubiToolsMixin.musubi_search.__wrapped__  # type: ignore[attr-defined]
+    result = await search(inst, query=f"nothing-{uuid.uuid4().hex}", limit=3)
 
-    # "No matching memories" is the success envelope for an empty
-    # recall; a degraded-mode message would indicate an auth or
-    # transport problem.
+    # "No memories matched." is the success envelope for an empty
+    # search; a degraded-mode message would indicate an auth or
+    # transport problem on the live target.
     assert "Couldn't reach memory" not in result
 
 

@@ -36,17 +36,18 @@ class AgentConfig:
             router behavior — Nyla's default). A frozenset means any
             ``agent_id`` outside the set is rejected with an error
             message rather than firing.
-        musubi_v2_namespace: Two-segment ``tenant/presence`` prefix
-            used by the new-stack Musubi tools (``musubi_recall`` /
-            ``musubi_remember`` / ``musubi_think``) in
-            `tools/musubi_voice.py`. The voice tools append the plane
-            segment at call time (``<prefix>/episodic`` for remember,
-            ``<prefix>/thought`` for think, fan out across
-            ``<prefix>/episodic`` + ``<owner>/_shared/curated``, etc.
-            for recall). Example: ``eric/aoi-voice``. ``None`` means
-            the new-stack mixin is not meaningfully configured for
-            this agent — voice tools degrade gracefully. Left
-            ``None`` on every existing agent so the migration is
+        musubi_v2_namespace: Two-segment ``<agent>/<channel>`` prefix
+            (Musubi ADR 0030 agent-as-tenant form) used by the canonical
+            Musubi tools (``musubi_search`` / ``musubi_recent`` /
+            ``musubi_remember`` / ``musubi_think`` / ``musubi_get``) in
+            ``tools/memory.py``. The mixin appends the plane segment at
+            call time: ``<prefix>/episodic`` for remember/recent,
+            ``<prefix>/thought`` for think; ``musubi_search`` widens
+            to ``<tenant>/*/episodic`` per ADR 0031 for cross-channel
+            recall. Example: ``aoi/voice``. ``None`` means the mixin
+            is not meaningfully configured for this agent — tools
+            degrade gracefully. Left ``None`` on every existing agent
+            so the migration is
             deliberate.
         musubi_v2_presence: Presence identifier used as
             ``from_presence`` for `musubi_think` thought sends. Shape:

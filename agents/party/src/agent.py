@@ -38,7 +38,7 @@ from sdk.trace import trace
 from sdk.transcript import wire_transcript_logging
 from tools.academy import AcademyToolsMixin
 from tools.core import CoreToolsMixin
-from tools.memory import MemoryToolsMixin
+from tools.memory import MusubiToolsMixin
 from tools.sessions import SessionsToolsMixin
 
 # --- env ---------------------------------------------------------------
@@ -88,7 +88,7 @@ PARTY_CONFIG = AgentConfig(
 
 class PartyAgent(
     CoreToolsMixin,
-    MemoryToolsMixin,
+    MusubiToolsMixin,
     SessionsToolsMixin,
     AcademyToolsMixin,
     Agent,

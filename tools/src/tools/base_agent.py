@@ -19,7 +19,7 @@ from sdk.env import load_env
 
 from tools.academy import AcademyToolsMixin
 from tools.core import CoreToolsMixin
-from tools.memory import MemoryToolsMixin
+from tools.memory import MusubiToolsMixin
 from tools.sessions import SessionsToolsMixin
 
 logger = logging.getLogger("openclaw-livekit.agent")
@@ -52,7 +52,7 @@ def load_persona(prompts_dir: Path) -> str:
 
 class BaseRealtimeAgent(
     CoreToolsMixin,
-    MemoryToolsMixin,
+    MusubiToolsMixin,
     SessionsToolsMixin,
     AcademyToolsMixin,
     Agent,
