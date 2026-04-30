@@ -66,6 +66,9 @@ tail: ## Follow all three agent logs with color-coded prefix
 truncate-logs: ## Zero out all agent logs (clean baseline for testing)
 	scripts/truncate-logs.sh
 
+trace-check: ## Verify LangSmith OTel endpoint accepts our key (run after editing secrets/livekit-agents.env)
+	scripts/trace-check.sh
+
 # ---- tests ---------------------------------------------------------
 
 test: ## Run pytest across all workspace members (sdk + tools + three agents)
