@@ -342,7 +342,240 @@ def apply_workspace_secrets(
 
 
 # ---------------------------------------------------------------------------
-# Phase 5: datasets — golden-recall, etc.
+# Phase 5: workspace prompts — agent system prompts as versioned artifacts
+# ---------------------------------------------------------------------------
+
+
+def apply_workspace_prompts(
+    client: Any, config: dict[str, str], counters: Counters, *, dry_run: bool
+) -> None:
+    """Push agent system prompts to LangSmith's prompt library so they
+    can be played with in the playground and referenced by online
+    evaluators. Idempotent via content-hash compare: only commits a new
+    revision when the local source file's content differs from the
+    current LangSmith commit.
+
+    LangSmith's prompt model: each prompt has a stable identifier
+    (``<workspace>/<name>``) and a chain of immutable commits. Pushing
+    "the same content twice" creates duplicate commits — not what we
+    want. So we read the current latest commit, compare to local
+    content, only push when they diverge.
+    """
+    from pathlib import Path
+
+    print("\n=== phase 5: workspace prompts (agent personas) ===")
+
+    repo_root = Path(__file__).resolve().parent.parent.parent
+
+    for spec in _projects_mod.WORKSPACE_PROMPTS:
+        name = spec["name"]
+        src = repo_root / spec["source_path"]
+
+        if not src.exists():
+            print(f"{ERROR} prompt {name!r} source file missing: {src}")
+            counters.errored += 1
+            continue
+
+        local_content = src.read_text(encoding="utf-8")
+
+        # Try to pull current LangSmith content. If the prompt doesn't
+        # exist yet, ``pull_prompt`` raises — we treat as "needs create".
+        try:
+            current = client.pull_prompt(name)
+            # ``pull_prompt`` returns a langchain ChatPromptTemplate or
+            # similar. Extract the system message text. Convention:
+            # we push as a single ``ChatPromptTemplate`` with one
+            # ``SystemMessagePromptTemplate``.
+            current_text = _extract_system_text(current)
+        except Exception:
+            current_text = None  # not yet created
+
+        if current_text == local_content:
+            print(f"{UNCHANGED} prompt {name!r} already at current content")
+            counters.unchanged += 1
+            continue
+
+        if dry_run:
+            verb = "create" if current_text is None else "commit revision to"
+            print(f"{DRY} would {verb} prompt {name!r} ({len(local_content)} chars)")
+            counters.would_change += 1
+            continue
+
+        try:
+            # Build a langchain ChatPromptTemplate so the LangSmith UI
+            # renders it as a chat-shape prompt (system message). This
+            # is the shape the playground + evaluators expect.
+            from langchain_core.prompts import (
+                ChatPromptTemplate,
+                SystemMessagePromptTemplate,
+            )
+
+            template = ChatPromptTemplate.from_messages(
+                [SystemMessagePromptTemplate.from_template(local_content)]
+            )
+
+            client.push_prompt(
+                name,
+                object=template,
+                description=spec["description"],
+                tags=spec["tags"],
+            )
+
+            verb = "created" if current_text is None else "committed revision"
+            print(f"{CREATED if current_text is None else UPDATED} prompt {name!r} {verb}")
+            if current_text is None:
+                counters.created += 1
+            else:
+                counters.updated += 1
+        except Exception as exc:
+            print(f"{ERROR} push_prompt({name!r}) failed: {exc}")
+            counters.errored += 1
+
+
+def _extract_system_text(prompt_obj: Any) -> str | None:
+    """Pull the system message text out of a pulled LangSmith prompt.
+
+    LangSmith's ``pull_prompt`` returns a langchain object — usually a
+    ``ChatPromptTemplate`` whose first message is the system prompt.
+    We avoid hard-typing this since langchain version skew can change
+    the exact shape; duck-type via attribute walk instead.
+    """
+    if prompt_obj is None:
+        return None
+
+    # ChatPromptTemplate path: .messages -> list of message templates,
+    # each of which has a .prompt.template (string) for the formatted
+    # text. SystemMessagePromptTemplate is the standard shape.
+    messages = getattr(prompt_obj, "messages", None)
+    if messages:
+        for m in messages:
+            inner = getattr(m, "prompt", None)
+            template = getattr(inner, "template", None) if inner else None
+            if template is not None:
+                return str(template)
+
+    # PromptTemplate fallback (single-string prompts):
+    template = getattr(prompt_obj, "template", None)
+    if template is not None:
+        return str(template)
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: online evaluators — POST /v1/platform/evaluators
+# ---------------------------------------------------------------------------
+
+
+def apply_evaluators(
+    client: Any, config: dict[str, str], counters: Counters, *, dry_run: bool
+) -> None:
+    """Create LLM-as-judge evaluators referencing prompt-library prompts.
+
+    LangSmith's evaluator API:
+      - GET /v1/platform/evaluators           list current
+      - POST /v1/platform/evaluators          create new
+      - PATCH /v1/platform/evaluators/{id}    update existing (variable map etc.)
+
+    Idempotency: GET current, match on ``name``. If the evaluator exists
+    AND its prompt_repo_handle / variable_mapping matches our config,
+    skip. Otherwise create-or-update.
+
+    NOTE: This phase creates the evaluator DEFINITION. It does NOT
+    attach the evaluator to a project (that's the run-rules layer,
+    handled separately). After this phase, the operator goes to the
+    LangSmith UI -> Evaluators -> Online -> "attach to project" to
+    wire up which spans the evaluator fires on. When LangSmith's
+    run-rules API stabilises around declarative config, add a phase 7.
+    """
+    print("\n=== phase 6: online evaluators ===")
+
+    endpoint = config["endpoint"]
+    api_key = config["api_key"]
+    workspace_id = config["workspace_id"]
+
+    import requests
+
+    headers = {
+        "x-api-key": api_key,
+        "X-Tenant-Id": workspace_id,
+        "Content-Type": "application/json",
+    }
+    list_url = f"{endpoint}/v1/platform/evaluators"
+
+    try:
+        resp = requests.get(list_url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        existing = {e["name"]: e for e in resp.json().get("evaluators", [])}
+    except Exception as exc:
+        print(f"{ERROR} GET evaluators failed: {exc}")
+        counters.errored += 1
+        return
+
+    for ev in _projects_mod.EVALUATORS:
+        name = ev["name"]
+        if name in existing:
+            current = existing[name]
+            current_llm = current.get("llm_evaluator") or {}
+            mapping_match = current_llm.get("variable_mapping") == ev["variable_mapping"]
+            handle_match = current_llm.get("prompt_repo_handle") == ev["prompt_repo_handle"]
+            if mapping_match and handle_match:
+                print(f"{UNCHANGED} evaluator {name!r} already at current config")
+                counters.unchanged += 1
+                continue
+
+            if dry_run:
+                print(f"{DRY} would PATCH evaluator {name!r} (handle/mapping diff)")
+                counters.would_change += 1
+                continue
+
+            patch_url = f"{endpoint}/v1/platform/evaluators/{current['id']}"
+            patch_body = {
+                "llm_evaluator": {
+                    "prompt_repo_handle": ev["prompt_repo_handle"],
+                    "commit_hash_or_tag": ev["commit_hash_or_tag"],
+                    "variable_mapping": ev["variable_mapping"],
+                },
+            }
+            try:
+                resp = requests.patch(patch_url, headers=headers, json=patch_body, timeout=15)
+                resp.raise_for_status()
+                print(f"{UPDATED} evaluator {name!r} updated")
+                counters.updated += 1
+            except Exception as exc:
+                print(f"{ERROR} PATCH evaluator {name!r} failed: {exc}")
+                counters.errored += 1
+            continue
+
+        # Not present — CREATE
+        if dry_run:
+            print(f"{DRY} would CREATE evaluator {name!r}")
+            counters.would_change += 1
+            continue
+
+        create_body = {
+            "name": name,
+            "type": ev["type"],
+            "llm_evaluator": {
+                "prompt_repo_handle": ev["prompt_repo_handle"],
+                "commit_hash_or_tag": ev["commit_hash_or_tag"],
+                "variable_mapping": ev["variable_mapping"],
+            },
+        }
+        try:
+            resp = requests.post(list_url, headers=headers, json=create_body, timeout=15)
+            resp.raise_for_status()
+            print(f"{CREATED} evaluator {name!r}")
+            counters.created += 1
+        except Exception as exc:
+            print(f"{ERROR} POST evaluator {name!r} failed: {exc}")
+            if hasattr(exc, "response") and exc.response is not None:
+                print(f"    body: {exc.response.text[:300]}")
+            counters.errored += 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 7: datasets — golden-recall, etc.
 # ---------------------------------------------------------------------------
 
 
@@ -350,7 +583,7 @@ def apply_datasets(
     client: Any, config: dict[str, str], counters: Counters, *, dry_run: bool
 ) -> None:
     """Create datasets and populate with examples from the seed modules."""
-    print("\n=== phase 5: datasets ===")
+    print("\n=== phase 7: datasets ===")
 
     for ds in _datasets_mod.DATASETS:
         name = ds["name"]
@@ -442,7 +675,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument(
         "--phase",
-        choices=["project", "feedback", "queues", "secrets", "datasets", "all"],
+        choices=[
+            "project",
+            "feedback",
+            "queues",
+            "secrets",
+            "prompts",
+            "evaluators",
+            "datasets",
+            "all",
+        ],
         default="all",
         help="Run a subset of phases.",
     )
@@ -466,6 +708,10 @@ def main(argv: list[str] | None = None) -> int:
         apply_annotation_queues(client, config, counters, dry_run=args.dry_run)
     if args.phase in ("all", "secrets"):
         apply_workspace_secrets(client, config, counters, dry_run=args.dry_run)
+    if args.phase in ("all", "prompts"):
+        apply_workspace_prompts(client, config, counters, dry_run=args.dry_run)
+    if args.phase in ("all", "evaluators"):
+        apply_evaluators(client, config, counters, dry_run=args.dry_run)
     if args.phase in ("all", "datasets"):
         apply_datasets(client, config, counters, dry_run=args.dry_run)
 

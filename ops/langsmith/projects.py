@@ -196,6 +196,92 @@ class WorkspaceSecret(TypedDict):
     families it covers."""
 
 
+class WorkspacePrompt(TypedDict):
+    name: str
+    """LangSmith prompt identifier — appears in the UI sidebar.
+    Convention: ``<agent>-system`` for the main persona prompt."""
+
+    source_path: str
+    """Path under the repo root to the prompt's source file."""
+
+    description: str
+    """Operator-facing context shown on the prompt's detail page."""
+
+    tags: list[str]
+    """Tags attached to the prompt artifact for filtering. Convention:
+    ``agent:<name>``, ``role:system``, ``pipeline:<realtime|chained>``."""
+
+
+# ---------------------------------------------------------------------------
+# Workspace prompts — agent system prompts pushed to LangSmith's prompt
+# library so operators can play with them in the playground, version
+# diffs across edits, and use them as reference for online evaluators.
+#
+# Source files live in this repo under ``agents/<name>/prompts/system.md``.
+# The provisioner reads the file content and pushes a new commit only
+# when the content differs from the current LangSmith commit. Re-running
+# with no edits is a no-op.
+#
+# Why this matters:
+# - The playground lets you tweak a prompt and replay it against
+#   datasets without touching the deployed agent — perfect for
+#   "would this opener work better?" experiments.
+# - LangSmith's online evaluators can reference these versioned
+#   prompts ("compare current agent response to what THIS prompt
+#   would say"), enabling A/B style judging.
+# - Version history is the audit trail for "when did Aoi's persona
+#   start sounding stiff?" — diff commits over time.
+#
+# IMPORTANT: edits in the LangSmith UI playground DO NOT round-trip
+# back to this repo. The source-of-truth is always the file in
+# ``agents/<name>/prompts/system.md``. Treat the LangSmith artifact
+# as a read-mostly mirror; iterate on a copy in the UI, then promote
+# good edits back to the source file via PR.
+# ---------------------------------------------------------------------------
+
+
+WORKSPACE_PROMPTS: list[WorkspacePrompt] = [
+    {
+        "name": "nyla-system",
+        "source_path": "agents/nyla/prompts/system.md",
+        "description": (
+            "Phone-Nyla system prompt — household router persona on the "
+            "realtime voice pipeline (Gemini 2.5 Flash Native Audio). "
+            "Source-of-truth is agents/nyla/prompts/system.md in the repo. "
+            "Edits here don't affect production until the source file is "
+            "updated and agents are redeployed."
+        ),
+        "tags": ["agent:nyla", "role:system", "pipeline:realtime"],
+    },
+    {
+        "name": "aoi-system",
+        "source_path": "agents/aoi/prompts/system.md",
+        "description": (
+            "Phone-Aoi system prompt — code-partner persona on the "
+            "realtime voice pipeline (Gemini 2.5 Flash Native Audio). "
+            "Source-of-truth is agents/aoi/prompts/system.md in the repo. "
+            "Edits here don't affect production until the source file is "
+            "updated and agents are redeployed."
+        ),
+        "tags": ["agent:aoi", "role:system", "pipeline:realtime"],
+    },
+    {
+        "name": "recall-accuracy-judge",
+        "source_path": "ops/langsmith/prompts/recall_accuracy_judge.md",
+        "description": (
+            "LLM-as-judge prompt for the RECALL_ACCURACY_JUDGE online "
+            "evaluator. Scores 0.0–1.0 how accurately the agent's "
+            "spoken response used a recall-tool's returned rows. "
+            "Referenced by the recall-accuracy-judge evaluator via "
+            "prompt_repo_handle. Variable mapping: user_question, "
+            "tool_name, tool_result, agent_response — the evaluator "
+            "fills these from the function_tool span attributes."
+        ),
+        "tags": ["role:judge", "metric:recall_accuracy", "model-target:gpt-4o-mini"],
+    },
+]
+
+
 WORKSPACE_SECRETS: list[WorkspaceSecret] = [
     {
         "key": "OPENAI_API_KEY",
@@ -228,6 +314,74 @@ WORKSPACE_SECRETS: list[WorkspaceSecret] = [
             "Handy for evaluator experimentation (try Claude, Llama, etc.) "
             "without provisioning per-provider creds."
         ),
+    },
+]
+
+
+# ---------------------------------------------------------------------------
+# Annotation queues — manual-review surfaces for traces that need eyes
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Online evaluators — automated scoring on every new trace.
+#
+# LangSmith's stable public API exposes evaluators at /v1/platform/evaluators.
+# Two types:
+#
+#   - llm   References a prompt from the prompt library + variable mapping.
+#           The variable mapping pulls fields from each run (span attributes,
+#           inputs, outputs) into the prompt's template variables. Output is
+#           parsed as JSON: {"score": float, "reasoning": str}.
+#
+#   - code  Inline Python that evaluates a run and returns a score dict.
+#           Useful for rule-based scoring (e.g., "fail if e2e_latency > 5s")
+#           without paying for an LLM call.
+#
+# Run rules (when does the evaluator fire?) are managed separately and
+# are NOT yet in this IaC pass. Operator wires that in the LangSmith UI:
+# Evaluators -> Online tab -> attach to project + add filter conditions.
+# When the run-rules API stabilises in a way that's friendly to declarative
+# config, we'll add a phase 7. For now, evaluators are CREATED here;
+# attaching them to projects is one UI click.
+# ---------------------------------------------------------------------------
+
+
+class LLMEvaluatorConfig(TypedDict):
+    name: str
+    """Display name in the LangSmith UI."""
+
+    type: str  # "llm"
+
+    prompt_repo_handle: str
+    """The prompt artifact in this workspace's prompt library that drives
+    the judging. Convention: pushed to LangSmith via WORKSPACE_PROMPTS."""
+
+    commit_hash_or_tag: str
+    """Pin to a specific commit OR use ``latest``. Use ``latest`` for
+    "always use the most recent push" — best for iteration."""
+
+    variable_mapping: dict[str, str]
+    """Maps prompt template variables (left) to span/run JSONPath
+    expressions (right). The evaluator runtime fills the prompt
+    by reading these from each run."""
+
+
+EVALUATORS: list[LLMEvaluatorConfig] = [
+    {
+        "name": "recall-accuracy-judge",
+        "type": "llm",
+        "prompt_repo_handle": "recall-accuracy-judge",
+        "commit_hash_or_tag": "latest",
+        "variable_mapping": {
+            # The evaluator runtime extracts these from each function_tool
+            # run when the rule fires. Field paths follow LangSmith's run
+            # schema: ``inputs.<key>`` / ``outputs.<key>`` / ``extra.metadata.<key>``.
+            "user_question": "extra.metadata.user_question",
+            "tool_name": "extra.metadata.tool_name",
+            "tool_result": "outputs.output",
+            "agent_response": "extra.metadata.agent_response",
+        },
     },
 ]
 
