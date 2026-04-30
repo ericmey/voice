@@ -77,6 +77,14 @@
       <string>{{MUSUBI_V2_BASE_URL}}</string>
       <key>MUSUBI_V2_TOKEN</key>
       <string>{{MUSUBI_V2_TOKEN}}</string>
+      <!-- Chained-pipeline keys (Party only — Whisper STT + ElevenLabs TTS).
+           Other agents won't use these but it costs nothing to have them in
+           the env; rendering them here keeps the template uniform across
+           agent plists. -->
+      <key>OPENAI_API_KEY</key>
+      <string>{{OPENAI_API_KEY}}</string>
+      <key>ELEVENLABS_API_KEY</key>
+      <string>{{ELEVENLABS_API_KEY}}</string>
       <key>NODE_EXTRA_CA_CERTS</key>
       <string>/etc/ssl/cert.pem</string>
     </dict>

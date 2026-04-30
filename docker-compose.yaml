@@ -31,15 +31,20 @@ services:
     image: redis:7-alpine
     container_name: openclaw-redis
     restart: unless-stopped
-    # Ephemeral by design — livekit-sip + livekit-server only store live
-    # session state here. Losing it drops any in-flight call; it doesn't
-    # corrupt anything persistent.
+    # Persistent across container restarts so SIP trunk + dispatch-rule
+    # state survives Docker Desktop updates, host reboot, power loss.
+    # Without this, every restart wipes routing and inbound calls fail
+    # silently with the misleading "flood" label until someone runs
+    # scripts/register-sip-routing.sh by hand. RDB snapshot every 60s
+    # if there's been ≥1 change + AOF for everything in between.
     command:
       - "redis-server"
       - "--save"
-      - ""
+      - "60 1"
       - "--appendonly"
-      - "no"
+      - "yes"
+    volumes:
+      - redis_data:/data
     ports:
       - "127.0.0.1:6379:6379"
 
@@ -74,3 +79,8 @@ services:
     volumes:
       - ${LIVEKIT_CONFIG_DIR:-./config}/livekit-sip.yaml:/config.yaml:ro
     command: ["--config", "/config.yaml"]
+
+# Named volume for persistent Redis state. Survives container recreation
+# and Docker Desktop updates. Wiped only by `docker compose down -v`.
+volumes:
+  redis_data:

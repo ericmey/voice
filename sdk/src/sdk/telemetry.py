@@ -56,8 +56,17 @@ class TelemetryCollector:
         self.started_at = time.time()
         self.started_at_iso = time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
-        # Per-turn latency metrics (one entry per assistant response)
+        # Per-turn latency metrics (one entry per assistant response).
+        # Populated for chained pipelines (STT/LLM/TTS) where the framework
+        # rolls per-component metrics into ``ChatMessage.metrics``.
         self.turns: list[dict[str, Any]] = []
+
+        # Realtime-model metrics — separate channel for Gemini realtime
+        # and similar models. Captured via ``metrics_collected`` events on
+        # the session, NOT via the ``metrics`` field on conversation items
+        # (which stays empty for realtime). One entry per RealtimeModelMetrics
+        # event the model emits.
+        self.realtime_metrics: list[dict[str, Any]] = []
 
         # State transitions
         self.user_states: list[dict[str, Any]] = []
@@ -101,6 +110,32 @@ class TelemetryCollector:
             if val is not None:
                 entry[key] = round(val, 4)
         self.turns.append(entry)
+
+    def record_realtime_metrics(self, ev: Any) -> None:
+        """Capture a ``RealtimeModelMetrics`` event from the session.
+
+        For Gemini realtime / similar bidirectional voice models, the
+        framework emits these as ``metrics_collected`` events instead of
+        rolling them into ``ChatMessage.metrics``. Without capturing them
+        here, Nyla/Aoi calls show entirely null e2e_latency / TTFT
+        because the chained-pipeline path in :meth:`record_turn` never
+        fires for realtime.
+
+        Fields captured (all from livekit.agents.metrics.RealtimeModelMetrics):
+        - ``ttft``: time-to-first-token (closest realtime equivalent of
+          chained ``llm_node_ttft``; -1 means no audio token sent).
+        - ``duration``: total response duration from created → done.
+        - ``input_tokens``/``output_tokens``: usage breakdown.
+        """
+        entry: dict[str, Any] = {
+            "timestamp": time.time() - self.started_at,
+            "request_id": getattr(ev, "request_id", None),
+        }
+        for field in ("ttft", "duration", "input_tokens", "output_tokens", "total_tokens"):
+            val = getattr(ev, field, None)
+            if val is not None:
+                entry[field] = round(val, 4) if isinstance(val, float) else val
+        self.realtime_metrics.append(entry)
 
     def record_user_state(self, old: str, new: str) -> None:
         self.user_states.append(
@@ -193,9 +228,23 @@ class TelemetryCollector:
         """Compute session-level summary stats from accumulated data."""
         duration = time.time() - self.started_at
 
-        # Latency stats from turns
+        # Latency stats — chained pipeline emits per-turn metrics rolled
+        # into ``ChatMessage.metrics``; realtime models emit them via a
+        # separate ``metrics_collected`` event we capture into
+        # ``self.realtime_metrics``. If chained values are absent, fall
+        # back to realtime ttft (genuinely the only latency signal we
+        # have for realtime — there is no voice-to-voice e2e delivered
+        # by the framework on that path). Also keep ttft >= 0 — the
+        # framework uses -1 to mean "no audio token sent."
         e2e_values = [t["e2e_latency"] for t in self.turns if "e2e_latency" in t]
         ttft_values = [t["llm_node_ttft"] for t in self.turns if "llm_node_ttft" in t]
+        if not e2e_values and self.realtime_metrics:
+            # Realtime models: report ttft under the e2e key so downstream
+            # consumers (Rin reviews, dashboards) can read one field. Note
+            # the source via :func:`flush` so it stays interpretable.
+            e2e_values = [m["ttft"] for m in self.realtime_metrics if m.get("ttft", -1) >= 0]
+        if not ttft_values and self.realtime_metrics:
+            ttft_values = [m["ttft"] for m in self.realtime_metrics if m.get("ttft", -1) >= 0]
 
         def _stats(values: list[float]) -> dict[str, float | None]:
             if not values:
@@ -234,6 +283,14 @@ class TelemetryCollector:
             return None
         path = d / f"{self.call_sid}.json"
 
+        # Tag the latency source so consumers know whether they're reading
+        # voice-to-voice e2e (chained) or ttft-as-e2e-proxy (realtime).
+        latency_source = (
+            "chained"
+            if any("e2e_latency" in t for t in self.turns)
+            else ("realtime_ttft" if self.realtime_metrics else "none")
+        )
+
         doc = {
             "call_sid": self.call_sid,
             "agent": self.agent_name,
@@ -241,8 +298,10 @@ class TelemetryCollector:
             "ended_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "close_reason": self.close_reason,
             "close_error": self.close_error,
+            "latency_source": latency_source,
             "summary": self.build_summary(),
             "turns": self.turns,
+            "realtime_metrics": self.realtime_metrics,
             "user_states": self.user_states,
             "agent_states": self.agent_states,
             "overlapping_speech": self.overlapping_speech,
@@ -327,6 +386,19 @@ def wire_telemetry_capture(
     @session.on("session_usage_updated")
     def _on_usage(ev: Any) -> None:
         collector.record_usage(ev)
+
+    @session.on("metrics_collected")
+    def _on_metrics(ev: Any) -> None:
+        # Realtime models emit RealtimeModelMetrics via this event channel
+        # rather than via ChatMessage.metrics. We dispatch by class name to
+        # avoid an import-time dependency on the metrics types — keeps the
+        # SDK module loadable even if the metrics package shape shifts in
+        # a livekit-agents upgrade.
+        metrics = getattr(ev, "metrics", None)
+        if metrics is None:
+            return
+        if type(metrics).__name__ == "RealtimeModelMetrics":
+            collector.record_realtime_metrics(metrics)
 
     @session.on("error")
     def _on_error(ev: Any) -> None:

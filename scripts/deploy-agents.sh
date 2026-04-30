@@ -41,6 +41,11 @@ set -a; . "${SECRETS}"; set +a
 : "${MUSUBI_V2_BASE_URL:?MUSUBI_V2_BASE_URL missing from ${SECRETS}}"
 : "${MUSUBI_V2_TOKEN_NYLA:?MUSUBI_V2_TOKEN_NYLA missing from ${SECRETS}}"
 : "${MUSUBI_V2_TOKEN_AOI:?MUSUBI_V2_TOKEN_AOI missing from ${SECRETS}}"
+# Required by Party (chained STT/LLM/TTS pipeline). Other agents don't
+# use them but they're always rendered into the plist for uniformity —
+# fail loudly here so they don't crash silently at first call.
+: "${OPENAI_API_KEY:?OPENAI_API_KEY missing from ${SECRETS} (Party uses Whisper STT)}"
+: "${ELEVENLABS_API_KEY:?ELEVENLABS_API_KEY missing from ${SECRETS} (Party uses ElevenLabs TTS)}"
 
 # Agents to deploy (default: all three). Build the array from positional
 # args, or fall back to all three if none were given — the explicit $#
@@ -117,6 +122,8 @@ render_plist() {
     -e "s|{{MUSUBI_V2_BASE_URL}}|${MUSUBI_V2_BASE_URL}|g" \
     -e "s|{{MUSUBI_V2_TOKEN}}|${musubi_token}|g" \
     -e "s|{{OPENCLAW_BIN}}|${OPENCLAW_BIN}|g" \
+    -e "s|{{OPENAI_API_KEY}}|${OPENAI_API_KEY}|g" \
+    -e "s|{{ELEVENLABS_API_KEY}}|${ELEVENLABS_API_KEY}|g" \
     "${TEMPLATE}" > "${out}"
 
   log "rendered ${out}"
