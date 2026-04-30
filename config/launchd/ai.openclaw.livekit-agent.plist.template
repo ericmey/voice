@@ -85,6 +85,17 @@
       <string>{{OPENAI_API_KEY}}</string>
       <key>ELEVENLABS_API_KEY</key>
       <string>{{ELEVENLABS_API_KEY}}</string>
+      <!-- LangSmith OTel tracing (off by default). When LANGSMITH_TRACING=true,
+           every LiveKit OTel span — session, turn, LLM, tool, STT, TTS —
+           flows to LangSmith. Operator next-step in secrets/livekit-agents.env. -->
+      <key>LANGSMITH_TRACING</key>
+      <string>{{LANGSMITH_TRACING}}</string>
+      <key>OTEL_EXPORTER_OTLP_ENDPOINT</key>
+      <string>{{OTEL_EXPORTER_OTLP_ENDPOINT}}</string>
+      <key>OTEL_EXPORTER_OTLP_HEADERS</key>
+      <string>{{OTEL_EXPORTER_OTLP_HEADERS}}</string>
+      <key>LANGSMITH_PROCESSOR_DEBUG</key>
+      <string>{{LANGSMITH_PROCESSOR_DEBUG}}</string>
       <key>NODE_EXTRA_CA_CERTS</key>
       <string>/etc/ssl/cert.pem</string>
     </dict>
