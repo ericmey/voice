@@ -295,10 +295,18 @@ def test_universal_metadata_propagates_call_identity() -> None:
     assert span._attributes["langsmith.metadata.user_id"] == "+13179957066"
 
 
-def test_session_id_links_to_job_id() -> None:
+def test_session_id_links_to_job_id_as_uuid() -> None:
     """`langsmith.trace.session_id` makes the LangSmith Threads view
-    group all turns from one call. Mapping from `lk.job_id` is the
-    only sane source — it's the per-call identifier LiveKit uses."""
+    group all turns from one call. LiveKit's `lk.job_id` is the only
+    per-call identifier we have, but LangSmith requires the field to
+    be a valid UUID — raw `AJ_xyz123` is rejected with HTTP 422 and
+    the entire span batch is dropped (which we caught the hard way
+    after PR #15 silently broke ingest). Use a deterministic uuid5
+    so the value is a valid UUID *and* every turn in the same call
+    maps to the same UUID, preserving Thread grouping. The raw
+    job_id remains queryable as `langsmith.metadata.lk_job_id`."""
+    import uuid as _uuid
+
     processor = _make_processor()
     span = _make_span(
         "agent_session",
@@ -307,7 +315,46 @@ def test_session_id_links_to_job_id() -> None:
 
     processor.on_end(span)
 
-    assert span._attributes["langsmith.trace.session_id"] == "AJ_xyz123"
+    session_id = span._attributes["langsmith.trace.session_id"]
+    # Must be a valid UUID — _uuid.UUID raises if not.
+    parsed = _uuid.UUID(session_id)
+    expected = _uuid.uuid5(_uuid.NAMESPACE_URL, "livekit-job:AJ_xyz123")
+    assert parsed == expected, "session_id must be deterministic per job_id"
+    # Raw job_id still surfaced as queryable metadata.
+    assert span._attributes["langsmith.metadata.lk_job_id"] == "AJ_xyz123"
+
+
+def test_session_id_uuid_is_stable_across_turns() -> None:
+    """Two spans from the same call (same lk.job_id) must produce the
+    same session_id UUID, otherwise Thread grouping in LangSmith UI
+    would split a single call across multiple Threads."""
+    processor = _make_processor()
+    span_a = _make_span("user_turn", {"lk.job_id": "AJ_call1", "lk.user_transcript": "hi"})
+    span_b = _make_span("agent_session", {"lk.job_id": "AJ_call1"})
+
+    processor.on_end(span_a)
+    processor.on_end(span_b)
+
+    assert (
+        span_a._attributes["langsmith.trace.session_id"]
+        == span_b._attributes["langsmith.trace.session_id"]
+    )
+
+
+def test_session_id_uuid_differs_across_calls() -> None:
+    """Two different calls (different lk.job_id values) must produce
+    different session_id UUIDs so Threads stay separated."""
+    processor = _make_processor()
+    span_a = _make_span("agent_session", {"lk.job_id": "AJ_call1"})
+    span_b = _make_span("agent_session", {"lk.job_id": "AJ_call2"})
+
+    processor.on_end(span_a)
+    processor.on_end(span_b)
+
+    assert (
+        span_a._attributes["langsmith.trace.session_id"]
+        != span_b._attributes["langsmith.trace.session_id"]
+    )
 
 
 def test_universal_metadata_tags_realtime_pipeline() -> None:
