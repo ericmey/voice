@@ -30,7 +30,6 @@ Acceptable for first iteration; quiet later if needed.
 import json
 import logging
 import os
-import uuid
 from copy import deepcopy
 from typing import Optional
 
@@ -598,21 +597,18 @@ class LangSmithSpanProcessor(SpanProcessor):
         if tag_parts:
             span._attributes["langsmith.span.tags"] = ",".join(tag_parts)
 
-        # 4. Session linking — `lk.job_id` is LiveKit's per-call
-        # identifier. Map it to `langsmith.trace.session_id` so all
-        # turns from one phone call group as a Thread in LangSmith UI.
-        # LangSmith REQUIRES this field to be a valid UUID; raw
-        # `AJ_xyz123` job_ids cause every span batch to fail with
-        # 422 "invalid session_id format: must be a valid UUID" and
-        # the WHOLE call drops on the floor with zero traces ingested.
-        # Solution: deterministic uuid5 from the job_id so the value
-        # is a valid UUID *and* every turn in the same call produces
-        # the same UUID (Thread grouping still works).
+        # 4. Call-identity correlation. We deliberately DO NOT set
+        # `langsmith.trace.session_id` — that field is a foreign key
+        # into LangSmith's session table and a value LangSmith hasn't
+        # already created returns HTTP 404 ("tracer session not found")
+        # which causes the entire span batch to be dropped. Thread
+        # grouping in the LangSmith UI is already handled by
+        # `langsmith.metadata.thread_id` (set at the top of `on_end`
+        # to the OTel trace_id, which is shared across all spans in
+        # one call). The raw LiveKit job_id is preserved as metadata
+        # for cross-system correlation against agent / gateway logs.
         job_id = attrs.get("lk.job_id")
         if job_id:
-            session_uuid = uuid.uuid5(uuid.NAMESPACE_URL, f"livekit-job:{job_id}")
-            span._attributes["langsmith.trace.session_id"] = str(session_uuid)
-            # Keep the raw job_id queryable as metadata for operators.
             span._attributes["langsmith.metadata.lk_job_id"] = str(job_id)
 
     def _set_prompt_attributes(self, span: ReadableSpan, messages: list, start_idx: int = 0, log: bool = False):
