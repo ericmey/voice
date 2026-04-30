@@ -56,7 +56,19 @@ class LangSmithSpanProcessor(SpanProcessor):
     def __init__(self, downstream_processor: Optional[SpanProcessor] = None):
         super().__init__()
         if downstream_processor is None:
-            downstream_processor = BatchSpanProcessor(OTLPSpanExporter())
+            # Tight flush window: 1s schedule + 256 batch + 64 export
+            # batch size. Default OTel values (5s / 512 / 512) lose
+            # spans on short voice calls — the call ends and the JOB
+            # subprocess exits before the first batch fires. Voice
+            # turns are tiny in span count but high in latency
+            # sensitivity, so we want each turn's spans visible in
+            # LangSmith ~1s after the turn ends, not at hangup.
+            downstream_processor = BatchSpanProcessor(
+                OTLPSpanExporter(),
+                max_queue_size=2048,
+                max_export_batch_size=64,
+                schedule_delay_millis=1000,
+            )
         self.downstream = downstream_processor
         # Track conversation messages across spans for proper LangSmith grouping
         self.conversation_messages = {}  # trace_id -> list of messages
