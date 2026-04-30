@@ -11,6 +11,11 @@ dependencies = [
     "livekit-agents~=1.5",
     "aiohttp",
     "python-dotenv",
+    # OTel tracing → LangSmith. Always installed (small wheels) so the
+    # tracing path is one env-var flip away rather than a re-sync. The
+    # exporter activates only when LANGSMITH_TRACING=true.
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-http>=1.27",
 ]
 
 [dependency-groups]

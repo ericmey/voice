@@ -23,6 +23,11 @@ line-length = 100
 target-version = "py312"
 extend-exclude = [".venv", "__pycache__", "build", "dist"]
 
+[tool.ruff.format]
+# Vendored verbatim from langchain-ai/voice-agents-tracing. Skip the
+# formatter so we can re-sync from upstream without merge churn.
+exclude = ["sdk/src/sdk/langsmith_processor.py"]
+
 [tool.ruff.lint]
 select = [
     "E",   # pycodestyle errors
@@ -41,12 +46,19 @@ ignore = ["B008", "E501"]
 "**/tests/test_imports.py" = ["F401"]
 # Package __init__.py re-exports don't need to be marked __all__.
 "**/__init__.py" = ["F401"]
+# Vendored verbatim from langchain-ai/voice-agents-tracing — keep upstream
+# style intact so we can re-sync without merge churn.
+"sdk/src/sdk/langsmith_processor.py" = ["UP045", "UP006", "UP007", "UP035"]
 
 # ---- pyright: static type checker -------------------------------------
 # Run via:  make typecheck  (or:  uv run pyright)
 [tool.pyright]
 include = ["sdk", "tools", "agents"]
-exclude = ["**/.venv", "**/__pycache__", "**/build", "**/dist"]
+# langsmith_processor.py is vendored verbatim from upstream — it has
+# loose Optional handling that pyright flags. Excluded so we can re-sync
+# from upstream without merge churn; our own ``sdk/tracing.py`` is the
+# narrow, typed entry point.
+exclude = ["**/.venv", "**/__pycache__", "**/build", "**/dist", "sdk/src/sdk/langsmith_processor.py"]
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.12"
