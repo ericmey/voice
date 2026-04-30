@@ -69,6 +69,14 @@ truncate-logs: ## Zero out all agent logs (clean baseline for testing)
 trace-check: ## Verify LangSmith OTel endpoint accepts our key (run after editing secrets/livekit-agents.env)
 	scripts/trace-check.sh
 
+# ---- LangSmith infrastructure-as-code (ops/langsmith/) ----
+
+langsmith-plan: ## Preview LangSmith provisioning changes (no API writes)
+	uv run python -m ops.langsmith.provision --dry-run
+
+langsmith-provision: ## Apply LangSmith config — datasets, feedback configs, annotation queues
+	uv run python -m ops.langsmith.provision
+
 # ---- tests ---------------------------------------------------------
 
 test: ## Run pytest across all workspace members (sdk + tools + three agents)
