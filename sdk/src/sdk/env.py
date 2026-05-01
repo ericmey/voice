@@ -18,7 +18,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from sdk.tracing import setup_langsmith_tracing
+from sdk.tracing import setup_otel_tracing
 
 
 def load_env() -> None:
@@ -34,6 +34,6 @@ def load_env() -> None:
     if not os.environ.get("ELEVEN_API_KEY") and os.environ.get("ELEVENLABS_API_KEY"):
         os.environ["ELEVEN_API_KEY"] = os.environ["ELEVENLABS_API_KEY"]
 
-    # No-op when LANGSMITH_TRACING is unset / false — keeps unit tests
-    # and CI hermetic. Idempotent across re-imports.
-    setup_langsmith_tracing()
+    # No-op when OPENCLAW_OTEL_ENABLED / LANGSMITH_TRACING are unset or
+    # false — keeps unit tests and CI hermetic. Idempotent across re-imports.
+    setup_otel_tracing()

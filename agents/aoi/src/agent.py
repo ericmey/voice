@@ -18,7 +18,7 @@ from sdk.postcall_memory import wire_postcall_memory
 from sdk.telemetry import wire_telemetry_capture
 from sdk.telephony import resolve_caller
 from sdk.trace import trace
-from sdk.tracing import attach_current_span_metadata, wire_langsmith_shutdown_flush
+from sdk.tracing import attach_current_span_metadata, wire_otel_shutdown_flush
 from sdk.transcript import wire_transcript_logging
 
 # --- env ---------------------------------------------------------------
@@ -75,7 +75,7 @@ async def entrypoint(ctx: JobContext) -> None:
         else None,
         speaker_tag=AOI_CONFIG.memory_agent_tag,
     )
-    wire_langsmith_shutdown_flush(ctx)
+    wire_otel_shutdown_flush(ctx)
     await session.start(agent=agent, room=ctx.room)
     attach_current_span_metadata(
         agent="phone-aoi",

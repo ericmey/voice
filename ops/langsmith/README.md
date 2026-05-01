@@ -1,9 +1,24 @@
-# LangSmith — infrastructure as code
+# LangSmith — infrastructure as code (archived)
+
+> **Status (2026-05-01): archived.** The repo standardized on
+> SigNoz as the primary observability backend. The agents no longer
+> ship spans to LangSmith by default (`OPENCLAW_OTEL_EXPORTERS=otlp`,
+> see `docs/OBSERVABILITY.md`).
+>
+> This directory is preserved untouched so an operator can flip back
+> to LangSmith later without re-deriving the IaC. To reactivate:
+>
+> 1. Add `langsmith` to `OPENCLAW_OTEL_EXPORTERS` in
+>    `secrets/livekit-agents.env`.
+> 2. Run `make langsmith-plan-legacy` / `make langsmith-provision-legacy`
+>    (intentionally hidden from `make help`).
+
+---
 
 This directory holds the **declarative configuration** for our LangSmith
 project — datasets, feedback configs, project settings, annotation
-queues. Edit the Python files; re-run `make langsmith-provision` to
-apply. The code is the source of truth, not the LangSmith web UI.
+queues. Edit the Python files; re-run `make langsmith-provision-legacy`
+to apply. The code is the source of truth, not the LangSmith web UI.
 
 ## Why this exists
 

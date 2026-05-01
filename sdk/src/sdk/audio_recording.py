@@ -1,4 +1,30 @@
-"""Full-call audio recording and LangSmith attachment upload."""
+"""Full-call audio recording via LiveKit Egress.
+
+Records each call to disk through the ``livekit-egress`` service and
+exposes the resulting file path/URL as an OTel span attribute so any
+backend (SigNoz, Phoenix, Datadog, ...) can link the call run to its
+recording without a vendor-specific upload SDK.
+
+Enable with ``OPENCLAW_RECORD_AUDIO=true`` (legacy alias
+``LANGSMITH_ATTACH_AUDIO=true`` is honored for backward compatibility).
+
+The agent entrypoint calls :func:`start_call_audio_recording` after
+``ctx.connect`` and :func:`wire_call_audio_attachment` to register a
+shutdown hook that finalizes the egress and decorates the active span
+with the recording metadata.
+
+Where to listen to the audio:
+
+* ``LIVEKIT_EGRESS_HOST_RECORDINGS_DIR`` (default
+  ``logs/voice/recordings``) is the host-mounted directory egress
+  writes to. Files appear at
+  ``<host_dir>/<agent>/<call_sid>.<ext>``.
+* If you set ``OPENCLAW_AUDIO_PUBLIC_BASE_URL`` (e.g.
+  ``http://my-host:8090/recordings``), the span attribute becomes a
+  clickable URL instead of a file path. Stand up a tiny static-file
+  server pointed at the host recordings dir to enable click-to-listen
+  from any observability UI.
+"""
 
 from __future__ import annotations
 
@@ -29,10 +55,19 @@ class CallAudioRecording:
 
 
 def _enabled() -> bool:
-    value = os.environ.get("LANGSMITH_ATTACH_AUDIO")
-    if value is not None:
+    """Audio recording is opt-in.
+
+    Reads ``OPENCLAW_RECORD_AUDIO`` first, then the legacy
+    ``LANGSMITH_ATTACH_AUDIO`` alias. The legacy alias is honored
+    because the deploy script still renders it from the secrets file
+    until it's removed in a follow-up cleanup.
+    """
+    for var in ("OPENCLAW_RECORD_AUDIO", "LANGSMITH_ATTACH_AUDIO"):
+        value = os.environ.get(var)
+        if value is None:
+            continue
         return value.lower() in ("true", "1", "yes")
-    return os.environ.get("LANGSMITH_TRACING", "").lower() in ("true", "1", "yes")
+    return False
 
 
 def _voice_logs_dir() -> Path:
@@ -66,26 +101,15 @@ def _mime_type(path: Path) -> str:
     return mimetypes.guess_type(path.name)[0] or "audio/ogg"
 
 
-def _langsmith_project() -> str | None:
-    project = os.environ.get("LANGSMITH_PROJECT")
-    if project:
-        return project
-
-    headers = os.environ.get("OTEL_EXPORTER_OTLP_HEADERS", "")
-    for part in headers.split(","):
-        if part.lower().startswith("langsmith-project="):
-            return part.split("=", 1)[1]
-    return None
-
-
-def _langsmith_api_key() -> str | None:
-    if api_key := os.environ.get("LANGSMITH_API_KEY"):
-        return api_key
-    headers = os.environ.get("OTEL_EXPORTER_OTLP_HEADERS", "")
-    for part in headers.split(","):
-        if part.lower().startswith("x-api-key="):
-            return part.split("=", 1)[1]
-    return None
+def _public_audio_url(recording: CallAudioRecording) -> str | None:
+    """Build a click-through URL when an operator has stood up a static
+    file server in front of the recordings dir. Without one, span
+    attributes carry the raw filesystem path instead.
+    """
+    base = os.environ.get("OPENCLAW_AUDIO_PUBLIC_BASE_URL", "").rstrip("/")
+    if not base:
+        return None
+    return f"{base}/{recording.agent_name}/{recording.host_path.name}"
 
 
 async def start_call_audio_recording(
@@ -141,6 +165,7 @@ async def start_call_audio_recording(
     )
     logger.info("audio egress started: call_sid=%s egress_id=%s", call_sid, egress_id)
     trace(f"audio egress started call_sid={call_sid} egress_id={egress_id}")
+    _annotate_active_span(recording, finalized=False)
     return recording
 
 
@@ -177,82 +202,84 @@ async def _wait_for_recording(path: Path, timeout_seconds: float) -> bool:
     return False
 
 
-def _upload_langsmith_attachment(recording: CallAudioRecording) -> None:
-    from langsmith import Client
-    from langsmith.run_trees import RunTree
+def _annotate_active_span(recording: CallAudioRecording, *, finalized: bool) -> None:
+    """Decorate the currently active OTel span with audio recording metadata.
 
-    project = _langsmith_project()
-    api_key = _langsmith_api_key()
-    if not project or not api_key:
-        logger.warning("LangSmith audio attachment skipped: missing project or API key")
+    Two write windows: ``start_call_audio_recording`` writes path/mime
+    immediately so the recording is discoverable mid-call, and the
+    shutdown hook updates the span with size/duration once egress
+    finalizes the file.
+    """
+    try:
+        from opentelemetry import trace as otel_trace
+    except ImportError:
         return
-
-    client = Client(
-        api_key=api_key,
-        api_url=os.environ.get("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com"),
-    )
-    metadata = {
-        "thread_id": recording.call_sid,
-        "call_sid": recording.call_sid,
-        "agent": recording.agent_name,
-        "room": recording.room_name,
-        "egress_id": recording.egress_id,
-        "recording_path": str(recording.host_path),
-        "recording_mime_type": recording.mime_type,
-        "recording_bytes": recording.host_path.stat().st_size,
-        "recording_duration_seconds": round(time.time() - recording.started_at, 1),
-    }
-    run = RunTree(
-        name="call_audio",
-        run_type="chain",
-        project_name=project,
-        ls_client=client,
-        inputs={"call_sid": recording.call_sid, "room": recording.room_name},
-        outputs={"recording_path": str(recording.host_path)},
-        tags=["audio", "recording", recording.agent_name],
-        extra={"metadata": metadata},
-        attachments={"full_call_audio": (recording.mime_type, recording.host_path)},
-        dangerously_allow_filesystem=True,
-    )
-    run.end(outputs={"recording_path": str(recording.host_path)}, metadata=metadata)
-    run.post()
-    run.wait()
+    span = otel_trace.get_current_span()
+    if span is None or not span.is_recording():
+        return
+    span.set_attribute("openclaw.audio.call_sid", recording.call_sid)
+    span.set_attribute("openclaw.audio.path", str(recording.host_path))
+    span.set_attribute("openclaw.audio.mime_type", recording.mime_type)
+    if recording.egress_id:
+        span.set_attribute("openclaw.audio.egress_id", recording.egress_id)
+    public_url = _public_audio_url(recording)
+    if public_url:
+        span.set_attribute("openclaw.audio.url", public_url)
+    if finalized and recording.host_path.exists():
+        try:
+            size = recording.host_path.stat().st_size
+            span.set_attribute("openclaw.audio.bytes", int(size))
+        except OSError:
+            pass
+        span.set_attribute(
+            "openclaw.audio.duration_seconds",
+            round(time.time() - recording.started_at, 1),
+        )
 
 
-async def attach_call_audio_to_langsmith(
+async def finalize_call_audio_recording(
     recording: CallAudioRecording | None,
     *,
     timeout_seconds: float = 30.0,
 ) -> None:
-    """Finalize egress and upload the recorded audio file to LangSmith."""
+    """Stop egress, wait for the file to settle, decorate the trace.
+
+    Replaces the legacy LangSmith upload path. The recording stays on
+    disk; observability backends discover it via the
+    ``openclaw.audio.path`` / ``openclaw.audio.url`` span attributes.
+    """
     if recording is None:
         return
     await _stop_egress(recording)
     ready = await _wait_for_recording(recording.host_path, timeout_seconds)
     if not ready:
-        logger.warning("audio attachment skipped; recording not ready: %s", recording.host_path)
-        trace(f"audio attachment skipped recording not ready: {recording.host_path}")
+        logger.warning("audio recording finalize: file not ready: %s", recording.host_path)
+        trace(f"audio recording finalize: file not ready: {recording.host_path}")
         return
+    _annotate_active_span(recording, finalized=True)
+    logger.info(
+        "audio recording finalized: %s (%d bytes)",
+        recording.host_path,
+        recording.host_path.stat().st_size,
+    )
+    trace(f"audio recording finalized: {recording.host_path}")
 
-    try:
-        await asyncio.to_thread(_upload_langsmith_attachment, recording)
-    except Exception as exc:
-        logger.warning("LangSmith audio attachment upload failed: %s", exc)
-        trace(f"LangSmith audio attachment upload failed: {exc}")
-        return
-    logger.info("LangSmith audio attachment uploaded: %s", recording.host_path)
-    trace(f"LangSmith audio attachment uploaded: {recording.host_path}")
+
+# Backwards-compatible alias — agents currently call this name.
+attach_call_audio_to_langsmith = finalize_call_audio_recording
 
 
 def wire_call_audio_attachment(ctx: Any, recording: CallAudioRecording | None) -> None:
-    """Attach full-call audio during LiveKit job shutdown."""
+    """Register a shutdown hook that finalizes the recording and writes
+    its location into the active OTel span.
+    """
     if recording is None:
         return
     add_shutdown_callback = getattr(ctx, "add_shutdown_callback", None)
     if add_shutdown_callback is None:
         return
 
-    async def _upload_audio() -> None:
-        await attach_call_audio_to_langsmith(recording)
+    async def _finalize_audio() -> None:
+        await finalize_call_audio_recording(recording)
 
-    add_shutdown_callback(_upload_audio)
+    add_shutdown_callback(_finalize_audio)

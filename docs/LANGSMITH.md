@@ -1,103 +1,50 @@
-# LangSmith Operations
+# LangSmith (archived)
 
-This repo sends LiveKit voice-agent observability to LangSmith through two
-paths:
+> **As of 2026-05-01 the repo standardized on SigNoz as the primary
+> observability backend.** This document is archived. For the active
+> observability docs see **[OBSERVABILITY.md](OBSERVABILITY.md)**.
 
-1. **LiveKit OTel spans**: `sdk.tracing.setup_langsmith_tracing()` installs a
-   provider before each `AgentServer` is created. LiveKit framework spans then
-   flow through `LangSmithSpanProcessor` to the OTLP endpoint.
-2. **Curated live runs**: `sdk.telemetry` and `sdk.transcript` emit short-lived
-   root runs for transcript messages, tool calls, usage, and errors. These are
-   intentionally detached from the long `agent_session` span so they appear in
-   LangSmith while the call is still active.
+The LangSmith provisioning code (`ops/langsmith/`) is kept in-tree as
+an opt-in component but is not part of the default agent runtime. The
+former `LangSmithSpanProcessor` was renamed to `LiveKitOtelEnricher`
+(in `sdk/src/sdk/livekit_otel_enricher.py`) at the same time and is now
+vendor-neutral — it writes the same `gen_ai.*` semantic-convention
+attributes to whichever backend is configured.
 
-Both paths set `langsmith.metadata.thread_id` to the stable call id when
-available. In LangSmith, the `Threads` tab should therefore show one thread per
-call, while the `Runs` tab shows the individual transcript/tool/usage actions.
+## Why we moved off LangSmith as the primary
 
-## Startup Order
+* **Single pane of glass.** SigNoz hosts traces, logs, metrics, the
+  service map, and exception tracking under one URL. LangSmith is
+  call-narrative only; everything else (HTTP child spans, log
+  correlation, P95 latency by service) was already happening in SigNoz.
+* **Open telemetry, open data.** ClickHouse on disk, queryable however
+  we want. No per-trace pricing, no PII leaving the laptop.
+* **One set of conventions.** SigNoz reads stock GenAI semantic-convention
+  attributes (`gen_ai.*`, `openinference.*`, `http.*`, `service.*`) — the
+  same attributes the agent SDK already emits.
 
-The order matters:
+## How to reactivate LangSmith if you ever need it
 
-1. Agent module calls `load_env()` / `load_env_once()`.
-2. Env loading calls `setup_langsmith_tracing()`.
-3. The module creates `AgentServer`.
-4. The job entrypoint registers `wire_langsmith_shutdown_flush(ctx)`.
-5. The job awaits `session.start(...)`.
-6. The job calls `attach_current_span_metadata(...)`.
+1. Add `langsmith` to `OPENCLAW_OTEL_EXPORTERS` in
+   `secrets/livekit-agents.env`:
 
-This is correct for the pinned LiveKit Agents API with `capture_run=False`:
-`AgentSession.start()` creates and attaches the `agent_session` span, starts
-runtime tasks, and returns. Re-check this assumption when upgrading LiveKit.
+   ```bash
+   OPENCLAW_OTEL_EXPORTERS=otlp,langsmith
+   OTEL_EXPORTER_OTLP_ENDPOINT=https://api.smith.langchain.com/otel
+   OTEL_EXPORTER_OTLP_HEADERS="x-api-key=...,Langsmith-Project=Harem World"
+   LANGSMITH_TRACING=true
+   ```
 
-## Environment
+2. (Optional) Re-run the LangSmith infrastructure-as-code:
 
-Tracing is off unless `LANGSMITH_TRACING=true`.
+   ```bash
+   make langsmith-plan-legacy
+   make langsmith-provision-legacy
+   ```
 
-Required when enabled:
+3. `make deploy`.
 
-- `OTEL_EXPORTER_OTLP_ENDPOINT=https://api.smith.langchain.com/otel`
-- `OTEL_EXPORTER_OTLP_HEADERS=x-api-key=<key>,Langsmith-Project=<fallback>`
-
-Deploy renders per-agent project names:
-
-- `LANGSMITH_PROJECT_NYLA=Nyla`
-- `LANGSMITH_PROJECT_AOI=Aoi`
-- `LANGSMITH_PROJECT_PARTY=Party`
-
-The tracing setup rewrites the `Langsmith-Project` OTLP header before the
-exporter is constructed, so each launchd agent lands in its own LangSmith
-project.
-
-Useful toggles:
-
-- `LANGSMITH_VERBOSE_TELEMETRY=true`: export low-level state/metric chatter
-  such as speaking state changes, overlap events, and raw realtime metrics.
-- `LANGSMITH_PROCESSOR_DEBUG=true`: print span extraction diagnostics.
-- `LANGSMITH_ATTACH_AUDIO=true`: start LiveKit Egress and attach full-call
-  audio to LangSmith after hangup.
-
-## Two-Track Runs
-
-Some events appear twice by design:
-
-- LiveKit nested spans preserve the framework execution tree.
-- Curated root runs make operator views live, filterable, and thread-friendly.
-
-For example, a tool call can appear as a nested LiveKit `function_tool` span and
-as an immediate top-level `tool` run. The nested span is useful for turn
-hierarchy and evaluator context; the curated run is useful for live monitoring
-and filtering by `tool:<name>`.
-
-## Audio Attachments
-
-Full-call audio uses LiveKit Egress, not OTel. The agent starts an audio-only
-room composite recording, waits for the output file on shutdown, then uploads a
-LangSmith SDK `RunTree` named `call_audio` with a `full_call_audio` attachment.
-
-Local compose mounts:
-
-- Host: `./logs/voice/recordings`
-- Egress container: `/recordings`
-
-The `call_audio` run carries the same `thread_id` / `call_sid` metadata as the
-rest of the call.
-
-## Verification
-
-Run:
-
-```bash
-make trace-check
-make langsmith-plan
-make langsmith-provision
-make up
-make deploy
-```
-
-Then place a real call and verify:
-
-- The run lands in the correct per-agent project.
-- One LangSmith thread represents the call.
-- Transcript, tool, and usage rows appear while the call is live.
-- A `call_audio` run with `full_call_audio` appears after hangup.
+The `LiveKitOtelEnricher` will continue to write
+`langsmith.span.kind` / `langsmith.metadata.*` mirrors alongside the
+canonical `gen_ai.*` attributes, and the second exporter will fan the
+same data out to LangSmith. The SigNoz path keeps working unchanged.

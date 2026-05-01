@@ -10,7 +10,6 @@ from typing import Any
 
 from livekit.agents import AgentSession
 
-from .telemetry import emit_conversation_span
 from .trace import trace
 
 logger = logging.getLogger("openclaw-livekit.agent")
@@ -97,13 +96,6 @@ def wire_transcript_logging(
         if text.strip():
             clean_text = text.strip()
             _write_transcript_line(call_sid, role, clean_text)
-            emit_conversation_span(
-                call_sid=call_sid,
-                agent_name=agent_name,
-                role=role,
-                text=clean_text,
-                metrics=getattr(item, "metrics", None),
-            )
 
     logger.info(
         "transcript logging wired for call_sid=%s (dir=%s)",

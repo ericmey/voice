@@ -26,9 +26,11 @@ target-version = "py312"
 extend-exclude = [".venv", "__pycache__", "build", "dist"]
 
 [tool.ruff.format]
-# Vendored verbatim from langchain-ai/voice-agents-tracing. Skip the
-# formatter so we can re-sync from upstream without merge churn.
-exclude = ["sdk/src/sdk/langsmith_processor.py"]
+# Originally vendored verbatim from langchain-ai/voice-agents-tracing
+# (langsmith_processor.py). Renamed in-place to livekit_otel_enricher.py
+# during the SigNoz-primary refactor; we still skip the formatter so an
+# upstream re-sync of the un-renamed branches stays merge-clean.
+exclude = ["sdk/src/sdk/livekit_otel_enricher.py"]
 
 [tool.ruff.lint]
 select = [
@@ -48,19 +50,20 @@ ignore = ["B008", "E501"]
 "**/tests/test_imports.py" = ["F401"]
 # Package __init__.py re-exports don't need to be marked __all__.
 "**/__init__.py" = ["F401"]
-# Vendored verbatim from langchain-ai/voice-agents-tracing — keep upstream
-# style intact so we can re-sync without merge churn.
-"sdk/src/sdk/langsmith_processor.py" = ["UP045", "UP006", "UP007", "UP035"]
+# Vendored from langchain-ai/voice-agents-tracing (renamed to
+# livekit_otel_enricher.py) — keep upstream style intact on the
+# non-LOCAL-DELTA branches so we can re-sync without merge churn.
+"sdk/src/sdk/livekit_otel_enricher.py" = ["UP045", "UP006", "UP007", "UP035"]
 
 # ---- pyright: static type checker -------------------------------------
 # Run via:  make typecheck  (or:  uv run pyright)
 [tool.pyright]
 include = ["sdk", "tools", "agents"]
-# langsmith_processor.py is vendored verbatim from upstream — it has
-# loose Optional handling that pyright flags. Excluded so we can re-sync
-# from upstream without merge churn; our own ``sdk/tracing.py`` is the
-# narrow, typed entry point.
-exclude = ["**/.venv", "**/__pycache__", "**/build", "**/dist", "sdk/src/sdk/langsmith_processor.py"]
+# livekit_otel_enricher.py is vendored from upstream (formerly
+# langsmith_processor.py) — it has loose Optional handling that
+# pyright flags. Excluded so we can re-sync from upstream without merge
+# churn; ``sdk/tracing.py`` is the narrow, typed entry point.
+exclude = ["**/.venv", "**/__pycache__", "**/build", "**/dist", "sdk/src/sdk/livekit_otel_enricher.py"]
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.12"

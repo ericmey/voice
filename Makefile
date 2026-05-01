@@ -8,7 +8,9 @@ SHELL := /usr/bin/env bash
 .PHONY: help bootstrap up down logs health test \
         deploy teardown cycle \
         register-sip tail truncate-logs \
-        sync-venvs lint typecheck verify
+        sync-venvs lint typecheck verify \
+        signoz-up signoz-down signoz-status signoz-logs signoz signoz-update signoz-nuke \
+        signoz-wire-gateway signoz-verify-gateway
 
 help: ## List the common verbs
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[1;34m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -66,15 +68,49 @@ tail: ## Follow all three agent logs with color-coded prefix
 truncate-logs: ## Zero out all agent logs (clean baseline for testing)
 	scripts/truncate-logs.sh
 
-trace-check: ## Verify LangSmith OTel endpoint accepts our key (run after editing secrets/livekit-agents.env)
-	scripts/trace-check.sh
+# ---- SigNoz (primary observability stack — traces+logs+metrics) ----
 
-# ---- LangSmith infrastructure-as-code (ops/langsmith/) ----
+signoz-up: ## Start SigNoz locally (clones to ~/.signoz on first run, then docker compose up)
+	scripts/signoz.sh up
 
-langsmith-plan: ## Preview LangSmith provisioning changes (no API writes)
+signoz-down: ## Stop SigNoz containers (data volumes preserved)
+	scripts/signoz.sh down
+
+signoz-status: ## docker compose ps for the SigNoz stack
+	scripts/signoz.sh status
+
+signoz-logs: ## Follow SigNoz container logs (pass ARGS=<service> to scope)
+	scripts/signoz.sh logs $(ARGS)
+
+signoz: ## Open the SigNoz UI in your default browser (http://localhost:8080)
+	scripts/signoz.sh open
+
+signoz-update: ## Pull the latest SigNoz upstream (run signoz-up afterward to apply)
+	scripts/signoz.sh update
+
+signoz-nuke: ## DELETE all SigNoz data (ClickHouse + sqlite + zookeeper volumes)
+	scripts/signoz.sh nuke
+
+signoz-import-dashboards: ## Import ops/signoz/dashboards/*.json into local SigNoz (set SIGNOZ_USER + SIGNOZ_PASS)
+	scripts/signoz-import-dashboards.sh
+
+signoz-wire-gateway: ## Wire the OpenClaw gateway's diagnostics-otel plugin into local SigNoz (idempotent; restarts the gateway)
+	scripts/signoz-wire-gateway.sh
+
+signoz-verify-gateway: ## Print current gateway diagnostics.otel config + plugin status (read-only)
+	scripts/signoz-wire-gateway.sh --verify
+
+# ---- LangSmith provisioning (legacy — only used if you re-enable the
+# langsmith exporter via OPENCLAW_OTEL_EXPORTERS=langsmith). The repo
+# standardized on SigNoz on 2026-05-01; the targets and ops/langsmith/
+# tree stay around so a future operator can reactivate the LangSmith
+# IaC without rebuilding it from scratch. They're hidden from `make
+# help` by omitting the leading `##`.
+
+langsmith-plan-legacy:
 	uv run python -m ops.langsmith.provision --dry-run
 
-langsmith-provision: ## Apply LangSmith config — datasets, feedback configs, annotation queues
+langsmith-provision-legacy:
 	uv run python -m ops.langsmith.provision
 
 # ---- tests ---------------------------------------------------------

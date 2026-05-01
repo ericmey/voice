@@ -1,7 +1,7 @@
 """Tests for the LOCAL DELTA branches we added to the vendored
-``LangSmithSpanProcessor`` for LiveKit-specific span types.
+:class:`LiveKitOtelEnricher` for LiveKit-specific span types.
 
-The vendored processor (``sdk/src/sdk/langsmith_processor.py``) is
+The enricher (``sdk/src/sdk/livekit_otel_enricher.py``) is
 verbatim-from-upstream EXCEPT for two branches we added: one for
 ``function_tool`` spans (LiveKit emits one per tool invocation) and
 one for ``user_turn`` spans (LiveKit emits one per user-spoken turn
@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-from sdk.langsmith_processor import LangSmithSpanProcessor
+from sdk.livekit_otel_enricher import LiveKitOtelEnricher, remember_live_trace_call_metadata
 
 
 def _make_span(name: str, attributes: dict[str, Any]) -> MagicMock:
@@ -36,11 +36,11 @@ def _make_span(name: str, attributes: dict[str, Any]) -> MagicMock:
     return span
 
 
-def _make_processor() -> LangSmithSpanProcessor:
-    """Processor with a no-op downstream so we can inspect the span
-    state without an HTTP export firing."""
+def _make_processor() -> LiveKitOtelEnricher:
+    """Enricher with a no-op downstream so we can inspect the span state
+    without an HTTP export firing."""
     downstream = MagicMock()
-    return LangSmithSpanProcessor(downstream_processor=downstream)
+    return LiveKitOtelEnricher(downstream_processor=downstream)
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +386,50 @@ def test_thread_id_prefers_call_sid_over_trace_id() -> None:
     assert span_b._attributes["langsmith.metadata.thread_id"] == "SCL_call1"
 
 
+def test_call_thread_id_propagates_to_livekit_child_spans() -> None:
+    """Timed LiveKit child spans must land in the same call thread as curated runs."""
+    processor = _make_processor()
+    root = _make_span(
+        "agent_session",
+        {
+            "langsmith.metadata.call_sid": "SCL_call1",
+            "langsmith.metadata.agent": "phone-nyla",
+            "lk.job_id": "AJ_job1",
+        },
+    )
+    root.parent = object()
+    child = _make_span("agent_turn", {"lk.e2e_latency": 1.25})
+    child.parent = object()
+
+    processor.on_end(root)
+    processor.on_end(child)
+
+    assert child._attributes["langsmith.metadata.thread_id"] == "SCL_call1"
+    assert child._attributes["langsmith.metadata.call_sid"] == "SCL_call1"
+    assert child._attributes["langsmith.metadata.agent"] == "phone-nyla"
+    assert child._attributes["langsmith.metadata.e2e_latency_ms"] == "1250.0"
+
+
+def test_live_call_thread_id_propagates_before_session_root_ends() -> None:
+    """Child spans end during the call, before agent_session closes at hangup."""
+    processor = _make_processor()
+    child = _make_span("agent_turn", {"lk.job_id": "AJ_job1", "lk.e2e_latency": 1.25})
+    child.context.trace_id = 0x12345
+    remember_live_trace_call_metadata(
+        child.context.trace_id,
+        {
+            "langsmith.metadata.call_sid": "SCL_call1",
+            "langsmith.metadata.agent": "phone-nyla",
+        },
+    )
+
+    processor.on_end(child)
+
+    assert child._attributes["langsmith.metadata.thread_id"] == "SCL_call1"
+    assert child._attributes["langsmith.metadata.call_sid"] == "SCL_call1"
+    assert child._attributes["langsmith.metadata.agent"] == "phone-nyla"
+
+
 def test_conversation_id_does_not_set_fake_parent_span_id() -> None:
     """Do not write malformed LangSmith parent ids.
 
@@ -698,13 +742,13 @@ def test_function_tool_span_writes_tool_result_metadata() -> None:
     assert span._attributes["langsmith.metadata.tool_result"] == "row1\nrow2\nrow3"
 
 
-def test_function_tool_span_is_deferred_until_assistant_response_resolves() -> None:
-    """The function_tool span must NOT export immediately — it has to
-    wait for the next llm_node to capture agent_response. Otherwise
-    the evaluator gets a function_tool run with empty agent_response
-    every time."""
+def test_function_tool_span_exports_immediately() -> None:
+    """Tool spans must export the moment LiveKit closes them. The
+    earlier ``deferred_tool_spans`` mechanism existed only to backfill
+    ``agent_response`` for LangSmith's recall-accuracy-judge; once we
+    standardized on SigNoz the deferral was pure latency tax."""
     downstream = MagicMock()
-    processor = LangSmithSpanProcessor(downstream_processor=downstream)
+    processor = LiveKitOtelEnricher(downstream_processor=downstream)
     trace_id = 0xBBBB2222
 
     span = _make_span(
@@ -718,82 +762,51 @@ def test_function_tool_span_is_deferred_until_assistant_response_resolves() -> N
     _set_trace_id(span, trace_id)
     processor.on_end(span)
 
-    # downstream.on_end was NOT called for the function_tool span yet
     end_calls = [c for c in downstream.on_end.call_args_list if c.args[0] is span]
-    assert end_calls == [], "function_tool span should be deferred, not exported"
+    assert len(end_calls) == 1, "function_tool span should export immediately"
 
 
-def test_llm_node_tracks_latest_assistant_response_for_release() -> None:
-    """The processor must remember the most recent llm_node text per
-    trace so it can backfill agent_response on deferred tool spans
-    when the turn ends."""
+def test_processor_no_longer_tracks_assistant_response_state() -> None:
+    """The ``latest_assistant_response`` mapping was a side-channel
+    feeding the deferred-tool-spans release. After the SigNoz refactor
+    that state is gone — there's no in-flight bookkeeping to leak."""
+    processor = _make_processor()
+    assert not hasattr(processor, "latest_assistant_response")
+    assert not hasattr(processor, "deferred_tool_spans")
+
+
+def test_function_tool_carries_user_question_metadata() -> None:
+    """``langsmith.metadata.user_question`` and ``openclaw.user_question``
+    still get stamped onto every tool span so operators can filter
+    "every musubi_search where the user asked X" in any backend."""
     processor = _make_processor()
     trace_id = 0xCCCC3333
 
-    span = _make_span(
-        "llm_node",
-        {
-            "lk.chat_ctx": '{"items": [{"type": "message", "role": "user", "content": "x"}]}',
-            "lk.response.text": "the schedule is X",
-        },
-    )
-    _set_trace_id(span, trace_id)
-    processor.on_end(span)
-
-    trace_id_hex = format(trace_id, "032x")
-    assert processor.latest_assistant_response[trace_id_hex] == "the schedule is X"
-
-
-def test_next_user_turn_releases_deferred_tool_with_agent_response() -> None:
-    """On the next user_turn START (signal that the previous turn
-    fully resolved), any deferred tool spans must be released with
-    the latest tracked LLM output as agent_response, then exported."""
-    downstream = MagicMock()
-    processor = LangSmithSpanProcessor(downstream_processor=downstream)
-    trace_id = 0xDDDD4444
-
-    # Turn 1: user_turn, function_tool (deferred), llm_node
-    user_turn_1 = _make_span("user_turn", {"lk.user_transcript": "what's my favorite band?"})
-    _set_trace_id(user_turn_1, trace_id)
-    processor.on_end(user_turn_1)
+    user_turn = _make_span("user_turn", {"lk.user_transcript": "what's the weather?"})
+    _set_trace_id(user_turn, trace_id)
+    processor.on_end(user_turn)
 
     tool_span = _make_span(
         "function_tool",
         {
-            "lk.function_tool.name": "musubi_search",
-            "lk.function_tool.arguments": '{"query": "favorite band"}',
-            "lk.function_tool.output": "Gojira",
+            "lk.function_tool.name": "weather_lookup",
+            "lk.function_tool.arguments": "{}",
+            "lk.function_tool.output": "72F sunny",
         },
     )
     _set_trace_id(tool_span, trace_id)
     processor.on_end(tool_span)
 
-    llm_span = _make_span(
-        "llm_node",
-        {"lk.chat_ctx": "{}", "lk.response.text": "Your favorite band is Gojira."},
-    )
-    _set_trace_id(llm_span, trace_id)
-    processor.on_end(llm_span)
-
-    # Turn 2 begins — this should trigger release of the deferred tool span
-    user_turn_2 = _make_span("user_turn", {"lk.user_transcript": "and my Tesla?"})
-    _set_trace_id(user_turn_2, trace_id)
-    processor.on_start(user_turn_2)
-
-    assert (
-        tool_span._attributes["langsmith.metadata.agent_response"]
-        == "Your favorite band is Gojira."
-    )
-    end_calls = [c for c in downstream.on_end.call_args_list if c.args[0] is tool_span]
-    assert len(end_calls) == 1, "deferred tool span should be exported exactly once"
+    assert tool_span._attributes["langsmith.metadata.user_question"] == "what's the weather?"
+    assert tool_span._attributes["openclaw.user_question"] == "what's the weather?"
 
 
-def test_job_span_end_flushes_deferred_tool_spans() -> None:
-    """If the call ends without a follow-up user_turn (final turn of
-    the call), the deferred tool spans must still get exported on job
-    cleanup — using whatever assistant_response we have, even if empty."""
+def test_user_turn_then_tool_span_then_job_end_all_export_independently() -> None:
+    """Smoke-check the end-to-end flow on the new immediate-export
+    path: user_turn, function_tool, llm_node, and job span each fan
+    through ``downstream.on_end`` exactly once with no holdback."""
     downstream = MagicMock()
-    processor = LangSmithSpanProcessor(downstream_processor=downstream)
+    processor = LiveKitOtelEnricher(downstream_processor=downstream)
     trace_id = 0xEEEE5555
 
     user_turn = _make_span("user_turn", {"lk.user_transcript": "save this for me"})
@@ -818,15 +831,15 @@ def test_job_span_end_flushes_deferred_tool_spans() -> None:
     _set_trace_id(llm_span, trace_id)
     processor.on_end(llm_span)
 
-    # Job span ends — no next user_turn ever fires
     job_span = _make_span("job", {"lk.job_id": "AJ_x"})
     _set_trace_id(job_span, trace_id)
     job_span.parent = None
     processor.on_end(job_span)
 
-    end_calls = [c for c in downstream.on_end.call_args_list if c.args[0] is tool_span]
-    assert len(end_calls) == 1, "deferred tool span should be flushed on job end"
-    assert tool_span._attributes["langsmith.metadata.agent_response"] == "saved it for you"
+    exported = [c.args[0] for c in downstream.on_end.call_args_list]
+    assert tool_span in exported, "tool span must export"
+    assert user_turn in exported, "user_turn span must export"
+    assert llm_span in exported, "llm_node span must export"
 
 
 def test_function_tool_error_path_writes_tool_error_metadata() -> None:

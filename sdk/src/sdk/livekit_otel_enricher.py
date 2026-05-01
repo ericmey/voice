@@ -1,51 +1,86 @@
-"""
-LangSmith span processor for LiveKit Agents.
+"""LiveKit OpenTelemetry span enricher.
 
-Vendored from the LangSmith voice-agents-tracing demo repo:
+Decorates the OTel spans LiveKit emits (`agent_session`, `agent_turn`,
+`llm_request`, `tts_request`, `function_tool`, `user_turn`, ...) with
+GenAI semantic-convention attributes so they render correctly in
+SigNoz, Phoenix, Honeycomb, Datadog, or any other OTLP-compatible
+backend.
+
+Three families of attributes are written on every relevant span:
+
+* **OTel GenAI** — `gen_ai.system`, `gen_ai.request.model`,
+  `gen_ai.usage.input_tokens` / `output_tokens` / `total_tokens`,
+  `gen_ai.operation.name`, `gen_ai.tool.name`,
+  `gen_ai.server.time_to_first_token`. Read natively by SigNoz's
+  LiveKit dashboard.
+* **OpenInference** — `openinference.span.kind` ∈ {LLM, TOOL, CHAIN}.
+  Cross-backend compatible (Phoenix, Arize).
+* **OpenClaw** — `openclaw.call_sid`, `openclaw.agent`,
+  `openclaw.role`, `openclaw.tool_name`, `openclaw.user_question`,
+  `openclaw.tool.result`, `openclaw.tool.error`. Stable filter
+  dimensions for our own dashboards.
+
+LangSmith-specific mirrors (`langsmith.span.kind`,
+`langsmith.metadata.*`) are still written so the LangSmith exporter
+continues to work when explicitly re-enabled via
+`OPENCLAW_OTEL_EXPORTERS=langsmith`. They're no-ops to other backends.
+
+History: vendored from
 https://github.com/langchain-ai/voice-agents-tracing/blob/main/livekit/langsmith_processor.py
+when the repo first integrated LangSmith. After the SigNoz-primary
+refactor (2026-05-01) the processor was renamed and its scope shifted
+from LangSmith-specific translation to vendor-neutral enrichment.
 
-Enriches OpenTelemetry spans from LiveKit Agents with LangSmith-compatible
-attributes for proper conversation tracking and visualization.
-
-LOCAL DELTA from upstream (search for "LOCAL DELTA" markers):
-  1. ``function_tool`` span branch — extracts ``lk.function_tool.{name,arguments,output,is_error}``
-     so tool calls render in LangSmith. Upstream's elif chain misses
-     this span name and falls through to a content-less "chain".
-  2. ``user_turn`` span branch — extracts ``lk.user_transcript`` so
-     the user's speech-to-text transcription renders. Upstream's "stt"
-     branch checks ``transcript`` / ``text`` / ``output`` attributes
-     but LiveKit's user_turn span uses ``lk.user_transcript`` and a
-     name that doesn't match upstream's ``stt`` heuristic.
-
-Re-syncing from upstream: re-apply the two LOCAL DELTA blocks against
-the new file. Upstream is largely dormant (single "rename" commit
-since vendor) so churn risk is low.
-
-Set ``LANGSMITH_PROCESSOR_DEBUG=true`` to emit verbose extraction
-diagnostics to stderr. Default production behavior stays quiet so call
-content is not duplicated into process logs.
+Set ``OPENCLAW_OTEL_DEBUG=true`` (or the legacy
+``LANGSMITH_PROCESSOR_DEBUG=true``) to emit verbose diagnostics to
+stderr. Default production behavior stays quiet so call content is not
+duplicated into process logs.
 """
 # ruff: noqa: T201, E501
 
 import json
 import logging
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from typing import Optional
+from typing import Any, Optional
 
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-# Optional verbose logging for local debugging
-DEBUG = os.getenv("LANGSMITH_PROCESSOR_DEBUG", "false").lower() in ("true", "1", "yes")
-logger = logging.getLogger("langsmith_processor")
+DEBUG = (
+    os.getenv("OPENCLAW_OTEL_DEBUG", "").lower() in ("true", "1", "yes")
+    or os.getenv("LANGSMITH_PROCESSOR_DEBUG", "").lower() in ("true", "1", "yes")
+)
+logger = logging.getLogger("openclaw-livekit.otel_enricher")
 if DEBUG and not logger.handlers:
     handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s [LANGSMITH] %(levelname)s %(message)s"))
+    handler.setFormatter(logging.Formatter("%(asctime)s [OTEL-ENRICH] %(levelname)s %(message)s"))
     logger.addHandler(handler)
     logger.setLevel(logging.DEBUG)
+
+_LIVE_TRACE_CALL_METADATA: dict[str, dict[str, str]] = {}
+
+
+def remember_live_trace_call_metadata(trace_id: int | str, metadata: Mapping[str, Any]) -> None:
+    """Register call metadata for a still-open LiveKit trace.
+
+    ``SpanProcessor.on_end`` sees child spans as they finish, but the call-level
+    ``agent_session`` span only ends at hangup. Agent entrypoints call
+    ``attach_current_span_metadata`` right after ``session.start``; this keeps
+    that metadata available so child spans inherit the stable call thread while
+    the call is still active.
+    """
+    normalized_trace_id = format(trace_id, "032x") if isinstance(trace_id, int) else str(trace_id)
+    clean: dict[str, str] = {}
+    for key, value in metadata.items():
+        if value is None or value == "":
+            continue
+        metadata_key = key if key.startswith("langsmith.metadata.") else f"langsmith.metadata.{key}"
+        clean[metadata_key] = str(value)
+    if clean:
+        _LIVE_TRACE_CALL_METADATA.setdefault(normalized_trace_id, {}).update(clean)
 
 
 def _debug_print(*args, **kwargs) -> None:
@@ -57,22 +92,50 @@ def _verbose_telemetry_enabled() -> bool:
     return os.getenv("LANGSMITH_VERBOSE_TELEMETRY", "").lower() in ("true", "1", "yes")
 
 
-class LangSmithSpanProcessor(SpanProcessor):
-    """
-    Custom OpenTelemetry span processor that enriches LiveKit Agents spans with LangSmith-compatible attributes.
-    This enables proper conversation tracking and message visualization in LangSmith's UI.
+class LiveKitOtelEnricher(SpanProcessor):
+    """OTel span processor that enriches LiveKit spans for SigNoz / any
+    OTLP backend.
+
+    Maps LiveKit's `lk.*` attributes onto OTel GenAI semantic-convention
+    keys (`gen_ai.*`), OpenInference keys, and OpenClaw filter
+    dimensions. LangSmith-specific mirrors are still written for
+    backward compatibility with the optional `langsmith` exporter; they
+    are harmless to other backends.
+
+    Run in `enrichment_only=True` mode when wired alongside one or more
+    `BatchSpanProcessor`s — the enricher mutates the span in `on_end`
+    and the downstream batch processors handle the export. Run without
+    `enrichment_only` to use it as a standalone processor that exports
+    via its own internal `BatchSpanProcessor`.
     """
 
-    def __init__(self, downstream_processor: Optional[SpanProcessor] = None):
+    def __init__(
+        self,
+        downstream_processor: Optional[SpanProcessor] = None,
+        *,
+        enrichment_only: bool = False,
+    ):
+        """Build the processor.
+
+        When ``enrichment_only=True`` (preferred for new code; used by
+        :func:`sdk.tracing.setup_otel_tracing`) the processor mutates
+        spans on ``on_end`` but does NOT export them. Export is handled
+        by separate ``BatchSpanProcessor`` instances registered on the
+        ``TracerProvider`` so the same enriched span fans out to multiple
+        backends (LangSmith + Phoenix + Console + ...).
+
+        When ``downstream_processor`` is provided OR neither flag is
+        passed, the processor falls back to its legacy single-exporter
+        mode (BatchSpanProcessor → OTLPSpanExporter → LangSmith).
+        """
         super().__init__()
-        if downstream_processor is None:
-            # Tight flush window: 1s schedule + 256 batch + 64 export
-            # batch size. Default OTel values (5s / 512 / 512) lose
-            # spans on short voice calls — the call ends and the JOB
-            # subprocess exits before the first batch fires. Voice
-            # turns are tiny in span count but high in latency
-            # sensitivity, so we want each turn's spans visible in
-            # LangSmith ~1s after the turn ends, not at hangup.
+        if enrichment_only:
+            downstream_processor = None
+        elif downstream_processor is None:
+            # Legacy single-exporter mode — kept for tests and any
+            # caller that builds the processor directly. New code paths
+            # construct the processor with ``enrichment_only=True`` and
+            # register exporters separately.
             downstream_processor = BatchSpanProcessor(
                 OTLPSpanExporter(),
                 max_queue_size=2048,
@@ -83,35 +146,17 @@ class LangSmithSpanProcessor(SpanProcessor):
         # Track conversation messages across spans for proper LangSmith grouping
         self.conversation_messages = {}  # trace_id -> list of messages
         self.trace_to_conversation_id = {}  # trace_id -> conversation_id
+        self.trace_to_thread_id: dict[str, str] = {}
+        self.trace_to_call_metadata: dict[str, dict[str, str]] = {}
         # Hold root/job spans until conversation data is ready
         self.deferred_job_spans = {}  # trace_id -> ReadableSpan
-        # Evaluator input enrichment state (recall-accuracy-judge etc.)
-        # Latest user transcript per trace, captured on user_turn end and
-        # written onto subsequent function_tool spans as user_question.
+        # Latest user transcript per trace, captured on user_turn end
+        # and written onto subsequent function_tool spans as
+        # ``user_question`` metadata so operators can filter "every tool
+        # call where the user asked X" in the observability backend.
         self.latest_user_question: dict[str, str] = {}
-        # Latest assistant response per trace, captured on every llm_node
-        # close. Multiple llm_nodes can fire in one turn (tool-call
-        # decision then post-tool reply); we want the LATEST text — the
-        # one the user actually heard — as agent_response.
-        self.latest_assistant_response: dict[str, str] = {}
-        # function_tool spans deferred until we're confident the
-        # assistant's spoken reply has fully resolved. Released on the
-        # NEXT user_turn start (signals current turn is over) or on
-        # job/session cleanup. Needed because the LLM-as-judge evaluator
-        # wants agent_response in the same run as the tool call so it can
-        # score whether the assistant actually used the tool result.
-        self.deferred_tool_spans: dict[str, list[ReadableSpan]] = {}
 
     def on_start(self, span: ReadableSpan, parent_context=None) -> None:
-        # If a new user_turn is starting and we have function_tool spans
-        # deferred from the previous turn, the agent's spoken reply for
-        # that turn is fully resolved — release with the latest tracked
-        # assistant response as agent_response.
-        if span.name and "user_turn" in span.name.lower():
-            trace_id = format(span.context.trace_id, "032x")
-            if trace_id in self.deferred_tool_spans:
-                agent_response = self.latest_assistant_response.get(trace_id, "")
-                self._release_deferred_tool_spans(trace_id, agent_response)
         if self.downstream:
             self.downstream.on_start(span, parent_context)
 
@@ -145,6 +190,8 @@ class LangSmithSpanProcessor(SpanProcessor):
         # branches don't preempt-set langsmith.span.kind without us picking
         # up the latency values too.
         self._enrich_universal_metadata(span)
+        self._capture_trace_call_metadata(span, trace_id)
+        self._apply_trace_call_metadata(span, trace_id)
         span._attributes["langsmith.metadata.thread_id"] = self._thread_id_for_span(span, trace_id)
 
         span_name = span.name.lower()
@@ -197,12 +244,6 @@ class LangSmithSpanProcessor(SpanProcessor):
                 self._track_messages(
                     self.conversation_messages, trace_id, messages, str(output_data)
                 )
-                # Track the latest LLM output as the candidate
-                # agent_response. Multiple llm_node spans can fire per
-                # turn (tool-call decision, then post-tool reply); we
-                # want the last one. Deferred function_tool spans get
-                # released later on the next user_turn / job cleanup.
-                self.latest_assistant_response[trace_id] = str(output_data)
 
         # TTS span: text -> audio
         elif "tts" in span_name or "text_to_speech" in span_name or "synthesis" in span_name:
@@ -335,19 +376,18 @@ class LangSmithSpanProcessor(SpanProcessor):
             # Cleanup
             should_cleanup_trace = is_job_span or span.parent is None
             if should_cleanup_trace:
-                # Release any function_tool spans deferred this trace —
-                # use the latest tracked LLM output as agent_response.
-                # If empty, the evaluator just sees an empty reply.
-                pending_response = self.latest_assistant_response.get(trace_id, "")
-                self._release_deferred_tool_spans(trace_id, pending_response)
                 if trace_id in self.conversation_messages:
                     del self.conversation_messages[trace_id]
                 if trace_id in self.trace_to_conversation_id:
                     del self.trace_to_conversation_id[trace_id]
+                if trace_id in self.trace_to_thread_id:
+                    del self.trace_to_thread_id[trace_id]
+                if trace_id in self.trace_to_call_metadata:
+                    del self.trace_to_call_metadata[trace_id]
+                if trace_id in _LIVE_TRACE_CALL_METADATA:
+                    del _LIVE_TRACE_CALL_METADATA[trace_id]
                 if trace_id in self.latest_user_question:
                     del self.latest_user_question[trace_id]
-                if trace_id in self.latest_assistant_response:
-                    del self.latest_assistant_response[trace_id]
 
         # LOCAL DELTA #1: function_tool span — LiveKit emits one per tool
         # invocation with lk.function_tool.{id,name,arguments,output,is_error}
@@ -378,16 +418,18 @@ class LangSmithSpanProcessor(SpanProcessor):
                 f"{existing_tags},{new_tags}" if existing_tags else new_tags
             )
 
-            # Evaluator-input enrichment for the recall-accuracy-judge:
-            # write the latest user_question + flattened tool_result so
-            # the judge has every input it needs (agent_response gets
-            # filled in below when the next llm_node closes).
+            # Filter dimension: stamp the most recent user transcript
+            # onto this tool span so operators can slice
+            # "every musubi_search call when the user asked about ramen".
             user_question = self.latest_user_question.get(trace_id, "")
             if user_question:
                 span._attributes["langsmith.metadata.user_question"] = user_question
+                span._attributes["openclaw.user_question"] = user_question
             span._attributes["langsmith.metadata.tool_result"] = str(tool_output)
+            span._attributes["openclaw.tool.result"] = str(tool_output)
             if is_error:
                 span._attributes["langsmith.metadata.tool_error"] = "true"
+                span._attributes["openclaw.tool.error"] = True
 
             # Render the tool call as a single-message exchange so the LangSmith
             # UI groups it as "called tool X with args Y, got Z".
@@ -411,11 +453,9 @@ class LangSmithSpanProcessor(SpanProcessor):
                 f"{tool_name} → {completion_content}",
             )
 
-            # Defer export until the next llm_node closes — we need its
-            # output as agent_response for the recall-accuracy-judge.
-            # Released by _release_deferred_tool_spans below; flushed on
-            # job-span close / shutdown if no llm_node ever fires.
-            self._defer_tool_span(trace_id, span)
+            # Tool span is fully described — export immediately so it
+            # lands in SigNoz/whatever backend without being held back.
+            self._export_span(span)
             return
 
         # LOCAL DELTA #2: user_turn span — LiveKit emits one per user
@@ -651,6 +691,11 @@ class LangSmithSpanProcessor(SpanProcessor):
                 continue
             span._attributes[dst] = self._metadata_value(src, value)
 
+        # 1b. Promote token / model / TTFT into the OTel-genai
+        # attributes LangSmith reads for Tokens / Cost / First Token columns
+        # on the run row itself (not just sidebar metadata).
+        self._promote_genai_usage(span, attrs)
+
         # 2. JSON metric blobs — parse + flatten top-level keys
         import json as _json
 
@@ -709,7 +754,9 @@ class LangSmithSpanProcessor(SpanProcessor):
         message/tool runs are short-lived root traces, so the thread id must be
         the stable call/session id instead of the changing OTel trace id.
         """
-        attrs = span.attributes
+        if trace_id in self.trace_to_thread_id:
+            return self.trace_to_thread_id[trace_id]
+        attrs = self._merged_attributes(span)
         for key in (
             "langsmith.metadata.call_sid",
             "langsmith.metadata.session_id",
@@ -723,6 +770,142 @@ class LangSmithSpanProcessor(SpanProcessor):
             if value:
                 return str(value)
         return trace_id
+
+    def _promote_genai_usage(self, span: ReadableSpan, attrs: dict) -> None:
+        """Surface tokens, model, provider, and TTFT in the standard
+        OTel-genai attributes LangSmith reads for the Runs columns.
+
+        Sources LiveKit emits per turn span:
+          - ``lk.realtime_model_metrics`` (JSON blob): input_tokens, output_tokens, model, ttft
+          - ``gen_ai.usage.*``: already in canonical form on some spans
+          - ``lk.agents.usage.llm_*``: token counts on aggregate spans
+          - ``lk.response.ttft``: realtime TTFT in seconds
+          - ``lk.request.model``: model name
+        """
+        import json as _json
+
+        input_tokens = self._coerce_int(
+            attrs.get("gen_ai.usage.input_tokens")
+            or attrs.get("lk.agents.usage.llm_input_tokens")
+        )
+        output_tokens = self._coerce_int(
+            attrs.get("gen_ai.usage.output_tokens")
+            or attrs.get("lk.agents.usage.llm_output_tokens")
+        )
+        cached_tokens = self._coerce_int(
+            attrs.get("gen_ai.usage.input_cached_tokens")
+            or attrs.get("lk.agents.usage.llm_input_cached_tokens")
+        )
+        model: str | None = attrs.get("gen_ai.request.model") or attrs.get("lk.request.model")
+        provider: str | None = attrs.get("gen_ai.provider.name") or attrs.get("lk.provider.name")
+        ttft_seconds: float | None = self._coerce_float(attrs.get("lk.response.ttft"))
+
+        blob = attrs.get("lk.realtime_model_metrics") or attrs.get("lk.llm_metrics")
+        if blob:
+            try:
+                parsed = _json.loads(blob) if isinstance(blob, str) else blob
+            except (TypeError, ValueError):
+                parsed = None
+            if isinstance(parsed, dict):
+                input_tokens = input_tokens if input_tokens is not None else self._coerce_int(
+                    parsed.get("input_tokens") or parsed.get("prompt_tokens")
+                )
+                output_tokens = output_tokens if output_tokens is not None else self._coerce_int(
+                    parsed.get("output_tokens") or parsed.get("completion_tokens")
+                )
+                if cached_tokens is None:
+                    cached_tokens = self._coerce_int(parsed.get("input_cached_tokens"))
+                if model is None:
+                    model = parsed.get("model") or parsed.get("model_name") or parsed.get("label")
+                if provider is None:
+                    provider = parsed.get("provider")
+                if ttft_seconds is None:
+                    ttft_seconds = self._coerce_float(parsed.get("ttft"))
+
+        if input_tokens is not None:
+            span._attributes["gen_ai.usage.input_tokens"] = input_tokens
+            span._attributes["gen_ai.usage.prompt_tokens"] = input_tokens
+        if output_tokens is not None:
+            span._attributes["gen_ai.usage.output_tokens"] = output_tokens
+            span._attributes["gen_ai.usage.completion_tokens"] = output_tokens
+        if input_tokens is not None and output_tokens is not None:
+            total = input_tokens + output_tokens
+            span._attributes["gen_ai.usage.total_tokens"] = total
+        if cached_tokens is not None:
+            span._attributes["gen_ai.usage.input_cached_tokens"] = cached_tokens
+        if model:
+            model_str = str(model)
+            span._attributes["gen_ai.request.model"] = model_str
+            span._attributes["gen_ai.response.model"] = model_str
+            span._attributes.setdefault("langsmith.metadata.ls_model_name", model_str)
+        if provider:
+            provider_str = str(provider)
+            span._attributes["gen_ai.system"] = provider_str
+            span._attributes.setdefault("langsmith.metadata.ls_provider", provider_str)
+        if ttft_seconds is not None and ttft_seconds > 0:
+            span._attributes["gen_ai.server.time_to_first_token"] = ttft_seconds
+            span._attributes["gen_ai.client.operation.time_to_first_chunk"] = ttft_seconds
+
+    @staticmethod
+    def _coerce_int(value: object) -> int | None:
+        if value is None or value == "":
+            return None
+        try:
+            return int(float(value))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _coerce_float(value: object) -> float | None:
+        if value is None or value == "":
+            return None
+        try:
+            return float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+    def _capture_trace_call_metadata(self, span: ReadableSpan, trace_id: str) -> None:
+        """Remember call-level metadata from the session root for child spans."""
+        attrs = self._merged_attributes(span)
+        metadata: dict[str, str] = {}
+        for key in (
+            "langsmith.metadata.call_sid",
+            "langsmith.metadata.agent",
+            "langsmith.metadata.room",
+            "langsmith.metadata.caller_from",
+            "langsmith.metadata.dialed_number",
+            "langsmith.metadata.caller_source",
+        ):
+            value = attrs.get(key)
+            if value:
+                metadata[key] = str(value)
+        if not metadata:
+            return
+        existing = self.trace_to_call_metadata.setdefault(trace_id, {})
+        existing.update(metadata)
+        call_sid = metadata.get("langsmith.metadata.call_sid")
+        if call_sid:
+            self.trace_to_thread_id[trace_id] = call_sid
+
+    def _apply_trace_call_metadata(self, span: ReadableSpan, trace_id: str) -> None:
+        """Propagate session-root call metadata to LiveKit child spans."""
+        metadata = self.trace_to_call_metadata.get(trace_id)
+        live_metadata = _LIVE_TRACE_CALL_METADATA.get(trace_id)
+        if live_metadata:
+            if metadata:
+                metadata = {**live_metadata, **metadata}
+            else:
+                metadata = live_metadata
+        if not metadata:
+            return
+        for key, value in metadata.items():
+            span._attributes.setdefault(key, value)
+
+    def _merged_attributes(self, span: ReadableSpan) -> dict[str, Any]:
+        """Return original plus processor-mutated attributes."""
+        merged = dict(getattr(span, "attributes", {}) or {})
+        merged.update(dict(getattr(span, "_attributes", {}) or {}))
+        return merged
 
     def _set_prompt_attributes(
         self, span: ReadableSpan, messages: list, start_idx: int = 0, log: bool = False
@@ -1257,49 +1440,15 @@ class LangSmithSpanProcessor(SpanProcessor):
                 target_dict[key].append({"role": "assistant", "content": output_data})
 
     def shutdown(self) -> None:
-        self._flush_all_deferred_tool_spans()
         self._flush_deferred_job_spans()
         if self.downstream:
             self.downstream.shutdown()
 
     def force_flush(self, timeout_millis: int = 30000) -> bool:
-        self._flush_all_deferred_tool_spans()
         self._flush_deferred_job_spans()
         if self.downstream:
             return self.downstream.force_flush(timeout_millis)
         return True
-
-    def _defer_tool_span(self, trace_id: str, span: ReadableSpan) -> None:
-        import sys
-
-        self.deferred_tool_spans.setdefault(trace_id, []).append(span)
-        _debug_print(
-            f"⏸️  Deferring function_tool span for trace {trace_id} (awaiting agent_response)",
-            file=sys.stderr,
-            flush=True,
-        )
-
-    def _release_deferred_tool_spans(self, trace_id: str, agent_response: str) -> None:
-        spans = self.deferred_tool_spans.pop(trace_id, [])
-        if not spans:
-            return
-        import sys
-
-        _debug_print(
-            f"🧩 Releasing {len(spans)} deferred function_tool span(s) for trace {trace_id} with agent_response",
-            file=sys.stderr,
-            flush=True,
-        )
-        for tool_span in spans:
-            tool_span._attributes["langsmith.metadata.agent_response"] = agent_response
-            self._export_span(tool_span)
-
-    def _flush_all_deferred_tool_spans(self) -> None:
-        if not self.deferred_tool_spans:
-            return
-        for trace_id in list(self.deferred_tool_spans.keys()):
-            agent_response = self.latest_assistant_response.get(trace_id, "")
-            self._release_deferred_tool_spans(trace_id, agent_response)
 
     def _defer_job_span(self, trace_id: str, span: ReadableSpan):
         import sys
@@ -1347,3 +1496,9 @@ class LangSmithSpanProcessor(SpanProcessor):
     def _export_span(self, span: ReadableSpan):
         if self.downstream:
             self.downstream.on_end(span)
+
+
+__all__ = [
+    "LiveKitOtelEnricher",
+    "remember_live_trace_call_metadata",
+]

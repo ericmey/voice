@@ -12,11 +12,26 @@ dependencies = [
     "aiohttp",
     "langsmith>=0.7.38",
     "python-dotenv",
-    # OTel tracing → LangSmith. Always installed (small wheels) so the
-    # tracing path is one env-var flip away rather than a re-sync. The
-    # exporter activates only when LANGSMITH_TRACING=true.
+    # OTel tracing → LangSmith / Phoenix / Honeycomb / Datadog / SigNoz.
+    # The vendor-neutral OTel pipeline activates whenever
+    # OPENCLAW_OTEL_ENABLED (or legacy LANGSMITH_TRACING) is true.
     "opentelemetry-sdk>=1.27",
     "opentelemetry-exporter-otlp-proto-http>=1.27",
+    # Auto-instrument outbound HTTP so Musubi v2 / gateway / weather
+    # calls surface as child http.client spans under whichever tool is
+    # active. Disable via OPENCLAW_OTEL_HTTP_INSTRUMENTATION=false.
+    "opentelemetry-instrumentation-aiohttp-client>=0.48b0",
+    "opentelemetry-instrumentation-requests>=0.48b0",
+    # OTel logs pipeline: when OPENCLAW_OTEL_LOGS_ENABLED=true (or
+    # the otlp exporter is configured), Python `logging` records ship
+    # as OTLP log records to backends that accept them (SigNoz, Loki
+    # via OTel collector, Datadog Logs, etc.). LangSmith does NOT
+    # accept OTel logs — see docs/OBSERVABILITY.md.
+    "opentelemetry-instrumentation-logging>=0.48b0",
+    # OTel metrics pipeline: feeds the SigNoz LiveKit dashboard's
+    # "HTTP Request Duration" panel and any custom application
+    # counters/histograms. Auto-enabled when an OTLP exporter is on.
+    "opentelemetry-instrumentation-system-metrics>=0.48b0",
 ]
 
 [dependency-groups]

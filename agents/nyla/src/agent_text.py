@@ -17,7 +17,7 @@ from sdk.postcall import wire_postcall_review
 from sdk.telemetry import wire_telemetry_capture
 from sdk.telephony import resolve_caller
 from sdk.trace import trace
-from sdk.tracing import attach_current_span_metadata, wire_langsmith_shutdown_flush
+from sdk.tracing import attach_current_span_metadata, wire_otel_shutdown_flush
 from sdk.transcript import wire_transcript_logging
 
 # --- env ---------------------------------------------------------------
@@ -67,7 +67,7 @@ async def entrypoint_text(ctx: JobContext) -> None:
     # They should not pollute the voice-ops manifest / spawn Rin reviews.
     if call_sid:
         wire_postcall_review(session, call_sid, agent_name="phone-nyla-text")
-    wire_langsmith_shutdown_flush(ctx)
+    wire_otel_shutdown_flush(ctx)
     await session.start(
         agent=agent,
         room=ctx.room,

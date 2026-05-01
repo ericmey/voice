@@ -96,6 +96,24 @@ services:
       - ${LIVEKIT_CONFIG_DIR:-./config}/livekit-egress.yaml:/config.yaml:ro
       - ./logs/voice/recordings:/recordings
 
+# Local "Datadog-light" observability — full traces + logs + metrics with
+# trace correlation — runs in a sibling SigNoz stack, NOT in this compose.
+# Why a separate stack? SigNoz ships a battle-tested ~6-container compose
+# (ClickHouse, Zookeeper, query-service, UI, collector, migrator) plus
+# config files we don't want to vendor and maintain. We run it via
+# `scripts/signoz.sh` which clones the upstream repo into ~/.signoz and
+# `docker compose up`s it on demand. See `make signoz-up`.
+#
+# Once running, SigNoz exposes:
+#   - http://localhost:8080         — UI
+#   - http://localhost:4318/v1/...  — OTLP HTTP (point agents here)
+#   - http://localhost:4317         — OTLP gRPC
+#
+# Agents flip on by setting OPENCLAW_OTEL_EXPORTERS=langsmith,otlp and
+# OPENCLAW_OTLP_ENDPOINT=http://localhost:4318/v1/traces in
+# secrets/livekit-agents.env. Logs ship through the same OTLP endpoint
+# via OTLPLogExporter when OPENCLAW_OTEL_LOGS_ENABLED=true.
+
 # Named volume for persistent Redis state. Survives container recreation
 # and Docker Desktop updates. Wiped only by `docker compose down -v`.
 volumes:

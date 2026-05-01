@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+from unittest.mock import MagicMock
 
 from sdk import audio_recording
 
@@ -12,59 +12,92 @@ def test_recording_dirs_default_under_voice_logs(monkeypatch, tmp_path) -> None:
     assert audio_recording._recordings_host_dir() == tmp_path / "voice" / "recordings"
 
 
-def test_langsmith_project_reads_otel_header(monkeypatch) -> None:
-    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "x-api-key=k,Langsmith-Project=Nyla")
+def test_enabled_reads_new_var_first(monkeypatch) -> None:
+    monkeypatch.setenv("OPENCLAW_RECORD_AUDIO", "true")
+    monkeypatch.setenv("LANGSMITH_ATTACH_AUDIO", "false")
+    assert audio_recording._enabled() is True
 
-    assert audio_recording._langsmith_project() == "Nyla"
+
+def test_enabled_falls_back_to_legacy_alias(monkeypatch) -> None:
+    monkeypatch.delenv("OPENCLAW_RECORD_AUDIO", raising=False)
+    monkeypatch.setenv("LANGSMITH_ATTACH_AUDIO", "true")
+    assert audio_recording._enabled() is True
 
 
-def test_langsmith_audio_attachment_run_uses_call_thread(monkeypatch, tmp_path) -> None:
-    audio_path = tmp_path / "call.ogg"
-    audio_path.write_bytes(b"ogg data")
-    created: dict[str, object] = {}
+def test_enabled_default_false(monkeypatch) -> None:
+    monkeypatch.delenv("OPENCLAW_RECORD_AUDIO", raising=False)
+    monkeypatch.delenv("LANGSMITH_ATTACH_AUDIO", raising=False)
+    assert audio_recording._enabled() is False
 
-    class FakeRunTree:
-        def __init__(self, **kwargs) -> None:
-            created.update(kwargs)
-            self.ended = False
-            self.posted = False
 
-        def end(self, **kwargs) -> None:
-            created["end"] = kwargs
-
-        def post(self) -> None:
-            created["posted"] = True
-
-        def wait(self) -> None:
-            created["waited"] = True
-
-    class FakeClient:
-        def __init__(self, **kwargs) -> None:
-            created["client"] = kwargs
-
-    monkeypatch.setenv("LANGSMITH_PROJECT", "Nyla")
-    monkeypatch.setenv("LANGSMITH_API_KEY", "test-key")
-    monkeypatch.setattr("langsmith.Client", FakeClient)
-    monkeypatch.setattr("langsmith.run_trees.RunTree", FakeRunTree)
-
-    recording = audio_recording.CallAudioRecording(
-        call_sid="SCL_call",
-        agent_name="phone-nyla",
-        room_name="room-1",
+def test_public_audio_url_when_base_set(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("OPENCLAW_AUDIO_PUBLIC_BASE_URL", "https://media.example/recordings/")
+    rec = audio_recording.CallAudioRecording(
+        call_sid="SCL_1",
+        agent_name="nyla",
+        room_name="r",
         egress_id="EG_1",
-        host_path=Path(audio_path),
-        container_path="/recordings/phone-nyla/SCL_call.ogg",
+        host_path=tmp_path / "nyla" / "SCL_1.ogg",
+        container_path="/recordings/nyla/SCL_1.ogg",
+        mime_type="audio/ogg",
+        started_at=0.0,
+    )
+    assert (
+        audio_recording._public_audio_url(rec) == "https://media.example/recordings/nyla/SCL_1.ogg"
+    )
+
+
+def test_public_audio_url_returns_none_without_base(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("OPENCLAW_AUDIO_PUBLIC_BASE_URL", raising=False)
+    rec = audio_recording.CallAudioRecording(
+        call_sid="SCL_1",
+        agent_name="nyla",
+        room_name="r",
+        egress_id=None,
+        host_path=tmp_path / "nyla" / "SCL_1.ogg",
+        container_path="/recordings/nyla/SCL_1.ogg",
+        mime_type="audio/ogg",
+        started_at=0.0,
+    )
+    assert audio_recording._public_audio_url(rec) is None
+
+
+def test_annotate_active_span_writes_otel_attrs(monkeypatch, tmp_path) -> None:
+    """Finalize path decorates the current OTel span with audio metadata."""
+    audio_file = tmp_path / "nyla" / "SCL_call.ogg"
+    audio_file.parent.mkdir(parents=True)
+    audio_file.write_bytes(b"ogg data 12345")
+
+    span = MagicMock()
+    span.is_recording.return_value = True
+    fake_trace = MagicMock()
+    fake_trace.get_current_span.return_value = span
+    monkeypatch.setattr("opentelemetry.trace.get_current_span", fake_trace.get_current_span)
+
+    rec = audio_recording.CallAudioRecording(
+        call_sid="SCL_call",
+        agent_name="nyla",
+        room_name="r",
+        egress_id="EG_1",
+        host_path=audio_file,
+        container_path="/recordings/nyla/SCL_call.ogg",
         mime_type="audio/ogg",
         started_at=0.0,
     )
 
-    audio_recording._upload_langsmith_attachment(recording)
+    audio_recording._annotate_active_span(rec, finalized=True)
 
-    assert created["name"] == "call_audio"
-    assert created["project_name"] == "Nyla"
-    assert created["attachments"] == {"full_call_audio": ("audio/ogg", audio_path)}
-    assert created["extra"]["metadata"]["thread_id"] == "SCL_call"
-    assert created["extra"]["metadata"]["recording_bytes"] == len(b"ogg data")
-    assert created["posted"] is True
-    assert created["waited"] is True
+    set_attrs = {call.args[0]: call.args[1] for call in span.set_attribute.call_args_list}
+    assert set_attrs["openclaw.audio.call_sid"] == "SCL_call"
+    assert set_attrs["openclaw.audio.path"] == str(audio_file)
+    assert set_attrs["openclaw.audio.mime_type"] == "audio/ogg"
+    assert set_attrs["openclaw.audio.egress_id"] == "EG_1"
+    assert set_attrs["openclaw.audio.bytes"] == len(b"ogg data 12345")
+
+
+def test_legacy_alias_still_imports() -> None:
+    """Agents that still call ``attach_call_audio_to_langsmith`` keep working."""
+    assert (
+        audio_recording.attach_call_audio_to_langsmith
+        is audio_recording.finalize_call_audio_recording
+    )

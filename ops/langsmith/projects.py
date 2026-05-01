@@ -33,7 +33,7 @@ class ProjectSettings(TypedDict):
 PROJECT_SETTINGS: ProjectSettings = {
     "description": (
         "OpenClaw LiveKit voice agents — realtime traces from Nyla, Aoi, and Party. "
-        "Spans are enriched by sdk/src/sdk/langsmith_processor.py with per-stage "
+        "Spans are enriched by sdk/src/sdk/livekit_otel_enricher.py with per-stage "
         "latency metadata (ttft_ms, endpointing_delay_ms, e2e_latency_ms) so each "
         "turn shows where time went. Tool calls render with `tool:<name>` tags."
     ),
@@ -368,15 +368,17 @@ class CodeEvaluatorConfig(TypedDict):
 EvaluatorConfig = LLMEvaluatorConfig | CodeEvaluatorConfig
 
 
-# Span enrichment in sdk/src/sdk/langsmith_processor.py guarantees the
+# Span enrichment in sdk/src/sdk/livekit_otel_enricher.py guarantees the
 # following metadata fields are present on every function_tool span:
 #   langsmith.metadata.user_question  ← latest user_turn transcript
 #   langsmith.metadata.tool_name      ← lk.function_tool.name
 #   langsmith.metadata.tool_result    ← lk.function_tool.output (string)
 #   langsmith.metadata.tool_error     ← "true" if lk.function_tool.is_error
 #   langsmith.metadata.agent          ← lk.agent_name
-#   langsmith.metadata.agent_response ← latest llm_node text in the same turn
-#                                       (released on next user_turn / job end)
+# Note: agent_response was previously written by a deferred-tool-spans
+# mechanism that ran only for the LangSmith recall-accuracy-judge; it
+# was removed during the SigNoz-primary refactor (2026-05-01). Reactivate
+# in livekit_otel_enricher.py if the legacy LangSmith judge is needed.
 # Plus per-stage latency metadata on user_turn / agent_session spans:
 #   langsmith.metadata.e2e_latency_ms
 #   langsmith.metadata.endpointing_delay_ms
