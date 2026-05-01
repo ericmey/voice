@@ -20,12 +20,28 @@ module-top before anything LiveKit-related touches the tracer.
 
 from __future__ import annotations
 
+import atexit
 import logging
 import os
+from typing import Any
 
 logger = logging.getLogger("openclaw-livekit.tracing")
 
 _initialized = False
+_provider: Any | None = None
+_atexit_registered = False
+
+
+def _debug_enabled() -> bool:
+    return os.environ.get("LANGSMITH_PROCESSOR_DEBUG", "").lower() in ("true", "1", "yes")
+
+
+def _debug(message: str) -> None:
+    if not _debug_enabled():
+        return
+    import sys as _sys
+
+    print(message, file=_sys.stderr, flush=True)
 
 
 def setup_langsmith_tracing() -> None:
@@ -34,32 +50,24 @@ def setup_langsmith_tracing() -> None:
     Idempotent — safe to call multiple times. Subsequent calls return
     immediately without re-registering the tracer provider.
     """
-    # Diagnostic prints go straight to stderr so they bypass any
-    # logging-config ambiguity in the spawned job subprocess. Will
-    # remove once we've confirmed which branch fires in production.
-    import sys as _sys
     _pid = os.getpid()
-    print(f"[TRACING-SETUP] pid={_pid} entered setup_langsmith_tracing", file=_sys.stderr, flush=True)
+    _debug(f"[TRACING-SETUP] pid={_pid} entered setup_langsmith_tracing")
 
-    global _initialized
+    global _initialized, _provider, _atexit_registered
     if _initialized:
-        print(f"[TRACING-SETUP] pid={_pid} already initialized, skipping", file=_sys.stderr, flush=True)
+        _debug(f"[TRACING-SETUP] pid={_pid} already initialized, skipping")
         return
 
     tracing_env = os.environ.get("LANGSMITH_TRACING", "")
     if tracing_env.lower() not in ("true", "1", "yes"):
-        print(
-            f"[TRACING-SETUP] pid={_pid} LANGSMITH_TRACING={tracing_env!r} — disabled",
-            file=_sys.stderr, flush=True,
-        )
+        _debug(f"[TRACING-SETUP] pid={_pid} LANGSMITH_TRACING={tracing_env!r} — disabled")
         return
 
     endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
     headers = os.environ.get("OTEL_EXPORTER_OTLP_HEADERS")
-    print(
+    _debug(
         f"[TRACING-SETUP] pid={_pid} endpoint={'SET' if endpoint else 'MISSING'} "
-        f"headers={'SET' if headers else 'MISSING'}",
-        file=_sys.stderr, flush=True,
+        f"headers={'SET' if headers else 'MISSING'}"
     )
     if not endpoint or not headers:
         logger.warning(
@@ -73,14 +81,13 @@ def setup_langsmith_tracing() -> None:
     # dev without tracing extras).
     try:
         from livekit.agents.telemetry import set_tracer_provider
+        from opentelemetry import trace as otel_trace
+        from opentelemetry.sdk.resources import SERVICE_NAME, Resource
         from opentelemetry.sdk.trace import TracerProvider
 
         from sdk.langsmith_processor import LangSmithSpanProcessor
     except ImportError as exc:
-        print(
-            f"[TRACING-SETUP] pid={_pid} ImportError: {exc} — disabled",
-            file=_sys.stderr, flush=True,
-        )
+        _debug(f"[TRACING-SETUP] pid={_pid} ImportError: {exc} — disabled")
         logger.warning(
             "LANGSMITH_TRACING=true but tracing deps not installed (%s) — disabled. "
             "Install with: uv sync --extra tracing",
@@ -88,15 +95,77 @@ def setup_langsmith_tracing() -> None:
         )
         return
 
-    provider = TracerProvider()
+    provider = TracerProvider(resource=Resource.create({SERVICE_NAME: "openclaw-livekit"}))
     processor = LangSmithSpanProcessor()
     provider.add_span_processor(processor)
+    # LiveKit uses its own dynamic tracer wrapper. The global provider is
+    # still needed for any OpenClaw spans emitted outside LiveKit internals.
+    otel_trace.set_tracer_provider(provider)
     set_tracer_provider(provider)
 
+    _provider = provider
+    if not _atexit_registered:
+        atexit.register(shutdown_langsmith_tracing)
+        _atexit_registered = True
     _initialized = True
-    print(
+    _debug(
         f"[TRACING-SETUP] pid={_pid} ENABLED — provider={type(provider).__name__} "
-        f"processor={type(processor).__name__} downstream={type(processor.downstream).__name__}",
-        file=_sys.stderr, flush=True,
+        f"processor={type(processor).__name__} downstream={type(processor.downstream).__name__}"
     )
     logger.info("LangSmith tracing enabled (endpoint=%s)", endpoint)
+
+
+def force_flush_langsmith_tracing(timeout_millis: int = 10000) -> bool:
+    """Flush pending LangSmith spans before a short-lived job exits."""
+    if _provider is None:
+        return True
+    try:
+        return bool(_provider.force_flush(timeout_millis))
+    except Exception as exc:
+        logger.warning("LangSmith tracing force_flush failed: %s", exc)
+        return False
+
+
+def shutdown_langsmith_tracing() -> None:
+    """Best-effort process-exit shutdown for the OTel provider."""
+    if _provider is None:
+        return
+    try:
+        _provider.shutdown()
+    except Exception as exc:
+        logger.warning("LangSmith tracing shutdown failed: %s", exc)
+
+
+def wire_langsmith_shutdown_flush(ctx: Any, timeout_millis: int = 10000) -> None:
+    """Flush pending LangSmith spans when LiveKit tears down a job."""
+    add_shutdown_callback = getattr(ctx, "add_shutdown_callback", None)
+    if add_shutdown_callback is None:
+        return
+    try:
+        add_shutdown_callback(lambda: force_flush_langsmith_tracing(timeout_millis))
+    except Exception as exc:
+        logger.warning("LangSmith shutdown flush hook registration failed: %s", exc)
+
+
+def attach_current_span_metadata(**metadata: Any) -> None:
+    """Attach call/job metadata to the active OTel span.
+
+    LiveKit's ``AgentSession.start`` leaves the session span in the active
+    OTel context for the job. Agent entrypoints call this after caller
+    resolution so the root LangSmith run carries call_sid, caller, room,
+    route/source, and other high-value filters.
+    """
+    try:
+        from opentelemetry import trace as otel_trace
+    except ImportError:
+        return
+
+    span = otel_trace.get_current_span()
+    if span is None or not span.is_recording():
+        return
+
+    for key, value in metadata.items():
+        if value is None or value == "":
+            continue
+        clean_key = key.replace(".", "_")
+        span.set_attribute(f"langsmith.metadata.{clean_key}", str(value))

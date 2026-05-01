@@ -9,7 +9,7 @@ tracer provider with our vendored ``LangSmithSpanProcessor``.
 from __future__ import annotations
 
 import os
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from sdk import tracing
 
@@ -17,6 +17,7 @@ from sdk import tracing
 def _reset_module_state() -> None:
     """Tracing setup is module-level idempotent — reset between tests."""
     tracing._initialized = False
+    tracing._provider = None
 
 
 def test_setup_is_noop_when_env_var_unset(monkeypatch) -> None:
@@ -70,11 +71,16 @@ def test_setup_wires_provider_when_fully_configured(monkeypatch) -> None:
 
     # Patch BEFORE setup_langsmith_tracing's lazy import of livekit.agents.telemetry
     # so the call lands on our mock instead of the real LiveKit hook.
-    with patch("livekit.agents.telemetry.set_tracer_provider") as mock_set:
+    with (
+        patch("livekit.agents.telemetry.set_tracer_provider") as mock_set,
+        patch("opentelemetry.trace.set_tracer_provider") as mock_global_set,
+    ):
         tracing.setup_langsmith_tracing()
 
     mock_set.assert_called_once()
+    mock_global_set.assert_called_once()
     assert tracing._initialized is True
+    assert tracing._provider is not None
 
 
 def test_setup_is_idempotent(monkeypatch) -> None:
@@ -85,12 +91,37 @@ def test_setup_is_idempotent(monkeypatch) -> None:
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "x-api-key=k,Langsmith-Project=p")
     _reset_module_state()
 
-    with patch("livekit.agents.telemetry.set_tracer_provider") as mock_set:
+    with (
+        patch("livekit.agents.telemetry.set_tracer_provider") as mock_set,
+        patch("opentelemetry.trace.set_tracer_provider"),
+    ):
         tracing.setup_langsmith_tracing()
         tracing.setup_langsmith_tracing()  # second call — must be a no-op
         tracing.setup_langsmith_tracing()  # third call too
 
     assert mock_set.call_count == 1
+
+
+def test_force_flush_uses_configured_provider() -> None:
+    provider = MagicMock()
+    provider.force_flush.return_value = True
+    tracing._provider = provider
+
+    assert tracing.force_flush_langsmith_tracing(timeout_millis=1234) is True
+
+    provider.force_flush.assert_called_once_with(1234)
+
+
+def test_wire_shutdown_flush_registers_job_callback() -> None:
+    ctx = MagicMock()
+
+    tracing.wire_langsmith_shutdown_flush(ctx, timeout_millis=2345)
+
+    ctx.add_shutdown_callback.assert_called_once()
+    callback = ctx.add_shutdown_callback.call_args.args[0]
+    with patch.object(tracing, "force_flush_langsmith_tracing", return_value=True) as mock_flush:
+        callback()
+    mock_flush.assert_called_once_with(2345)
 
 
 def teardown_module(module) -> None:  # noqa: ARG001

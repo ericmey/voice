@@ -17,6 +17,7 @@ from sdk.postcall import wire_postcall_review
 from sdk.telemetry import wire_telemetry_capture
 from sdk.telephony import resolve_caller
 from sdk.trace import trace
+from sdk.tracing import attach_current_span_metadata, wire_langsmith_shutdown_flush
 from sdk.transcript import wire_transcript_logging
 
 # --- env ---------------------------------------------------------------
@@ -53,19 +54,11 @@ async def entrypoint_text(ctx: JobContext) -> None:
         extra_tools=build_tools(),
     )
 
-    session = AgentSession(llm=build_model())
-    await session.start(
-        agent=agent,
-        room=ctx.room,
-        room_options=RoomOptions(
-            audio_input=False,
-            audio_output=False,
-        ),
-    )
-
     transcript_sid = call_sid
     if not transcript_sid and ctx.room.name.startswith("sim-"):
         transcript_sid = ctx.room.name.removeprefix("sim-")
+
+    session = AgentSession(llm=build_model())
     wire_transcript_logging(session, transcript_sid)
     wire_telemetry_capture(session, transcript_sid, agent_name="phone-nyla-text")
     # Only spawn post-call review for real voice calls (call_sid set by SIP).
@@ -74,6 +67,25 @@ async def entrypoint_text(ctx: JobContext) -> None:
     # They should not pollute the voice-ops manifest / spawn Rin reviews.
     if call_sid:
         wire_postcall_review(session, call_sid, agent_name="phone-nyla-text")
+    await session.start(
+        agent=agent,
+        room=ctx.room,
+        room_options=RoomOptions(
+            audio_input=False,
+            audio_output=False,
+        ),
+    )
+    wire_langsmith_shutdown_flush(ctx)
+    attach_current_span_metadata(
+        agent="phone-nyla-text",
+        room=ctx.room.name,
+        livekit_job_id=getattr(ctx.job, "id", None),
+        call_sid=transcript_sid,
+        sip_call_id=call_sid,
+        caller_from=caller_from,
+        dialed_number=caller.dialed_number,
+        caller_source=caller.source,
+    )
 
     trace(f"text session started room={ctx.room.name}")
 

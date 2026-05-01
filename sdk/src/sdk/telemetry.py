@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from livekit.agents import AgentSession
-from opentelemetry import trace as otel_trace
+from livekit.agents.telemetry import tracer as livekit_tracer
 
 from .trace import trace
 
@@ -35,10 +35,24 @@ logger = logging.getLogger("openclaw-livekit.agent")
 # turn-by-turn (within ~1-2s of the event firing) instead of only
 # arriving as a postcall summary.
 #
-# When LANGSMITH_TRACING=false this tracer is a no-op (OTel SDK
-# returns a NoOp tracer when no provider is configured), so the
-# instrumentation costs nothing in dev / CI / unit tests.
-_tracer = otel_trace.get_tracer("openclaw-livekit.metrics")
+# Use LiveKit's dynamic tracer, not the global OpenTelemetry tracer. The
+# tracing setup wires this object to the LangSmith provider; using the
+# global tracer here can silently no-op while LiveKit spans export fine.
+_tracer = livekit_tracer
+
+_SECONDS_TO_MS_METADATA = {
+    "e2e_latency": "e2e_latency_ms",
+    "llm_node_ttft": "ttft_ms",
+    "tts_node_ttfb": "ttfb_ms",
+    "transcription_delay": "transcription_delay_ms",
+    "end_of_turn_delay": "end_of_turn_delay_ms",
+    "on_user_turn_completed_delay": "on_user_turn_completed_delay_ms",
+    "ttft": "ttft_ms",
+    "duration": "duration_ms",
+    "detection_delay": "interruption_detection_delay_ms",
+    "prediction_duration": "interruption_prediction_duration_ms",
+    "total_duration": "interruption_total_duration_ms",
+}
 
 
 def _emit_metric_span(name: str, call_sid: str, agent_name: str, attrs: dict[str, Any]) -> None:
@@ -78,6 +92,11 @@ def _emit_metric_span(name: str, call_sid: str, agent_name: str, attrs: dict[str
                 span.set_attribute(f"langsmith.metadata.{key}", str(value))
             elif isinstance(value, (str, int, float)):
                 span.set_attribute(f"langsmith.metadata.{key}", value)
+                if key in _SECONDS_TO_MS_METADATA and isinstance(value, (int, float)):
+                    span.set_attribute(
+                        f"langsmith.metadata.{_SECONDS_TO_MS_METADATA[key]}",
+                        round(float(value) * 1000, 3),
+                    )
 
 
 def _telemetry_dir() -> Path | None:
@@ -380,7 +399,8 @@ def wire_telemetry_capture(
 ) -> TelemetryCollector | None:
     """Register event listeners on *session* that capture structured telemetry.
 
-    Call this AFTER session.start() and BEFORE generate_reply().
+    Call this BEFORE ``session.start()`` so startup state, greeting, usage,
+    and later turns all land in the collector and LangSmith metric spans.
     Returns the collector so callers can access it if needed.
     """
     if not call_sid:
@@ -438,7 +458,9 @@ def wire_telemetry_capture(
         new = str(getattr(ev, "new_state", "?"))
         collector.record_user_state(old, new)
         _emit_metric_span(
-            "user_state_changed", call_sid, agent_name,
+            "user_state_changed",
+            call_sid,
+            agent_name,
             {"old_state": old, "new_state": new},
         )
 
@@ -448,7 +470,9 @@ def wire_telemetry_capture(
         new = str(getattr(ev, "new_state", "?"))
         collector.record_agent_state(old, new)
         _emit_metric_span(
-            "agent_state_changed", call_sid, agent_name,
+            "agent_state_changed",
+            call_sid,
+            agent_name,
             {"old_state": old, "new_state": new},
         )
 
@@ -468,7 +492,9 @@ def wire_telemetry_capture(
     def _on_false_interrupt(ev: Any) -> None:
         collector.false_interruptions += 1
         _emit_metric_span(
-            "false_interruption", call_sid, agent_name,
+            "false_interruption",
+            call_sid,
+            agent_name,
             {"false_interruptions_total": collector.false_interruptions},
         )
 
@@ -484,7 +510,9 @@ def wire_telemetry_capture(
             name = str(getattr(call, "name", "unknown"))
             output = outputs[i] if i < len(outputs) else None
             _emit_metric_span(
-                "tool_executed", call_sid, agent_name,
+                "tool_executed",
+                call_sid,
+                agent_name,
                 {
                     "tool_name": name,
                     "success": output is not None,
@@ -544,7 +572,9 @@ def wire_telemetry_capture(
     def _on_error(ev: Any) -> None:
         collector.record_error(ev)
         _emit_metric_span(
-            "session_error", call_sid, agent_name,
+            "session_error",
+            call_sid,
+            agent_name,
             {"error": str(getattr(ev, "error", ev))[:500]},
         )
 
@@ -553,7 +583,9 @@ def wire_telemetry_capture(
         collector.record_close(ev)
         collector.flush()
         _emit_metric_span(
-            "session_close", call_sid, agent_name,
+            "session_close",
+            call_sid,
+            agent_name,
             {
                 "reason": str(getattr(ev, "reason", "unknown")),
                 "error": str(getattr(ev, "error", "")) or "",

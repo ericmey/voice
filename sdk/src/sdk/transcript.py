@@ -61,8 +61,8 @@ def wire_transcript_logging(
 ) -> None:
     """Register event listeners on *session* that capture transcripts.
 
-    Call this AFTER session.start() and BEFORE generate_reply() so we
-    capture the greeting and every subsequent turn.
+    Call this BEFORE ``session.start()`` so the startup greeting and every
+    subsequent turn are captured.
     """
     d = _ensure_transcript_dir()
 

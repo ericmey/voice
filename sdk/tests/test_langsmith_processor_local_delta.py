@@ -217,6 +217,27 @@ def test_llm_node_span_still_routes_to_llm_branch() -> None:
     assert span._attributes["langsmith.span.kind"] == "llm"
 
 
+def test_llm_span_writes_canonical_langsmith_io_fields() -> None:
+    """LangSmith's OTel mapper reads canonical input/output attributes.
+    Keep the legacy gen_ai.prompt/completion fields too, but also write
+    input.value/output.value and llm.*_messages so runs render real IO."""
+    processor = _make_processor()
+    span = _make_span(
+        "llm_node",
+        {
+            "lk.chat_ctx": '{"items": [{"type": "message", "role": "user", "content": "hello"}]}',
+            "lk.response.text": "hi there",
+        },
+    )
+
+    processor.on_end(span)
+
+    assert '"hello"' in span._attributes["input.value"]
+    assert '"hi there"' in span._attributes["output.value"]
+    assert "llm.input_messages" in span._attributes
+    assert "llm.output_messages" in span._attributes
+
+
 # ---------------------------------------------------------------------------
 # LOCAL DELTA #3: universal metadata enrichment
 #
@@ -240,7 +261,7 @@ def test_universal_metadata_propagates_ttft_to_sidebar() -> None:
 
     processor.on_end(span)
 
-    assert span._attributes["langsmith.metadata.ttft_ms"] == "0.4503"
+    assert span._attributes["langsmith.metadata.ttft_ms"] == "450.3"
 
 
 def test_universal_metadata_propagates_endpointing_delay() -> None:
@@ -255,7 +276,7 @@ def test_universal_metadata_propagates_endpointing_delay() -> None:
 
     processor.on_end(span)
 
-    assert span._attributes["langsmith.metadata.endpointing_delay_ms"] == "1.0"
+    assert span._attributes["langsmith.metadata.endpointing_delay_ms"] == "1000.0"
     assert span._attributes["langsmith.metadata.eou_probability"] == "0.92"
 
 
@@ -270,7 +291,7 @@ def test_universal_metadata_propagates_e2e_latency() -> None:
 
     processor.on_end(span)
 
-    assert span._attributes["langsmith.metadata.e2e_latency_ms"] == "2.86"
+    assert span._attributes["langsmith.metadata.e2e_latency_ms"] == "2860.0"
 
 
 def test_universal_metadata_propagates_call_identity() -> None:
@@ -513,7 +534,7 @@ def test_interruption_metadata_propagates() -> None:
 
     md = span._attributes
     assert md["langsmith.metadata.is_interruption"] == "True"
-    assert md["langsmith.metadata.interruption_detection_delay_ms"] == "0.34"
+    assert md["langsmith.metadata.interruption_detection_delay_ms"] == "340.0"
     assert md["langsmith.metadata.interruption_probability"] == "0.91"
 
 
@@ -538,10 +559,10 @@ def test_turn_latency_block_propagates() -> None:
     processor.on_end(span)
 
     md = span._attributes
-    assert md["langsmith.metadata.turn_e2e_latency_ms"] == "1.8"
-    assert md["langsmith.metadata.turn_llm_ttft_ms"] == "0.42"
-    assert md["langsmith.metadata.turn_tts_ttfb_ms"] == "0.18"
-    assert md["langsmith.metadata.proc_acquire_time_ms"] == "0.003"
+    assert md["langsmith.metadata.turn_e2e_latency_ms"] == "1800.0"
+    assert md["langsmith.metadata.turn_llm_ttft_ms"] == "420.0"
+    assert md["langsmith.metadata.turn_tts_ttfb_ms"] == "180.0"
+    assert md["langsmith.metadata.proc_acquire_time_ms"] == "3.0"
 
 
 def test_universal_metadata_skips_missing_attrs_silently() -> None:

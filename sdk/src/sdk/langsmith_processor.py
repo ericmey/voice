@@ -21,15 +21,16 @@ Re-syncing from upstream: re-apply the two LOCAL DELTA blocks against
 the new file. Upstream is largely dormant (single "rename" commit
 since vendor) so churn risk is low.
 
-The aggressive ``print(..., file=sys.stderr)`` calls are upstream's
-design — they emit diagnostic chatter to stderr on every span.
-Acceptable for first iteration; quiet later if needed.
+Set ``LANGSMITH_PROCESSOR_DEBUG=true`` to emit verbose extraction
+diagnostics to stderr. Default production behavior stays quiet so call
+content is not duplicated into process logs.
 """
 # ruff: noqa: T201, E501
 
 import json
 import logging
 import os
+from collections.abc import Sequence
 from copy import deepcopy
 from typing import Optional
 
@@ -45,6 +46,11 @@ if DEBUG and not logger.handlers:
     handler.setFormatter(logging.Formatter("%(asctime)s [LANGSMITH] %(levelname)s %(message)s"))
     logger.addHandler(handler)
     logger.setLevel(logging.DEBUG)
+
+
+def _debug_print(*args, **kwargs) -> None:
+    if DEBUG:
+        print(*args, **kwargs)
 
 
 class LangSmithSpanProcessor(SpanProcessor):
@@ -113,7 +119,7 @@ class LangSmithSpanProcessor(SpanProcessor):
         # Always log that we're processing a span (even without DEBUG mode)
         # Use print to stderr to ensure it's visible
         import sys
-        print(f"[LANGSMITH-PROCESSOR] Processing span: {span.name}", file=sys.stderr, flush=True)
+        _debug_print(f"[LANGSMITH-PROCESSOR] Processing span: {span.name}", file=sys.stderr, flush=True)
 
         # Track each conversation as a thread in LangSmith
         trace_id = format(span.context.trace_id, "032x")
@@ -172,13 +178,13 @@ class LangSmithSpanProcessor(SpanProcessor):
 
             # Debug TTS spans - always print attributes to see what LiveKit uses
             import sys
-            print(f"\n[LANGSMITH-PROCESSOR] 🔊 TTS SPAN: {span.name}", file=sys.stderr, flush=True)
-            print(f"  📋 All attributes for {span.name} ({len(span.attributes)} total):", file=sys.stderr, flush=True)
+            _debug_print(f"\n[LANGSMITH-PROCESSOR] 🔊 TTS SPAN: {span.name}", file=sys.stderr, flush=True)
+            _debug_print(f"  📋 All attributes for {span.name} ({len(span.attributes)} total):", file=sys.stderr, flush=True)
             for key, value in sorted(span.attributes.items()):
                 value_str = str(value)
                 if len(value_str) > 500:
                     value_str = value_str[:500] + "... (truncated)"
-                print(f"    • {key} = {value_str}", file=sys.stderr, flush=True)
+                _debug_print(f"    • {key} = {value_str}", file=sys.stderr, flush=True)
 
             # Try LiveKit-specific attributes first
             text = (
@@ -217,7 +223,7 @@ class LangSmithSpanProcessor(SpanProcessor):
                     or "unknown"
                 )
 
-            print(f"  ✅ Extracted text: length={len(str(text))}, voice={voice_id}", file=sys.stderr, flush=True)
+            _debug_print(f"  ✅ Extracted text: length={len(str(text))}, voice={voice_id}", file=sys.stderr, flush=True)
 
             self._set_prompt_attributes(
                 span,
@@ -552,6 +558,27 @@ class LangSmithSpanProcessor(SpanProcessor):
         "lk.llm_metrics",
     )
 
+    _LK_SECONDS_TO_MS = {
+        "lk.response.ttft",
+        "lk.response.ttfb",
+        "lk.e2e_latency",
+        "lk.eou.endpointing_delay",
+        "lk.transcription_delay",
+        "lk.end_of_turn_delay",
+        "lk.agents.turn.e2e_latency",
+        "lk.agents.turn.end_of_turn_delay",
+        "lk.agents.turn.llm_ttft",
+        "lk.agents.turn.tts_ttfb",
+        "lk.agents.turn.transcription_delay",
+        "lk.agents.turn.on_user_turn_completed_delay",
+        "lk.agents.connection.acquire_time",
+        "lk.interruption.detection_delay",
+        "lk.interruption.prediction_duration",
+        "lk.interruption.total_duration",
+        "lk.amd.delay",
+        "lk.amd.speech_duration",
+    }
+
     def _enrich_universal_metadata(self, span: ReadableSpan) -> None:
         """Run on every span before the per-type elif chain.
 
@@ -571,7 +598,7 @@ class LangSmithSpanProcessor(SpanProcessor):
             value = attrs.get(src)
             if value is None or value == "":
                 continue
-            span._attributes[dst] = str(value)
+            span._attributes[dst] = self._metadata_value(src, value)
 
         # 2. JSON metric blobs — parse + flatten top-level keys
         import json as _json
@@ -626,6 +653,12 @@ class LangSmithSpanProcessor(SpanProcessor):
     def _set_prompt_attributes(self, span: ReadableSpan, messages: list, start_idx: int = 0, log: bool = False):
         """Set gen_ai.prompt.* attributes from a list of messages."""
         import sys
+        normalized = self._normalize_messages(messages, default_role="user")
+        if start_idx == 0 and normalized:
+            payload = json.dumps({"messages": normalized}, ensure_ascii=False)
+            span._attributes["inputs"] = payload
+            span._attributes["input.value"] = payload
+            span._attributes["llm.input_messages"] = json.dumps(normalized, ensure_ascii=False)
         for i, msg in enumerate(messages):
             idx = start_idx + i
             if isinstance(msg, dict):
@@ -635,7 +668,7 @@ class LangSmithSpanProcessor(SpanProcessor):
                 span._attributes[f"gen_ai.prompt.{idx}.content"] = content
                 if log:
                     content_preview = content[:100] + "..." if len(content) > 100 else content
-                    print(f"    Set gen_ai.prompt.{idx}.role = '{role}', gen_ai.prompt.{idx}.content = '{content_preview}' (length: {len(content)})", file=sys.stderr, flush=True)
+                    _debug_print(f"    Set gen_ai.prompt.{idx}.role = '{role}', gen_ai.prompt.{idx}.content = '{content_preview}' (length: {len(content)})", file=sys.stderr, flush=True)
             else:
                 # Handle string messages
                 content = str(msg)
@@ -643,11 +676,17 @@ class LangSmithSpanProcessor(SpanProcessor):
                 span._attributes[f"gen_ai.prompt.{idx}.content"] = content
                 if log:
                     content_preview = content[:100] + "..." if len(content) > 100 else content
-                    print(f"    Set gen_ai.prompt.{idx}.role = 'user', gen_ai.prompt.{idx}.content = '{content_preview}' (length: {len(content)})", file=sys.stderr, flush=True)
+                    _debug_print(f"    Set gen_ai.prompt.{idx}.role = 'user', gen_ai.prompt.{idx}.content = '{content_preview}' (length: {len(content)})", file=sys.stderr, flush=True)
 
     def _set_completion_attributes(self, span: ReadableSpan, messages: list, start_idx: int = 0, log: bool = False):
         """Set gen_ai.completion.* attributes from a list of messages."""
         import sys
+        normalized = self._normalize_messages(messages, default_role="assistant")
+        if start_idx == 0 and normalized:
+            payload = json.dumps({"messages": normalized}, ensure_ascii=False)
+            span._attributes["outputs"] = payload
+            span._attributes["output.value"] = payload
+            span._attributes["llm.output_messages"] = json.dumps(normalized, ensure_ascii=False)
         for i, msg in enumerate(messages):
             idx = start_idx + i
             if isinstance(msg, dict):
@@ -657,7 +696,7 @@ class LangSmithSpanProcessor(SpanProcessor):
                 span._attributes[f"gen_ai.completion.{idx}.content"] = content
                 if log:
                     content_preview = content[:200] + "..." if len(content) > 200 else content
-                    print(f"    Set gen_ai.completion.{idx}.role = '{role}', gen_ai.completion.{idx}.content = '{content_preview}' (length: {len(content)})", file=sys.stderr, flush=True)
+                    _debug_print(f"    Set gen_ai.completion.{idx}.role = '{role}', gen_ai.completion.{idx}.content = '{content_preview}' (length: {len(content)})", file=sys.stderr, flush=True)
             else:
                 # Handle string messages
                 content = str(msg)
@@ -665,7 +704,34 @@ class LangSmithSpanProcessor(SpanProcessor):
                 span._attributes[f"gen_ai.completion.{idx}.content"] = content
                 if log:
                     content_preview = content[:200] + "..." if len(content) > 200 else content
-                    print(f"    Set gen_ai.completion.{idx}.role = 'assistant', gen_ai.completion.{idx}.content = '{content_preview}' (length: {len(content)})", file=sys.stderr, flush=True)
+                    _debug_print(f"    Set gen_ai.completion.{idx}.role = 'assistant', gen_ai.completion.{idx}.content = '{content_preview}' (length: {len(content)})", file=sys.stderr, flush=True)
+
+    def _metadata_value(self, src: str, value) -> str:
+        """Format mapped metadata values, converting LiveKit seconds to ms."""
+        if src in self._LK_SECONDS_TO_MS:
+            try:
+                return str(round(float(value) * 1000, 3))
+            except (TypeError, ValueError):
+                return str(value)
+        return str(value)
+
+    def _normalize_messages(self, messages: Sequence, *, default_role: str) -> list[dict[str, str]]:
+        normalized = []
+        for msg in messages:
+            if isinstance(msg, dict):
+                content = str(msg.get("content", ""))
+                if content:
+                    normalized.append(
+                        {
+                            "role": str(msg.get("role", default_role)),
+                            "content": content,
+                        }
+                    )
+            else:
+                content = str(msg)
+                if content:
+                    normalized.append({"role": default_role, "content": content})
+        return normalized
 
     def _fallback_messages(self, span: ReadableSpan, span_name: str) -> list:
         """Use system/user attributes or span name when no chat context is available."""
@@ -713,12 +779,12 @@ class LangSmithSpanProcessor(SpanProcessor):
         Returns a list of message dicts with 'role' and 'content' keys.
         """
         import sys
-        print("  🔍 Strategy 1: Checking lk.chat_ctx...", file=sys.stderr, flush=True)
+        _debug_print("  🔍 Strategy 1: Checking lk.chat_ctx...", file=sys.stderr, flush=True)
 
         # Strategy 1: LiveKit-specific attribute: lk.chat_ctx
         chat_ctx = span.attributes.get("lk.chat_ctx")
         if chat_ctx:
-            print(f"    ✓ Found lk.chat_ctx, type={type(chat_ctx)}, length={len(str(chat_ctx)) if isinstance(chat_ctx, str) else 'N/A'}", file=sys.stderr, flush=True)
+            _debug_print(f"    ✓ Found lk.chat_ctx, type={type(chat_ctx)}, length={len(str(chat_ctx)) if isinstance(chat_ctx, str) else 'N/A'}", file=sys.stderr, flush=True)
             try:
                 if isinstance(chat_ctx, str):
                     ctx_data = json.loads(chat_ctx)
@@ -739,16 +805,16 @@ class LangSmithSpanProcessor(SpanProcessor):
                                 messages.append({"role": str(role), "content": str(content)})
 
                     if messages:
-                        print(f"    ✅ Strategy 1 SUCCESS: Found {len(messages)} messages from lk.chat_ctx", file=sys.stderr, flush=True)
+                        _debug_print(f"    ✅ Strategy 1 SUCCESS: Found {len(messages)} messages from lk.chat_ctx", file=sys.stderr, flush=True)
                         return messages
             except (json.JSONDecodeError, TypeError, KeyError, AttributeError) as e:
-                print(f"    ✗ Strategy 1 FAILED: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+                _debug_print(f"    ✗ Strategy 1 FAILED: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
         else:
-            print("    ✗ lk.chat_ctx not found", file=sys.stderr, flush=True)
+            _debug_print("    ✗ lk.chat_ctx not found", file=sys.stderr, flush=True)
 
         # Strategy 2: Check for OpenTelemetry semantic convention attributes
         # gen_ai.request.prompt.* or gen_ai.prompt.*
-        print("  🔍 Strategy 2: Checking gen_ai.request.prompt.*...", file=sys.stderr, flush=True)
+        _debug_print("  🔍 Strategy 2: Checking gen_ai.request.prompt.*...", file=sys.stderr, flush=True)
         messages = []
         idx = 0
         while True:
@@ -764,13 +830,13 @@ class LangSmithSpanProcessor(SpanProcessor):
                 break
 
         if messages:
-            print(f"    ✅ Strategy 2 SUCCESS: Found {len(messages)} messages from gen_ai.request.prompt.*", file=sys.stderr, flush=True)
+            _debug_print(f"    ✅ Strategy 2 SUCCESS: Found {len(messages)} messages from gen_ai.request.prompt.*", file=sys.stderr, flush=True)
             return messages
         else:
-            print("    ✗ No gen_ai.request.prompt.* attributes found", file=sys.stderr, flush=True)
+            _debug_print("    ✗ No gen_ai.request.prompt.* attributes found", file=sys.stderr, flush=True)
 
         # Strategy 2b: Check for gen_ai.prompt.* (alternative format)
-        print("  🔍 Strategy 2b: Checking gen_ai.prompt.*...", file=sys.stderr, flush=True)
+        _debug_print("  🔍 Strategy 2b: Checking gen_ai.prompt.*...", file=sys.stderr, flush=True)
         idx = 0
         while True:
             role_key = f"gen_ai.prompt.{idx}.role"
@@ -785,15 +851,15 @@ class LangSmithSpanProcessor(SpanProcessor):
                 break
 
         if messages:
-            print(f"    ✅ Strategy 2b SUCCESS: Found {len(messages)} messages from gen_ai.prompt.*", file=sys.stderr, flush=True)
+            _debug_print(f"    ✅ Strategy 2b SUCCESS: Found {len(messages)} messages from gen_ai.prompt.*", file=sys.stderr, flush=True)
             return messages
         else:
-            print("    ✗ No gen_ai.prompt.* attributes found", file=sys.stderr, flush=True)
+            _debug_print("    ✗ No gen_ai.prompt.* attributes found", file=sys.stderr, flush=True)
 
         # Strategy 3: Check for messages attribute (JSON string or list)
-        print("  🔍 Strategy 3: Checking messages/llm.messages/input attributes...", file=sys.stderr, flush=True)
+        _debug_print("  🔍 Strategy 3: Checking messages/llm.messages/input attributes...", file=sys.stderr, flush=True)
         messages_attr = span.attributes.get("messages") or span.attributes.get("llm.messages") or span.attributes.get("input")
-        print(f"    Checking: messages={bool(span.attributes.get('messages'))}, llm.messages={bool(span.attributes.get('llm.messages'))}, input={bool(span.attributes.get('input'))}", file=sys.stderr, flush=True)
+        _debug_print(f"    Checking: messages={bool(span.attributes.get('messages'))}, llm.messages={bool(span.attributes.get('llm.messages'))}, input={bool(span.attributes.get('input'))}", file=sys.stderr, flush=True)
         if messages_attr:
             try:
                 if isinstance(messages_attr, str):
@@ -810,10 +876,10 @@ class LangSmithSpanProcessor(SpanProcessor):
                                     "content": str(msg.get("content", "")),
                                 })
                         if normalized:
-                            print(f"    ✅ Strategy 3 SUCCESS: Found {len(normalized)} messages from JSON string", file=sys.stderr, flush=True)
+                            _debug_print(f"    ✅ Strategy 3 SUCCESS: Found {len(normalized)} messages from JSON string", file=sys.stderr, flush=True)
                             return normalized
                 elif isinstance(messages_attr, list):
-                    print(f"    Found list type, length={len(messages_attr)}", file=sys.stderr, flush=True)
+                    _debug_print(f"    Found list type, length={len(messages_attr)}", file=sys.stderr, flush=True)
                     # Validate and normalize message format
                     normalized = []
                     for msg in messages_attr:
@@ -823,20 +889,20 @@ class LangSmithSpanProcessor(SpanProcessor):
                                 "content": str(msg.get("content", "")),
                             })
                     if normalized:
-                        print(f"    ✅ Strategy 3 SUCCESS: Found {len(normalized)} messages from list", file=sys.stderr, flush=True)
+                        _debug_print(f"    ✅ Strategy 3 SUCCESS: Found {len(normalized)} messages from list", file=sys.stderr, flush=True)
                         return normalized
             except (json.JSONDecodeError, TypeError, AttributeError) as e:
-                print(f"    ✗ Strategy 3 FAILED: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+                _debug_print(f"    ✗ Strategy 3 FAILED: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
         else:
-            print("    ✗ No messages attribute found", file=sys.stderr, flush=True)
+            _debug_print("    ✗ No messages attribute found", file=sys.stderr, flush=True)
 
         # Strategy 4: Check for individual system/user/assistant attributes
-        print("  🔍 Strategy 4: Checking individual system/user/assistant attributes...", file=sys.stderr, flush=True)
+        _debug_print("  🔍 Strategy 4: Checking individual system/user/assistant attributes...", file=sys.stderr, flush=True)
         system = span.attributes.get("gen_ai.system") or span.attributes.get("system") or span.attributes.get("system_prompt")
         user = span.attributes.get("gen_ai.user") or span.attributes.get("user") or span.attributes.get("user_input")
         assistant = span.attributes.get("gen_ai.assistant") or span.attributes.get("assistant")
 
-        print(f"    system={bool(system)}, user={bool(user)}, assistant={bool(assistant)}", file=sys.stderr, flush=True)
+        _debug_print(f"    system={bool(system)}, user={bool(user)}, assistant={bool(assistant)}", file=sys.stderr, flush=True)
 
         if system or user or assistant:
             result = []
@@ -847,12 +913,12 @@ class LangSmithSpanProcessor(SpanProcessor):
             if assistant:
                 result.append({"role": "assistant", "content": str(assistant)})
             if result:
-                print(f"    ✅ Strategy 4 SUCCESS: Found {len(result)} messages from individual attributes", file=sys.stderr, flush=True)
+                _debug_print(f"    ✅ Strategy 4 SUCCESS: Found {len(result)} messages from individual attributes", file=sys.stderr, flush=True)
                 return result
         else:
-            print("    ✗ No individual attributes found", file=sys.stderr, flush=True)
+            _debug_print("    ✗ No individual attributes found", file=sys.stderr, flush=True)
 
-        print("  ⚠️  All strategies failed - no messages extracted", file=sys.stderr, flush=True)
+        _debug_print("  ⚠️  All strategies failed - no messages extracted", file=sys.stderr, flush=True)
         return []
 
     def _extract_llm_output(self, span: ReadableSpan) -> str:
@@ -861,28 +927,28 @@ class LangSmithSpanProcessor(SpanProcessor):
         Returns the output as a string.
         """
         import sys
-        print("  🔍 EXTRACTING LLM OUTPUT:", file=sys.stderr, flush=True)
+        _debug_print("  🔍 EXTRACTING LLM OUTPUT:", file=sys.stderr, flush=True)
 
         # Strategy 1: LiveKit-specific attribute: lk.response.text
-        print("    Strategy 1: Checking lk.response.text...", file=sys.stderr, flush=True)
+        _debug_print("    Strategy 1: Checking lk.response.text...", file=sys.stderr, flush=True)
         output = span.attributes.get("lk.response.text")
         if output:
-            print(f"      ✅ Strategy 1 SUCCESS: Found output, length={len(str(output))}", file=sys.stderr, flush=True)
+            _debug_print(f"      ✅ Strategy 1 SUCCESS: Found output, length={len(str(output))}", file=sys.stderr, flush=True)
             return str(output)
         else:
-            print("      ✗ lk.response.text not found", file=sys.stderr, flush=True)
+            _debug_print("      ✗ lk.response.text not found", file=sys.stderr, flush=True)
 
         # Strategy 2: OpenTelemetry semantic convention
-        print("    Strategy 2: Checking gen_ai.response.text / gen_ai.completion.text...", file=sys.stderr, flush=True)
+        _debug_print("    Strategy 2: Checking gen_ai.response.text / gen_ai.completion.text...", file=sys.stderr, flush=True)
         output = span.attributes.get("gen_ai.response.text") or span.attributes.get("gen_ai.completion.text")
         if output:
-            print(f"      ✅ Strategy 2 SUCCESS: Found output, length={len(str(output))}", file=sys.stderr, flush=True)
+            _debug_print(f"      ✅ Strategy 2 SUCCESS: Found output, length={len(str(output))}", file=sys.stderr, flush=True)
             return str(output)
         else:
-            print("      ✗ gen_ai.response.text and gen_ai.completion.text not found", file=sys.stderr, flush=True)
+            _debug_print("      ✗ gen_ai.response.text and gen_ai.completion.text not found", file=sys.stderr, flush=True)
 
         # Strategy 3: Common attribute names
-        print("    Strategy 3: Checking common attribute names...", file=sys.stderr, flush=True)
+        _debug_print("    Strategy 3: Checking common attribute names...", file=sys.stderr, flush=True)
         output = (
             span.attributes.get("gen_ai.response")
             or span.attributes.get("gen_ai.completion")
@@ -896,13 +962,13 @@ class LangSmithSpanProcessor(SpanProcessor):
         )
 
         if output:
-            print(f"      ✅ Strategy 3 SUCCESS: Found output, length={len(str(output))}", file=sys.stderr, flush=True)
+            _debug_print(f"      ✅ Strategy 3 SUCCESS: Found output, length={len(str(output))}", file=sys.stderr, flush=True)
             return str(output)
         else:
-            print("      ✗ No common output attributes found", file=sys.stderr, flush=True)
+            _debug_print("      ✗ No common output attributes found", file=sys.stderr, flush=True)
 
         # Strategy 4: Check for completion.* attributes
-        print("    Strategy 4: Checking gen_ai.completion.* attributes...", file=sys.stderr, flush=True)
+        _debug_print("    Strategy 4: Checking gen_ai.completion.* attributes...", file=sys.stderr, flush=True)
         idx = 0
         completion_parts = []
         while True:
@@ -914,12 +980,12 @@ class LangSmithSpanProcessor(SpanProcessor):
                 break
 
         if completion_parts:
-            print(f"      ✅ Strategy 4 SUCCESS: Found {len(completion_parts)} completion parts", file=sys.stderr, flush=True)
+            _debug_print(f"      ✅ Strategy 4 SUCCESS: Found {len(completion_parts)} completion parts", file=sys.stderr, flush=True)
             return "\n".join(completion_parts)
         else:
-            print("      ✗ No gen_ai.completion.* attributes found", file=sys.stderr, flush=True)
+            _debug_print("      ✗ No gen_ai.completion.* attributes found", file=sys.stderr, flush=True)
 
-        print("    ⚠️  All strategies failed - no output extracted", file=sys.stderr, flush=True)
+        _debug_print("    ⚠️  All strategies failed - no output extracted", file=sys.stderr, flush=True)
         return ""
 
     def _get_messages_from_attributes(self, span: ReadableSpan) -> list:
@@ -990,7 +1056,7 @@ class LangSmithSpanProcessor(SpanProcessor):
     def _defer_tool_span(self, trace_id: str, span: ReadableSpan) -> None:
         import sys
         self.deferred_tool_spans.setdefault(trace_id, []).append(span)
-        print(
+        _debug_print(
             f"⏸️  Deferring function_tool span for trace {trace_id} (awaiting agent_response)",
             file=sys.stderr,
             flush=True,
@@ -1001,7 +1067,7 @@ class LangSmithSpanProcessor(SpanProcessor):
         if not spans:
             return
         import sys
-        print(
+        _debug_print(
             f"🧩 Releasing {len(spans)} deferred function_tool span(s) for trace {trace_id} with agent_response",
             file=sys.stderr,
             flush=True,
@@ -1020,14 +1086,14 @@ class LangSmithSpanProcessor(SpanProcessor):
     def _defer_job_span(self, trace_id: str, span: ReadableSpan):
         import sys
         self.deferred_job_spans[trace_id] = span
-        print(f"⏸️  Deferring export of job span for trace {trace_id}", file=sys.stderr, flush=True)
+        _debug_print(f"⏸️  Deferring export of job span for trace {trace_id}", file=sys.stderr, flush=True)
 
     def _release_job_span_if_waiting(self, trace_id: str, prompt_msgs: list, completion_msgs: list):
         job_span = self.deferred_job_spans.pop(trace_id, None)
         if not job_span:
             return
         import sys
-        print(f"🧩 Releasing deferred job span for trace {trace_id}", file=sys.stderr, flush=True)
+        _debug_print(f"🧩 Releasing deferred job span for trace {trace_id}", file=sys.stderr, flush=True)
         if prompt_msgs:
             self._set_prompt_attributes(job_span, deepcopy(prompt_msgs))
         if completion_msgs:
@@ -1038,7 +1104,7 @@ class LangSmithSpanProcessor(SpanProcessor):
         if not self.deferred_job_spans:
             return
         import sys
-        print(f"⚠️  Flushing {len(self.deferred_job_spans)} deferred job span(s) without conversation data", file=sys.stderr, flush=True)
+        _debug_print(f"⚠️  Flushing {len(self.deferred_job_spans)} deferred job span(s) without conversation data", file=sys.stderr, flush=True)
         for trace_id, span in list(self.deferred_job_spans.items()):
             self._set_prompt_attributes(span, [{"role": "system", "content": "Conversation not captured"}])
             self._set_completion_attributes(span, [{"role": "assistant", "content": "No conversation turns recorded."}])
