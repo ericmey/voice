@@ -134,7 +134,6 @@ class LangSmithSpanProcessor(SpanProcessor):
         if trace_id in self.trace_to_conversation_id:
             conversation_id = self.trace_to_conversation_id[trace_id]
             span._attributes["conversation.id"] = conversation_id
-            span._attributes["langsmith.parent_span_id"] = "conversation"
 
         # LOCAL DELTA #3: universal metadata enrichment.
         # Surface every LiveKit attribute LangSmith can render as

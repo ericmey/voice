@@ -126,6 +126,8 @@ For a full-repo rollback, `git revert` the offending commit on main.
 - `make health` on demand — intentionally minimal, exits non-zero.
 - `scripts/tail-logs.sh` for live watching with `--grep` filtering.
 - `docker compose logs -f` for the infrastructure tier.
+- [LANGSMITH.md](LANGSMITH.md) for LangSmith tracing, per-agent projects,
+  live threads, and audio attachments.
 
 ### Future (not yet wired)
 - Cronned `make health --json` → Discord webhook on failure.

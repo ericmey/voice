@@ -120,7 +120,7 @@ def setup_langsmith_tracing() -> None:
         _debug(f"[TRACING-SETUP] pid={_pid} ImportError: {exc} — disabled")
         logger.warning(
             "LANGSMITH_TRACING=true but tracing deps not installed (%s) — disabled. "
-            "Install with: uv sync --extra tracing",
+            "Run `uv sync` from the repository root to refresh the workspace environment.",
             exc,
         )
         return

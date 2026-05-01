@@ -67,6 +67,7 @@ async def entrypoint_text(ctx: JobContext) -> None:
     # They should not pollute the voice-ops manifest / spawn Rin reviews.
     if call_sid:
         wire_postcall_review(session, call_sid, agent_name="phone-nyla-text")
+    wire_langsmith_shutdown_flush(ctx)
     await session.start(
         agent=agent,
         room=ctx.room,
@@ -75,7 +76,6 @@ async def entrypoint_text(ctx: JobContext) -> None:
             audio_output=False,
         ),
     )
-    wire_langsmith_shutdown_flush(ctx)
     attach_current_span_metadata(
         agent="phone-nyla-text",
         room=ctx.room.name,

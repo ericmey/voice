@@ -386,6 +386,23 @@ def test_thread_id_prefers_call_sid_over_trace_id() -> None:
     assert span_b._attributes["langsmith.metadata.thread_id"] == "SCL_call1"
 
 
+def test_conversation_id_does_not_set_fake_parent_span_id() -> None:
+    """Do not write malformed LangSmith parent ids.
+
+    OTel parentage is carried by real span context. LangSmith thread grouping is
+    carried by metadata.thread_id. A literal "conversation" parent id is neither.
+    """
+    processor = _make_processor()
+    child = _make_span("llm_node", {"lk.response.text": "hello", "lk.chat_ctx": "{}"})
+    trace_id = format(child.context.trace_id, "032x")
+    processor.trace_to_conversation_id[trace_id] = "conv-1"
+
+    processor.on_end(child)
+
+    assert child._attributes["conversation.id"] == "conv-1"
+    assert "langsmith.parent_span_id" not in child._attributes
+
+
 def test_universal_metadata_tags_realtime_pipeline() -> None:
     """Pipeline shape (realtime vs chained) is a high-value filter for
     diagnosis. Set it as a tag so operators can do `pipeline:realtime`

@@ -74,8 +74,8 @@ async def entrypoint(ctx: JobContext) -> None:
         else None,
         speaker_tag=NYLA_CONFIG.memory_agent_tag,
     )
-    await session.start(agent=agent, room=ctx.room)
     wire_langsmith_shutdown_flush(ctx)
+    await session.start(agent=agent, room=ctx.room)
     attach_current_span_metadata(
         agent="phone-nyla",
         room=ctx.room.name,
