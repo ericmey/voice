@@ -6,6 +6,7 @@ musubi_get + the fetch_recent_context helper. Also asserts the
 class for one release.
 """
 
+import asyncio
 from typing import Any, cast
 
 import pytest
@@ -81,6 +82,20 @@ def test_composed_agent_has_memory_tools(agent):
     assert hasattr(agent, "fetch_recent_context")
     # Default composed agent doesn't override, so tag is "nyla-voice".
     assert agent.config.memory_agent_tag == "nyla-voice"
+
+
+@pytest.mark.asyncio
+async def test_fetch_recent_context_has_aggregate_timeout(agent, monkeypatch):
+    async def slow_scroll(*args, **kwargs):
+        await asyncio.sleep(0.05)
+        return []
+
+    agent._scroll_episodic_recent = slow_scroll
+    monkeypatch.setattr("tools.memory._RECENT_CONTEXT_TIMEOUT_S", 0.001)
+
+    result = await agent.fetch_recent_context(limit=10)
+
+    assert "Musubi is unavailable" in result
 
 
 # ---------------------------------------------------------------------------

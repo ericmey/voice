@@ -102,4 +102,4 @@ class CoreToolsMixin(Agent):
             return "Couldn't pull weather — NWS didn't respond in time."
         except Exception as err:
             trace(f"tool=get_weather ERROR {err}")
-            return f"Couldn't pull weather — NWS lookup failed: {err}."
+            return "Couldn't pull weather — NWS lookup failed."

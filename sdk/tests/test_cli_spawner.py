@@ -75,3 +75,19 @@ def test_fire_and_forget_spawns_when_not_dry_run(
     assert argv[0] == "/tmp/fake-openclaw"
     assert argv[1:] == ["message", "send", "--target", "x"]
     assert kwargs.get("start_new_session") is True
+
+
+@pytest.mark.asyncio
+async def test_fire_and_forget_async_uses_worker_thread(
+    monkeypatch: pytest.MonkeyPatch, no_dry_run: None
+) -> None:
+    recorded: list[list[str]] = []
+
+    def fake_fire_and_forget(args: list[str]) -> None:
+        recorded.append(args)
+
+    monkeypatch.setattr(cli_spawner, "fire_and_forget", fake_fire_and_forget)
+
+    await cli_spawner.fire_and_forget_async(["message", "send", "--target", "x"])
+
+    assert recorded == [["message", "send", "--target", "x"]]

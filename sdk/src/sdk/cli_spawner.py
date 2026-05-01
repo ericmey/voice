@@ -16,6 +16,7 @@ agent sessions.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
@@ -129,3 +130,8 @@ def fire_and_forget(args: list[str]) -> None:
         close_fds=True,
     )
     logger.info("[voice-tools] spawned: openclaw %s", " ".join(args[:3]))
+
+
+async def fire_and_forget_async(args: list[str]) -> None:
+    """Async subprocess spawn for tool methods running on the voice event loop."""
+    await asyncio.to_thread(fire_and_forget, args)

@@ -5,7 +5,7 @@ Each tool lives in a **mixin class**; agents compose the mixins they want
 in their `__mro__`:
 
 ```python
-class NylaAgent(CoreToolsMixin, MemoryToolsMixin, SessionsToolsMixin,
+class NylaAgent(CoreToolsMixin, MusubiToolsMixin, SessionsToolsMixin,
                 AcademyToolsMixin, Agent):
     ...
 ```
@@ -19,11 +19,10 @@ exposes them to the voice model as callable tools.
 |---|---|---|---|---|
 | `get_current_time` | [core.py](src/tools/core.py) | `CoreToolsMixin` | Current local date + time on the server | — |
 | `get_weather` | [core.py](src/tools/core.py) | `CoreToolsMixin` | Current weather in Carmel, IN | — |
-| `musubi_recent` | [memory.py](src/tools/memory.py) | `MemoryToolsMixin` | Recent voice-channel memories (recency-ordered, agent-tag filtered) | `limit=10` |
-| `musubi_search` | [memory.py](src/tools/memory.py) | `MemoryToolsMixin` | Cross-channel hybrid retrieve (`<tenant>/*/episodic`, deep mode, includes provisional) | `query`, `limit=5` |
-| `musubi_remember` | [memory.py](src/tools/memory.py) | `MemoryToolsMixin` | Persist a memory for future recall (canonical Musubi episodic) | `content`, `topics=[]`, `importance=7` |
-| `musubi_recall` | [musubi_voice.py](src/tools/musubi_voice.py) | `MusubiVoiceToolsMixin` | Legacy alias: hybrid retrieve via the older voice-tools mixin | `query`, `limit=5` |
-| `musubi_think` | [musubi_voice.py](src/tools/musubi_voice.py) | `MusubiVoiceToolsMixin` | Presence-to-presence thought delivery (canonical API) | `to_agent`, `content`, `channel="default"` |
+| `musubi_recent` | [memory.py](src/tools/memory.py) | `MusubiToolsMixin` | Recent voice-channel memories (recency-ordered, agent-tag filtered) | `limit=10` |
+| `musubi_search` | [memory.py](src/tools/memory.py) | `MusubiToolsMixin` | Cross-channel hybrid retrieve (`<tenant>/*/episodic`, deep mode, includes provisional) | `query`, `limit=5` |
+| `musubi_remember` | [memory.py](src/tools/memory.py) | `MusubiToolsMixin` | Persist a memory for future recall (canonical Musubi episodic) | `content`, `topics=[]`, `importance=7` |
+| `musubi_think` | [memory.py](src/tools/memory.py) | `MusubiToolsMixin` | Presence-to-presence thought delivery (canonical API) | `to_agent`, `content`, `channel="default"` |
 | `sessions_send` | [sessions.py](src/tools/sessions.py) | `SessionsToolsMixin` | Send a task/message to another AI agent | `agent_id`, `message`, `deliver_to="room"` |
 | `sessions_spawn` | [sessions.py](src/tools/sessions.py) | `SessionsToolsMixin` | Spawn a new agent session to handle a task | `agent_id`, `task`, `deliver_to="room"` |
 | `academy_selfie` | [academy.py](src/tools/academy.py) | `AcademyToolsMixin` | Request a selfie of the speaking agent from Mizuki | `mood`, `nsfw=False` |
@@ -40,36 +39,27 @@ exposes them to the voice model as callable tools.
 | Mixin | Agents that compose it |
 |---|---|
 | `CoreToolsMixin` | nyla, aoi, party |
-| `MemoryToolsMixin` | nyla, aoi, party (alpha Musubi path) |
-| `MusubiVoiceToolsMixin` | — *(new-stack path; not composed into any agent yet — dormant until Musubi v2 cutover)* |
+| `MusubiToolsMixin` | nyla, aoi, party |
+| `MemoryToolsMixin` | Back-compat alias for `MusubiToolsMixin` |
 | `SessionsToolsMixin` | nyla, aoi, party |
 | `AcademyToolsMixin` | nyla, aoi, party |
 
-## Musubi: alpha vs new-stack
+## Musubi Canonical API
 
-Two memory mixins exist side-by-side during the migration window:
+`MusubiToolsMixin` is the live memory surface. It talks to the canonical
+Musubi HTTP API (`MUSUBI_V2_BASE_URL`, default `http://localhost:8100/v1`)
+with bearer auth. Agents read from `<tenant>/*/episodic` for cross-channel
+recall and write to their own `<agent>/<channel>/episodic` namespace.
 
-- `MemoryToolsMixin` talks **directly to Qdrant** (`localhost:6333`,
-  collection `musubi_memories`) — the alpha Musubi. This is what every
-  agent currently composes.
-- `MusubiVoiceToolsMixin` talks to the **new Musubi canonical API**
-  (`MUSUBI_V2_BASE_URL`, default `http://localhost:8100/v1`) with
-  bearer auth. Three tools: `musubi_recall`, `musubi_remember`,
-  `musubi_think`.
-
-The new-stack mixin is **not composed into any agent yet**. It exists
-so the new API gets exercised (tests, dev use) without touching the
-live voice path. Cutover is a single-line MRO swap per agent once
-Musubi v2 passes load + perf testing and the legacy corpus has been
-migrated. Do **not** compose both simultaneously — conflicting
-`@function_tool` names.
+`MemoryToolsMixin` remains as a temporary import alias for older code paths.
 
 ## How tools reach side effects
 
 Actuator-shaped tools (Discord messaging, image generation, delegation)
 don't talk to Discord / ComfyUI / cron directly. They spawn the OpenClaw
-CLI via [`sdk.cli_spawner.fire_and_forget`](../sdk/src/sdk/cli_spawner.py)
-with an explicit argv — safe, testable, no shell-injection surface.
+CLI via [`sdk.cli_spawner.fire_and_forget_async`](../sdk/src/sdk/cli_spawner.py)
+from voice-tool coroutines, with an explicit argv — safe, testable, no
+shell-injection surface and no synchronous fork on the voice event loop.
 
 The `OPENCLAW_VOICE_TOOLS_DRY_RUN=1` env var short-circuits every spawn
 to a logged no-op — lets tests exercise the full tool path without firing

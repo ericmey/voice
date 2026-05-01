@@ -28,6 +28,8 @@ from sdk.musubi_v2_client import (
     send_thought,
 )
 
+from sdk import musubi_v2_client
+
 # ---------------------------------------------------------------------------
 # Fake aiohttp session — records calls, returns scripted responses.
 # ---------------------------------------------------------------------------
@@ -132,6 +134,32 @@ def test_from_env_applies_defaults_when_missing(monkeypatch: pytest.MonkeyPatch)
     cfg = MusubiV2ClientConfig.from_env()
     assert cfg.base_url == DEFAULT_BASE_URL.rstrip("/")
     assert cfg.token == ""
+
+
+@pytest.mark.asyncio
+async def test_shared_session_reuses_keepalive_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeConnector:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    class FakeClientSession:
+        created = 0
+
+        def __init__(self, **kwargs) -> None:
+            FakeClientSession.created += 1
+            self.kwargs = kwargs
+            self.closed = False
+
+    monkeypatch.setattr(musubi_v2_client.aiohttp, "TCPConnector", FakeConnector)
+    monkeypatch.setattr(musubi_v2_client.aiohttp, "ClientSession", FakeClientSession)
+    musubi_v2_client._shared_sessions.clear()
+
+    first = musubi_v2_client._shared_session_for(2.0)
+    second = musubi_v2_client._shared_session_for(2.0)
+
+    assert first is second
+    assert FakeClientSession.created == 1
+    assert first.kwargs["connector"].kwargs["limit"] == 20
 
 
 # ---------------------------------------------------------------------------

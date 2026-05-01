@@ -51,10 +51,11 @@ Shared Python package imported by the three agents. Contains:
   voice model.
 - **`telephony.py`** — `resolve_caller()` reads the SIP participant's
   attributes from a connected room. One hop behind the agent entrypoint.
-- **`cli_spawner.py`** — `fire_and_forget()` detached subprocess spawner
-  for actuator tools that shell out to the `openclaw` CLI. Gated by
+- **`cli_spawner.py`** — detached subprocess spawners for actuator tools
+  that shell out to the `openclaw` CLI. Voice tools use the async wrapper
+  so CLI fork/exec does not block the realtime event loop. Gated by
   `OPENCLAW_VOICE_TOOLS_DRY_RUN=1` for tests and debugging.
-- **`musubi_client.py`** — Qdrant HTTP helpers for the memory tools.
+- **`musubi_v2_client.py`** — async HTTP client for the canonical Musubi API.
 - **`trace.py`**, **`transcript.py`**, **`env.py`** — ancillary.
 
 ### `openclaw-livekit-agent-nyla/`
@@ -94,7 +95,7 @@ the top-level compose file and `scripts/register-sip-routing.sh`.
    replying in audio.
 7. Function-tool calls during the session are regular Python async
    methods; any actuator-shaped tool (delegation, memory, images) goes
-   through `cli_spawner.fire_and_forget` to the `openclaw` CLI.
+   through `cli_spawner.fire_and_forget_async` to the `openclaw` CLI.
 
 ## Why agents aren't in docker-compose
 

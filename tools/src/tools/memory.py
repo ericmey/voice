@@ -23,6 +23,7 @@ in the next minor release.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Any
@@ -52,6 +53,7 @@ _DEFAULT_IMPORTANCE = 7
 # Bounded so a token-mismatch on this agent's tag doesn't spiral into
 # scrolling the whole namespace.
 _MAX_RECENT_PAGES = 5
+_RECENT_CONTEXT_TIMEOUT_S = 3.0
 
 # Search-side state filter. Default Musubi retrieve hides `provisional` so
 # unscored ambient captures don't pollute results, but a deliberate
@@ -239,7 +241,16 @@ class MusubiToolsMixin(Agent):
         voice_tag = self.config.memory_agent_tag
 
         try:
-            rows = await self._scroll_episodic_recent(namespace, limit, required_tag=voice_tag)
+            rows = await asyncio.wait_for(
+                self._scroll_episodic_recent(namespace, limit, required_tag=voice_tag),
+                timeout=_RECENT_CONTEXT_TIMEOUT_S,
+            )
+        except TimeoutError:
+            logger.warning(
+                "fetch_recent_context: aggregate timeout after %.1fs",
+                _RECENT_CONTEXT_TIMEOUT_S,
+            )
+            return _DEGRADED_LOOKUP
         except (MusubiV2TimeoutError, MusubiV2ServerError) as err:
             logger.warning("fetch_recent_context: transient %s", err)
             return _DEGRADED_LOOKUP

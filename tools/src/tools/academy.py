@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from livekit.agents import Agent, function_tool
-from sdk.cli_spawner import fire_and_forget
+from sdk.cli_spawner import fire_and_forget_async
 from sdk.config import NYLA_DEFAULT_CONFIG, AgentConfig
 from sdk.constants import MIZUKI_DISCORD_CHANNEL
 from sdk.trace import trace
@@ -51,7 +51,7 @@ class AcademyToolsMixin(Agent):
             f"a message saying that I wanted to send him a selfie."
         )
         try:
-            fire_and_forget(
+            await fire_and_forget_async(
                 [
                     "message",
                     "send",
@@ -105,7 +105,7 @@ class AcademyToolsMixin(Agent):
             f"include a message saying that I asked you to send it to him."
         )
         try:
-            fire_and_forget(
+            await fire_and_forget_async(
                 [
                     "message",
                     "send",

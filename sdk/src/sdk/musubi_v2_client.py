@@ -28,6 +28,7 @@ feel responsive; the tool layer catches the timeout and degrades.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import uuid
@@ -55,6 +56,20 @@ MUSUBI_V2_TIMEOUT_S = 2.0
 _BEARER_HEADER = "Authorization"
 _REQUEST_ID_HEADER = "X-Request-Id"
 _IDEMPOTENCY_HEADER = "Idempotency-Key"
+_shared_sessions: dict[tuple[int, float], aiohttp.ClientSession] = {}
+
+
+def _shared_session_for(timeout_s: float) -> aiohttp.ClientSession:
+    """Return an event-loop-local shared session for Musubi keep-alive."""
+    loop = asyncio.get_running_loop()
+    key = (id(loop), timeout_s)
+    session = _shared_sessions.get(key)
+    if session is None or session.closed:
+        timeout = aiohttp.ClientTimeout(total=timeout_s)
+        connector = aiohttp.TCPConnector(limit=20, keepalive_timeout=120)
+        session = aiohttp.ClientSession(connector=connector, timeout=timeout)
+        _shared_sessions[key] = session
+    return session
 
 
 @dataclass(frozen=True)
@@ -272,9 +287,7 @@ async def _get(
     if session is not None:
         return await _do(session)
 
-    timeout = aiohttp.ClientTimeout(total=config.timeout_s)
-    async with aiohttp.ClientSession(timeout=timeout) as http:
-        return await _do(http)
+    return await _do(_shared_session_for(config.timeout_s))
 
 
 async def _post(
@@ -320,9 +333,7 @@ async def _post(
     if session is not None:
         return await _do(session)
 
-    timeout = aiohttp.ClientTimeout(total=config.timeout_s)
-    async with aiohttp.ClientSession(timeout=timeout) as http:
-        return await _do(http)
+    return await _do(_shared_session_for(config.timeout_s))
 
 
 @dataclass(frozen=True)

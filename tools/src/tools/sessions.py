@@ -7,7 +7,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from livekit.agents import Agent, function_tool
-from sdk.cli_spawner import fire_and_forget
+from sdk.cli_spawner import fire_and_forget_async
 from sdk.config import NYLA_DEFAULT_CONFIG, AgentConfig
 from sdk.constants import (
     CALLBACK_MAX_DELAY_S,
@@ -116,7 +116,7 @@ class SessionsToolsMixin(Agent):
             return f"I can't send that — deliver_to must be 'room' or 'dm', got '{deliver_to}'."
 
         try:
-            fire_and_forget(
+            await fire_and_forget_async(
                 [
                     "agent",
                     "--agent",
@@ -181,7 +181,7 @@ class SessionsToolsMixin(Agent):
             return f"I can't spawn that — deliver_to must be 'room' or 'dm', got '{deliver_to}'."
 
         try:
-            fire_and_forget(
+            await fire_and_forget_async(
                 [
                     "agent",
                     "--agent",
@@ -354,7 +354,7 @@ class SessionsToolsMixin(Agent):
             ]
         )
         try:
-            fire_and_forget(
+            await fire_and_forget_async(
                 [
                     "cron",
                     "add",
