@@ -7,8 +7,9 @@
 #   1. redis  — reachable on 127.0.0.1:6379
 #   2. livekit-server — container up + /rtc/validate responds
 #   3. livekit-sip    — container up + listening on 5060
-#   4. three agents   — PID live, registered-worker line in log
-#   5. SIP routing    — trunk and three dispatch rules present
+#   4. livekit-egress — container up for LangSmith audio attachments
+#   5. three agents   — PID live, registered-worker line in log
+#   6. SIP routing    — trunk and three dispatch rules present
 #
 # Exits 0 if all green, 1 if any check failed. Writes a summary line per
 # check so you can eyeball output or pipe to alertmanager.
@@ -67,6 +68,13 @@ if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx openclaw-livekit-sip; 
   record "livekit-sip" ok "container up"
 else
   record "livekit-sip" fail "container not running"
+fi
+
+# ---- livekit-egress -----------------------------------------------
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx openclaw-livekit-egress; then
+  record "livekit-egress" ok "container up"
+else
+  record "livekit-egress" fail "container not running"
 fi
 
 # ---- agents -------------------------------------------------------

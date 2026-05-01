@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,252 @@ _SECONDS_TO_MS_METADATA = {
     "total_duration": "interruption_total_duration_ms",
 }
 
+_MODEL_USAGE_FIELDS = (
+    "input_tokens",
+    "input_cached_tokens",
+    "input_cached_audio_tokens",
+    "input_cached_text_tokens",
+    "input_cached_image_tokens",
+    "input_audio_tokens",
+    "input_text_tokens",
+    "input_image_tokens",
+    "output_tokens",
+    "output_audio_tokens",
+    "output_text_tokens",
+    "session_duration",
+    "audio_duration",
+    "characters_count",
+    "total_requests",
+)
+
+_TOKEN_TOTAL_FIELDS = (
+    "input_tokens",
+    "input_cached_tokens",
+    "input_cached_audio_tokens",
+    "input_cached_text_tokens",
+    "input_cached_image_tokens",
+    "input_audio_tokens",
+    "input_text_tokens",
+    "input_image_tokens",
+    "output_tokens",
+    "output_audio_tokens",
+    "output_text_tokens",
+)
+
+_TURN_METRIC_FIELDS = (
+    "e2e_latency",
+    "llm_node_ttft",
+    "tts_node_ttfb",
+    "transcription_delay",
+    "end_of_turn_delay",
+    "on_user_turn_completed_delay",
+    "started_speaking_at",
+    "stopped_speaking_at",
+)
+
+
+def _verbose_langsmith_telemetry_enabled() -> bool:
+    """Whether to export low-level event/metric spans to LangSmith.
+
+    The default LangSmith view should read like the call: user turns,
+    assistant turns, tool calls, errors, and a compact session summary.
+    Full state/latency chatter stays in the local telemetry JSON unless
+    this flag is enabled for a focused debugging session.
+    """
+    return os.environ.get("LANGSMITH_VERBOSE_TELEMETRY", "").lower() in ("true", "1", "yes")
+
+
+def _message_payload(role: str, text: str) -> str:
+    return json.dumps({"messages": [{"role": role, "content": text}]}, ensure_ascii=False)
+
+
+def _metadata_scalar(value: Any) -> str | int | float | bool | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _set_metadata(span: Any, key: str, value: Any) -> None:
+    scalar = _metadata_scalar(value)
+    if scalar is None:
+        return
+    span.set_attribute(f"langsmith.metadata.{key}", scalar)
+
+
+def _duration_ms_key(key: str) -> str | None:
+    if key in _SECONDS_TO_MS_METADATA:
+        return _SECONDS_TO_MS_METADATA[key]
+    if key.endswith("_duration"):
+        return f"{key}_ms"
+    return None
+
+
+def _usage_value(value: Any) -> Any:
+    return round(value, 4) if isinstance(value, float) else value
+
+
+def _model_usage_entry(mu: Any) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "type": type(mu).__name__,
+        "provider": getattr(mu, "provider", None),
+        "model": getattr(mu, "model", None),
+    }
+    for field in _MODEL_USAGE_FIELDS:
+        val = getattr(mu, field, None)
+        if val is not None:
+            entry[field] = _usage_value(val)
+    return {key: value for key, value in entry.items() if value is not None}
+
+
+@contextmanager
+def _start_live_langsmith_span(name: str):
+    """Create a short-lived root trace for live LangSmith thread updates."""
+    try:
+        from opentelemetry.context import Context
+
+        with _tracer.start_as_current_span(name, context=Context()) as span:
+            yield span
+    except TypeError:
+        # Test doubles and older tracer wrappers may not accept `context`.
+        with _tracer.start_as_current_span(name) as span:
+            yield span
+
+
+def _set_span_io(
+    span: Any,
+    *,
+    input_role: str | None = None,
+    input_text: str | None = None,
+    output_role: str | None = None,
+    output_text: str | None = None,
+) -> None:
+    if input_text:
+        payload = _message_payload(input_role or "user", input_text)
+        span.set_attribute("inputs", payload)
+        span.set_attribute("input.value", payload)
+        span.set_attribute("gen_ai.prompt.0.role", input_role or "user")
+        span.set_attribute("gen_ai.prompt.0.content", input_text)
+    if output_text:
+        payload = _message_payload(output_role or "assistant", output_text)
+        span.set_attribute("outputs", payload)
+        span.set_attribute("output.value", payload)
+        span.set_attribute("gen_ai.completion.0.role", output_role or "assistant")
+        span.set_attribute("gen_ai.completion.0.content", output_text)
+
+
+def emit_conversation_span(
+    *,
+    call_sid: str | None,
+    agent_name: str,
+    role: str,
+    text: str,
+    metrics: dict[str, Any] | None = None,
+) -> None:
+    """Emit a first-class LangSmith span for one visible transcript item."""
+    if not call_sid or not text.strip():
+        return
+
+    clean_role = role if role in {"user", "assistant", "system", "tool"} else "assistant"
+    span_name = f"{clean_role}_message"
+    with _start_live_langsmith_span(span_name) as span:
+        span.set_attribute("langsmith.span.kind", "chain")
+        span.set_attribute("langsmith.span.tags", f"conversation,role:{clean_role}")
+        span.set_attribute("langsmith.metadata.call_sid", call_sid)
+        span.set_attribute("langsmith.metadata.agent", agent_name)
+        span.set_attribute("langsmith.metadata.role", clean_role)
+        span.set_attribute("langsmith.metadata.text_length", len(text))
+        for key in _TURN_METRIC_FIELDS:
+            value = metrics.get(key) if isinstance(metrics, dict) else None
+            _set_metadata(span, key, value)
+            if isinstance(value, (int, float)):
+                ms_key = _duration_ms_key(key)
+                if ms_key:
+                    _set_metadata(span, ms_key, round(float(value) * 1000, 3))
+        if clean_role == "user":
+            _set_span_io(span, input_role="user", input_text=text)
+        elif clean_role == "tool":
+            _set_span_io(span, output_role="tool", output_text=text)
+        else:
+            _set_span_io(span, output_role="assistant", output_text=text)
+
+
+def _emit_tool_span(
+    *,
+    call_sid: str,
+    agent_name: str,
+    call: Any,
+    output: Any,
+) -> None:
+    """Emit a first-class LangSmith tool run from LiveKit's executed-tools event."""
+    tool_name = str(getattr(call, "name", "unknown_tool") or "unknown_tool")
+    tool_args = str(getattr(call, "arguments", "") or "")
+    tool_call_id = str(getattr(call, "call_id", "") or getattr(call, "id", "") or "")
+    tool_output = getattr(output, "output", output)
+    is_error = bool(getattr(output, "is_error", False)) if output is not None else True
+    output_text = str(tool_output) if tool_output is not None else ""
+
+    with _start_live_langsmith_span(tool_name) as span:
+        span.set_attribute("langsmith.span.kind", "tool")
+        span.set_attribute(
+            "langsmith.span.tags", f"tool:{tool_name}" + (",error" if is_error else "")
+        )
+        span.set_attribute("langsmith.metadata.call_sid", call_sid)
+        span.set_attribute("langsmith.metadata.agent", agent_name)
+        span.set_attribute("langsmith.metadata.tool_name", tool_name)
+        span.set_attribute("langsmith.metadata.tool_arguments", tool_args)
+        span.set_attribute("langsmith.metadata.tool_result", output_text)
+        span.set_attribute("langsmith.metadata.tool_source", "function_tools_executed")
+        span.set_attribute("gen_ai.tool.name", tool_name)
+        span.set_attribute("gen_ai.operation.name", "execute_tool")
+        if tool_call_id:
+            span.set_attribute("gen_ai.tool.call.id", tool_call_id)
+            span.set_attribute("langsmith.metadata.tool_call_id", tool_call_id)
+        if is_error:
+            span.set_attribute("langsmith.metadata.tool_error", "true")
+        _set_span_io(
+            span,
+            input_role="user",
+            input_text=f"call {tool_name}({tool_args})",
+            output_role="tool",
+            output_text=("[error] " if is_error else "") + output_text,
+        )
+
+
+def _usage_attrs_from_event(ev: Any) -> dict[str, Any]:
+    usage = getattr(ev, "usage", None)
+    if usage is None:
+        return {}
+    model_usage = getattr(usage, "model_usage", []) or []
+    usage_attrs: dict[str, Any] = {}
+    totals: dict[str, int | float] = {}
+    for mu in model_usage:
+        mtype = type(mu).__name__
+        model = getattr(mu, "model", None) or "unknown"
+        provider = getattr(mu, "provider", None) or "unknown"
+        prefix = f"{mtype.lower()}.{model}"
+        usage_attrs[f"{prefix}.provider"] = provider
+        for field in _MODEL_USAGE_FIELDS:
+            val = getattr(mu, field, None)
+            if val is not None:
+                usage_attrs[f"{prefix}.{field}"] = _usage_value(val)
+                if field in _TOKEN_TOTAL_FIELDS and isinstance(val, (int, float)):
+                    totals[field] = totals.get(field, 0) + val
+                if field in {"session_duration", "audio_duration"} and isinstance(
+                    val, (int, float)
+                ):
+                    usage_attrs[f"{prefix}.{field}_ms"] = round(float(val) * 1000, 3)
+    for field, value in totals.items():
+        usage_attrs[f"usage.{field}"] = _usage_value(value)
+    input_tokens = totals.get("input_tokens", 0)
+    output_tokens = totals.get("output_tokens", 0)
+    if input_tokens or output_tokens:
+        usage_attrs["usage.total_tokens"] = _usage_value(input_tokens + output_tokens)
+    return usage_attrs
+
 
 def _emit_metric_span(name: str, call_sid: str, agent_name: str, attrs: dict[str, Any]) -> None:
     """Emit a short-lived OTel span carrying live LiveKit metric data.
@@ -74,7 +321,7 @@ def _emit_metric_span(name: str, call_sid: str, agent_name: str, attrs: dict[str
     to strings because LangSmith's metadata store treats them as
     strings on render.
     """
-    with _tracer.start_as_current_span(name) as span:
+    with _start_live_langsmith_span(name) as span:
         span.set_attribute("langsmith.span.kind", "chain")
         # Correlation handles so these synthetic spans can be joined
         # against the trace's other spans by call_sid / agent / job.
@@ -86,17 +333,11 @@ def _emit_metric_span(name: str, call_sid: str, agent_name: str, attrs: dict[str
         # operators can do tag:metrics in LangSmith filters.
         span.set_attribute("langsmith.span.tags", f"metrics,{name}")
         for key, value in attrs.items():
-            if value is None or value == "":
-                continue
-            if isinstance(value, bool):
-                span.set_attribute(f"langsmith.metadata.{key}", str(value))
-            elif isinstance(value, (str, int, float)):
-                span.set_attribute(f"langsmith.metadata.{key}", value)
-                if key in _SECONDS_TO_MS_METADATA and isinstance(value, (int, float)):
-                    span.set_attribute(
-                        f"langsmith.metadata.{_SECONDS_TO_MS_METADATA[key]}",
-                        round(float(value) * 1000, 3),
-                    )
+            _set_metadata(span, key, value)
+            if isinstance(value, (int, float)):
+                ms_key = _duration_ms_key(key)
+                if ms_key:
+                    _set_metadata(span, ms_key, round(float(value) * 1000, 3))
 
 
 def _telemetry_dir() -> Path | None:
@@ -201,10 +442,22 @@ class TelemetryCollector:
             "timestamp": time.time() - self.started_at,
             "request_id": getattr(ev, "request_id", None),
         }
-        for field in ("ttft", "duration", "input_tokens", "output_tokens", "total_tokens"):
+        for field in (
+            "ttft",
+            "duration",
+            "session_duration",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "tokens_per_second",
+        ):
             val = getattr(ev, field, None)
             if val is not None:
                 entry[field] = round(val, 4) if isinstance(val, float) else val
+        for details_field in ("input_token_details", "output_token_details"):
+            details = getattr(ev, details_field, None)
+            if details is not None:
+                entry[details_field] = str(details)
         self.realtime_metrics.append(entry)
 
     def record_user_state(self, old: str, new: str) -> None:
@@ -246,11 +499,17 @@ class TelemetryCollector:
         for i, call in enumerate(calls):
             name = getattr(call, "name", "unknown")
             output = outputs[i] if i < len(outputs) else None
+            tool_output = getattr(output, "output", output)
+            is_error = bool(getattr(output, "is_error", False)) if output is not None else True
             self.tool_calls.append(
                 {
                     "timestamp": time.time() - self.started_at,
                     "name": name,
-                    "success": output is not None,
+                    "call_id": getattr(call, "call_id", None) or getattr(call, "id", None),
+                    "arguments": getattr(call, "arguments", "") or "",
+                    "output": str(tool_output) if tool_output is not None else "",
+                    "is_error": is_error,
+                    "success": output is not None and not is_error,
                 }
             )
 
@@ -264,22 +523,7 @@ class TelemetryCollector:
             "models": [],
         }
         for mu in model_usage:
-            entry: dict[str, Any] = {
-                "type": type(mu).__name__,
-                "provider": getattr(mu, "provider", None),
-                "model": getattr(mu, "model", None),
-            }
-            # Token fields (LLM)
-            for field in ("input_tokens", "output_tokens"):
-                val = getattr(mu, field, None)
-                if val is not None:
-                    entry[field] = val
-            # Audio duration (STT/TTS)
-            for field in ("audio_duration", "characters_count"):
-                val = getattr(mu, field, None)
-                if val is not None:
-                    entry[field] = round(val, 2) if isinstance(val, float) else val
-            snapshot["models"].append(entry)
+            snapshot["models"].append(_model_usage_entry(mu))
         self.usage_snapshots.append(snapshot)
 
     def record_error(self, event: Any) -> None:
@@ -407,6 +651,7 @@ def wire_telemetry_capture(
         return None
 
     collector = TelemetryCollector(call_sid, agent_name)
+    latest_usage_attrs: dict[str, Any] = {}
 
     @session.on("conversation_item_added")
     def _on_item(ev: Any) -> None:
@@ -450,31 +695,34 @@ def wire_telemetry_capture(
                 val = metrics.get(key)
                 if val is not None:
                     turn_attrs[key] = val
-        _emit_metric_span("turn_metrics", call_sid, agent_name, turn_attrs)
+        if _verbose_langsmith_telemetry_enabled():
+            _emit_metric_span("turn_metrics", call_sid, agent_name, turn_attrs)
 
     @session.on("user_state_changed")
     def _on_user_state(ev: Any) -> None:
         old = str(getattr(ev, "old_state", "?"))
         new = str(getattr(ev, "new_state", "?"))
         collector.record_user_state(old, new)
-        _emit_metric_span(
-            "user_state_changed",
-            call_sid,
-            agent_name,
-            {"old_state": old, "new_state": new},
-        )
+        if _verbose_langsmith_telemetry_enabled():
+            _emit_metric_span(
+                "user_state_changed",
+                call_sid,
+                agent_name,
+                {"old_state": old, "new_state": new},
+            )
 
     @session.on("agent_state_changed")
     def _on_agent_state(ev: Any) -> None:
         old = str(getattr(ev, "old_state", "?"))
         new = str(getattr(ev, "new_state", "?"))
         collector.record_agent_state(old, new)
-        _emit_metric_span(
-            "agent_state_changed",
-            call_sid,
-            agent_name,
-            {"old_state": old, "new_state": new},
-        )
+        if _verbose_langsmith_telemetry_enabled():
+            _emit_metric_span(
+                "agent_state_changed",
+                call_sid,
+                agent_name,
+                {"old_state": old, "new_state": new},
+            )
 
     @session.on("overlapping_speech")
     def _on_overlap(ev: Any) -> None:
@@ -486,17 +734,19 @@ def wire_telemetry_capture(
             val = getattr(ev, field, None)
             if val is not None:
                 overlap_attrs[field] = val
-        _emit_metric_span("overlapping_speech", call_sid, agent_name, overlap_attrs)
+        if _verbose_langsmith_telemetry_enabled():
+            _emit_metric_span("overlapping_speech", call_sid, agent_name, overlap_attrs)
 
     @session.on("agent_false_interruption")
     def _on_false_interrupt(ev: Any) -> None:
         collector.false_interruptions += 1
-        _emit_metric_span(
-            "false_interruption",
-            call_sid,
-            agent_name,
-            {"false_interruptions_total": collector.false_interruptions},
-        )
+        if _verbose_langsmith_telemetry_enabled():
+            _emit_metric_span(
+                "false_interruption",
+                call_sid,
+                agent_name,
+                {"false_interruptions_total": collector.false_interruptions},
+            )
 
     @session.on("function_tools_executed")
     def _on_tools(ev: Any) -> None:
@@ -507,42 +757,16 @@ def wire_telemetry_capture(
         calls = getattr(ev, "function_calls", []) or []
         outputs = getattr(ev, "function_call_outputs", []) or []
         for i, call in enumerate(calls):
-            name = str(getattr(call, "name", "unknown"))
             output = outputs[i] if i < len(outputs) else None
-            _emit_metric_span(
-                "tool_executed",
-                call_sid,
-                agent_name,
-                {
-                    "tool_name": name,
-                    "success": output is not None,
-                    "output_preview": str(output)[:300] if output is not None else "",
-                },
-            )
+            _emit_tool_span(call_sid=call_sid, agent_name=agent_name, call=call, output=output)
 
     @session.on("session_usage_updated")
     def _on_usage(ev: Any) -> None:
+        nonlocal latest_usage_attrs
         collector.record_usage(ev)
-        # Cumulative usage — one OTel span per update. Each model in
-        # the usage rollup gets its fields flattened with a model:
-        # prefix so e.g. `metadata.gemini-2.5.input_tokens` is filterable.
-        usage = getattr(ev, "usage", None)
-        if usage is None:
-            return
-        model_usage = getattr(usage, "model_usage", []) or []
-        usage_attrs: dict[str, Any] = {}
-        for mu in model_usage:
-            mtype = type(mu).__name__
-            model = getattr(mu, "model", None) or "unknown"
-            provider = getattr(mu, "provider", None) or "unknown"
-            prefix = f"{mtype.lower()}.{model}"
-            usage_attrs[f"{prefix}.provider"] = provider
-            for field in ("input_tokens", "output_tokens", "audio_duration", "characters_count"):
-                val = getattr(mu, field, None)
-                if val is not None:
-                    usage_attrs[f"{prefix}.{field}"] = val
-        if usage_attrs:
-            _emit_metric_span("session_usage", call_sid, agent_name, usage_attrs)
+        latest_usage_attrs = _usage_attrs_from_event(ev)
+        if latest_usage_attrs:
+            _emit_metric_span("session_usage", call_sid, agent_name, latest_usage_attrs)
 
     @session.on("metrics_collected")
     def _on_metrics(ev: Any) -> None:
@@ -562,11 +786,24 @@ def wire_telemetry_capture(
             realtime_attrs: dict[str, Any] = {
                 "request_id": getattr(metrics, "request_id", None),
             }
-            for field in ("ttft", "duration", "input_tokens", "output_tokens", "total_tokens"):
+            for field in (
+                "ttft",
+                "duration",
+                "session_duration",
+                "input_tokens",
+                "output_tokens",
+                "total_tokens",
+                "tokens_per_second",
+            ):
                 val = getattr(metrics, field, None)
                 if val is not None:
                     realtime_attrs[field] = val
-            _emit_metric_span("realtime_metrics", call_sid, agent_name, realtime_attrs)
+            for details_field in ("input_token_details", "output_token_details"):
+                details = getattr(metrics, details_field, None)
+                if details is not None:
+                    realtime_attrs[details_field] = str(details)
+            if _verbose_langsmith_telemetry_enabled():
+                _emit_metric_span("realtime_metrics", call_sid, agent_name, realtime_attrs)
 
     @session.on("error")
     def _on_error(ev: Any) -> None:
@@ -593,6 +830,7 @@ def wire_telemetry_capture(
                 "total_turns": len(collector.turns),
                 "false_interruptions": collector.false_interruptions,
                 "tool_calls_total": len(collector.tool_calls),
+                **latest_usage_attrs,
             },
         )
 

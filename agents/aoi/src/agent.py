@@ -12,6 +12,7 @@ import logging
 from _shared import AOI_CONFIG, AoiAgent, build_model, build_tools, load_env_once, load_persona
 from livekit.agents import AgentSession, JobContext, cli
 from livekit.agents.worker import AgentServer
+from sdk.audio_recording import start_call_audio_recording, wire_call_audio_attachment
 from sdk.postcall import wire_postcall_review
 from sdk.postcall_memory import wire_postcall_memory
 from sdk.telemetry import wire_telemetry_capture
@@ -57,8 +58,13 @@ async def entrypoint(ctx: JobContext) -> None:
     if not transcript_sid and ctx.room.name.startswith("phone-"):
         transcript_sid = ctx.room.name.removeprefix("phone-")
 
+    audio_recording = await start_call_audio_recording(
+        ctx, call_sid=transcript_sid, agent_name="phone-aoi"
+    )
+    wire_call_audio_attachment(ctx, audio_recording)
+
     session = AgentSession(llm=build_model())
-    wire_transcript_logging(session, transcript_sid)
+    wire_transcript_logging(session, transcript_sid, agent_name="phone-aoi")
     wire_telemetry_capture(session, transcript_sid, agent_name="phone-aoi")
     wire_postcall_review(session, transcript_sid, agent_name="phone-aoi")
     wire_postcall_memory(

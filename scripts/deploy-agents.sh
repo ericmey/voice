@@ -93,6 +93,17 @@ agent_musubi_token() {
   esac
 }
 
+agent_langsmith_project() {
+  # LangSmith projects are per agent by default. Operators can override
+  # each one from secrets/livekit-agents.env without changing the script.
+  case "$1" in
+    nyla)  echo "${LANGSMITH_PROJECT_NYLA:-Nyla}" ;;
+    aoi)   echo "${LANGSMITH_PROJECT_AOI:-Aoi}" ;;
+    party) echo "${LANGSMITH_PROJECT_PARTY:-Party}" ;;
+    *)     die "no LangSmith project mapping for: $1" ;;
+  esac
+}
+
 render_plist() {
   local agent="$1"
   local label
@@ -103,6 +114,9 @@ render_plist() {
   local musubi_token
   musubi_token="$(agent_musubi_token "$agent")"
   [[ -n "${musubi_token}" ]] || die "musubi token for ${agent} is empty — check secrets file"
+  local langsmith_project
+  langsmith_project="$(agent_langsmith_project "$agent")"
+  [[ -n "${langsmith_project}" ]] || die "LangSmith project for ${agent} is empty — check secrets file"
   local out="${LAUNCH_AGENTS_DIR}/ai.openclaw.livekit-agent-${agent}.plist"
 
   # sed-based render. envsubst would swallow any $... in paths; explicit
@@ -110,6 +124,7 @@ render_plist() {
   sed \
     -e "s|{{AGENT_NAME}}|${agent}|g" \
     -e "s|{{AGENT_LABEL}}|${label}|g" \
+    -e "s|{{LANGSMITH_PROJECT}}|${langsmith_project}|g" \
     -e "s|{{MONOREPO_ROOT}}|${REPO_ROOT}|g" \
     -e "s|{{LIVEKIT_VOICE_LOGS}}|${VOICE_LOGS}|g" \
     -e "s|{{HOME}}|${HOME}|g" \
@@ -125,8 +140,12 @@ render_plist() {
     -e "s|{{OPENAI_API_KEY}}|${OPENAI_API_KEY}|g" \
     -e "s|{{ELEVENLABS_API_KEY}}|${ELEVENLABS_API_KEY}|g" \
     -e "s|{{LANGSMITH_TRACING}}|${LANGSMITH_TRACING:-false}|g" \
+    -e "s|{{LANGSMITH_ATTACH_AUDIO}}|${LANGSMITH_ATTACH_AUDIO:-${LANGSMITH_TRACING:-false}}|g" \
+    -e "s|{{LIVEKIT_EGRESS_HOST_RECORDINGS_DIR}}|${LIVEKIT_EGRESS_HOST_RECORDINGS_DIR:-${VOICE_LOGS}/recordings}|g" \
+    -e "s|{{LIVEKIT_EGRESS_CONTAINER_RECORDINGS_DIR}}|${LIVEKIT_EGRESS_CONTAINER_RECORDINGS_DIR:-/recordings}|g" \
     -e "s|{{OTEL_EXPORTER_OTLP_ENDPOINT}}|${OTEL_EXPORTER_OTLP_ENDPOINT:-}|g" \
     -e "s|{{OTEL_EXPORTER_OTLP_HEADERS}}|${OTEL_EXPORTER_OTLP_HEADERS:-}|g" \
+    -e "s|{{LANGSMITH_VERBOSE_TELEMETRY}}|${LANGSMITH_VERBOSE_TELEMETRY:-false}|g" \
     -e "s|{{LANGSMITH_PROCESSOR_DEBUG}}|${LANGSMITH_PROCESSOR_DEBUG:-false}|g" \
     "${TEMPLATE}" > "${out}"
 

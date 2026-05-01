@@ -57,6 +57,7 @@ copy_if_missing() {
 
 copy_if_missing "${REPO_ROOT}/config/livekit.yaml.example"           "${REPO_ROOT}/config/livekit.yaml"
 copy_if_missing "${REPO_ROOT}/config/livekit-sip.yaml.example"       "${REPO_ROOT}/config/livekit-sip.yaml"
+copy_if_missing "${REPO_ROOT}/config/livekit-egress.yaml.example"    "${REPO_ROOT}/config/livekit-egress.yaml"
 copy_if_missing "${REPO_ROOT}/config/sip-inbound-trunk.json.example" "${REPO_ROOT}/config/sip-inbound-trunk.json"
 for a in nyla aoi party; do
   copy_if_missing "${REPO_ROOT}/config/sip-dispatch-${a}.json.example" "${REPO_ROOT}/config/sip-dispatch-${a}.json"
@@ -86,7 +87,7 @@ Next steps:
   2. Edit ${REPO_ROOT}/config/livekit.yaml
      (keys section: set a real api_secret)
 
-  3. Edit ${REPO_ROOT}/config/livekit-sip.yaml
+  3. Edit ${REPO_ROOT}/config/livekit-sip.yaml and livekit-egress.yaml
      (api_key/api_secret: match livekit.yaml)
 
   4. Edit ${REPO_ROOT}/config/sip-inbound-trunk.json

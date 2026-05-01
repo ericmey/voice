@@ -83,6 +83,33 @@ def test_setup_wires_provider_when_fully_configured(monkeypatch) -> None:
     assert tracing._provider is not None
 
 
+def test_setup_overrides_project_header_from_agent_env(monkeypatch) -> None:
+    """Launchd renders LANGSMITH_PROJECT per agent; setup must rewrite the
+    OTLP project header before the exporter is constructed."""
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    monkeypatch.setenv("LANGSMITH_PROJECT", "Nyla")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://api.smith.langchain.com/otel")
+    monkeypatch.setenv(
+        "OTEL_EXPORTER_OTLP_HEADERS", "x-api-key=test-key,Langsmith-Project=Harem World"
+    )
+    _reset_module_state()
+
+    with (
+        patch("livekit.agents.telemetry.set_tracer_provider"),
+        patch("opentelemetry.trace.set_tracer_provider"),
+    ):
+        tracing.setup_langsmith_tracing()
+
+    assert os.environ["OTEL_EXPORTER_OTLP_HEADERS"] == "x-api-key=test-key,Langsmith-Project=Nyla"
+
+
+def test_agent_name_defaults_langsmith_project(monkeypatch) -> None:
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.setenv("OPENCLAW_AGENT_NAME", "aoi")
+
+    assert tracing._agent_langsmith_project() == "Aoi"
+
+
 def test_setup_is_idempotent(monkeypatch) -> None:
     """Multiple calls (re-imports, accidental double-init) must not register
     the processor twice — we'd duplicate every span."""
@@ -131,6 +158,8 @@ def teardown_module(module) -> None:  # noqa: ARG001
     # Also clear env vars we may have set.
     for k in (
         "LANGSMITH_TRACING",
+        "LANGSMITH_PROJECT",
+        "OPENCLAW_AGENT_NAME",
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_HEADERS",
     ):

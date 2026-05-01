@@ -59,7 +59,7 @@ async def entrypoint_text(ctx: JobContext) -> None:
         transcript_sid = ctx.room.name.removeprefix("sim-")
 
     session = AgentSession(llm=build_model())
-    wire_transcript_logging(session, transcript_sid)
+    wire_transcript_logging(session, transcript_sid, agent_name="phone-nyla-text")
     wire_telemetry_capture(session, transcript_sid, agent_name="phone-nyla-text")
     # Only spawn post-call review for real voice calls (call_sid set by SIP).
     # Text simulator sessions use synthetic `sim-*` room names (for example,

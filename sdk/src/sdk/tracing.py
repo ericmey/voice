@@ -32,6 +32,31 @@ _provider: Any | None = None
 _atexit_registered = False
 
 
+def _agent_langsmith_project() -> str | None:
+    explicit = os.environ.get("LANGSMITH_PROJECT")
+    if explicit:
+        return explicit
+
+    agent_name = (os.environ.get("OPENCLAW_AGENT_NAME") or "").strip().lower()
+    if not agent_name:
+        return None
+    return {
+        "aoi": "Aoi",
+        "nyla": "Nyla",
+        "party": "Party",
+    }.get(agent_name, agent_name.title())
+
+
+def _headers_with_langsmith_project(headers: str, project: str | None) -> str:
+    if not project:
+        return headers
+
+    parts = [part for part in headers.split(",") if part]
+    parts = [part for part in parts if not part.lower().startswith("langsmith-project=")]
+    parts.append(f"Langsmith-Project={project}")
+    return ",".join(parts)
+
+
 def _debug_enabled() -> bool:
     return os.environ.get("LANGSMITH_PROCESSOR_DEBUG", "").lower() in ("true", "1", "yes")
 
@@ -75,6 +100,11 @@ def setup_langsmith_tracing() -> None:
             "OTEL_EXPORTER_OTLP_HEADERS is missing — tracing disabled."
         )
         return
+    project = _agent_langsmith_project()
+    if project:
+        headers = _headers_with_langsmith_project(headers, project)
+        os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = headers
+        _debug(f"[TRACING-SETUP] pid={_pid} LangSmith project={project!r}")
 
     # Imports inside the function so the SDK package stays importable on
     # boxes that haven't installed the OTel exporter yet (CI, local

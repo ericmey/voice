@@ -5,6 +5,7 @@
   Substitutions (handled by scripts/deploy-agents.sh):
     {{AGENT_NAME}}            nyla | aoi | party
     {{AGENT_LABEL}}           human-readable description
+    {{LANGSMITH_PROJECT}}      per-agent LangSmith project name
     {{MONOREPO_ROOT}}         absolute path to the openclaw-livekit checkout
     {{LIVEKIT_VOICE_LOGS}}    directory for voice-stack logs (default <repo>/logs/voice)
 
@@ -52,6 +53,8 @@
       <string>/opt/homebrew/bin:/opt/homebrew/opt/node/bin:/usr/local/bin:/usr/bin:/bin</string>
       <key>LIVEKIT_VOICE_LOGS</key>
       <string>{{LIVEKIT_VOICE_LOGS}}</string>
+      <key>OPENCLAW_AGENT_NAME</key>
+      <string>{{AGENT_NAME}}</string>
       <!-- OPENCLAW_BIN: rendered from env at deploy time. Falls back to
            /opt/homebrew/bin/openclaw (ARM Homebrew default). Intel Macs
            or custom install paths should set OPENCLAW_BIN before deploy. -->
@@ -90,10 +93,20 @@
            flows to LangSmith. Operator next-step in secrets/livekit-agents.env. -->
       <key>LANGSMITH_TRACING</key>
       <string>{{LANGSMITH_TRACING}}</string>
+      <key>LANGSMITH_PROJECT</key>
+      <string>{{LANGSMITH_PROJECT}}</string>
+      <key>LANGSMITH_ATTACH_AUDIO</key>
+      <string>{{LANGSMITH_ATTACH_AUDIO}}</string>
+      <key>LIVEKIT_EGRESS_HOST_RECORDINGS_DIR</key>
+      <string>{{LIVEKIT_EGRESS_HOST_RECORDINGS_DIR}}</string>
+      <key>LIVEKIT_EGRESS_CONTAINER_RECORDINGS_DIR</key>
+      <string>{{LIVEKIT_EGRESS_CONTAINER_RECORDINGS_DIR}}</string>
       <key>OTEL_EXPORTER_OTLP_ENDPOINT</key>
       <string>{{OTEL_EXPORTER_OTLP_ENDPOINT}}</string>
       <key>OTEL_EXPORTER_OTLP_HEADERS</key>
       <string>{{OTEL_EXPORTER_OTLP_HEADERS}}</string>
+      <key>LANGSMITH_VERBOSE_TELEMETRY</key>
+      <string>{{LANGSMITH_VERBOSE_TELEMETRY}}</string>
       <key>LANGSMITH_PROCESSOR_DEBUG</key>
       <string>{{LANGSMITH_PROCESSOR_DEBUG}}</string>
       <key>NODE_EXTRA_CA_CERTS</key>

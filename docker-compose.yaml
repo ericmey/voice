@@ -1,8 +1,8 @@
 # OpenClaw LiveKit infrastructure.
 #
 # Orchestrates the container-side services: livekit-server (WebRTC signaling +
-# TURN), livekit-sip (SIP trunk to Twilio, room dispatch), and redis (shared
-# state between the two).
+# TURN), livekit-sip (SIP trunk to Twilio, room dispatch), livekit-egress
+# (audio-only call recordings), and redis (shared state between them).
 #
 # NOT in this compose file: the Python voice agents (nyla, aoi, party).
 # Agents run as macOS launch agents via launchd, rendered from templates in
@@ -79,6 +79,22 @@ services:
     volumes:
       - ${LIVEKIT_CONFIG_DIR:-./config}/livekit-sip.yaml:/config.yaml:ro
     command: ["--config", "/config.yaml"]
+
+  livekit-egress:
+    image: livekit/egress:v1.12.0
+    container_name: openclaw-livekit-egress
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - livekit-server
+    cap_add:
+      - SYS_ADMIN
+    shm_size: "1gb"
+    environment:
+      EGRESS_CONFIG_FILE: /config.yaml
+    volumes:
+      - ${LIVEKIT_CONFIG_DIR:-./config}/livekit-egress.yaml:/config.yaml:ro
+      - ./logs/voice/recordings:/recordings
 
 # Named volume for persistent Redis state. Survives container recreation
 # and Docker Desktop updates. Wiped only by `docker compose down -v`.

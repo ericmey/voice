@@ -1728,6 +1728,7 @@ version = "0.1.0"
 source = { editable = "sdk" }
 dependencies = [
     { name = "aiohttp" },
+    { name = "langsmith" },
     { name = "livekit-agents" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
@@ -1743,6 +1744,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp" },
+    { name = "langsmith", specifier = ">=0.7.38" },
     { name = "livekit-agents", specifier = "~=1.5" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.27" },
     { name = "opentelemetry-sdk", specifier = ">=1.27" },

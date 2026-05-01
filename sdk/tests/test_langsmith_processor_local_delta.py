@@ -325,8 +325,7 @@ def test_lk_job_id_surfaced_as_metadata() -> None:
     job_id — that field is a foreign key into LangSmith's session
     table; populating it with a value LangSmith hasn't created itself
     returns HTTP 404 and drops the entire span batch on the floor.
-    Thread grouping happens via `langsmith.metadata.thread_id`
-    (the OTel trace_id) instead — see test below."""
+    Thread grouping happens via `langsmith.metadata.thread_id` instead."""
     processor = _make_processor()
     span = _make_span(
         "agent_session",
@@ -340,14 +339,11 @@ def test_lk_job_id_surfaced_as_metadata() -> None:
     assert "langsmith.trace.session_id" not in span._attributes
 
 
-def test_thread_id_groups_spans_in_same_trace() -> None:
-    """Thread grouping in the LangSmith UI is driven by
-    `langsmith.metadata.thread_id`, set to the OTel trace_id. All
-    spans from one call share the same trace_id so they cluster as
-    one Thread automatically — no foreign-key gymnastics needed."""
+def test_thread_id_groups_spans_in_same_trace_without_call_id() -> None:
+    """When no call/session id is available, fall back to the OTel trace id."""
     processor = _make_processor()
     span_a = _make_span("user_turn", {"lk.user_transcript": "hi"})
-    span_b = _make_span("agent_session", {"lk.job_id": "AJ_call1"})
+    span_b = _make_span("agent_session", {})
     # Both spans share the default trace_id from _make_span (0xDEADBEEFCAFE).
 
     processor.on_end(span_a)
@@ -357,6 +353,37 @@ def test_thread_id_groups_spans_in_same_trace() -> None:
         span_a._attributes["langsmith.metadata.thread_id"]
         == span_b._attributes["langsmith.metadata.thread_id"]
     )
+
+
+def test_thread_id_prefers_call_sid_over_trace_id() -> None:
+    """LangSmith threads should model the call, not each short-lived trace.
+
+    Curated conversation/tool spans intentionally close quickly so they appear
+    live while the call is still active. They must still share a thread by
+    stable call_sid.
+    """
+    processor = _make_processor()
+    span_a = _make_span(
+        "user_message",
+        {
+            "langsmith.span.tags": "conversation,role:user",
+            "langsmith.metadata.call_sid": "SCL_call1",
+        },
+    )
+    span_b = _make_span(
+        "assistant_message",
+        {
+            "langsmith.span.tags": "conversation,role:assistant",
+            "langsmith.metadata.call_sid": "SCL_call1",
+        },
+    )
+    span_b.context.trace_id = 0xFEEDFACE
+
+    processor.on_end(span_a)
+    processor.on_end(span_b)
+
+    assert span_a._attributes["langsmith.metadata.thread_id"] == "SCL_call1"
+    assert span_b._attributes["langsmith.metadata.thread_id"] == "SCL_call1"
 
 
 def test_universal_metadata_tags_realtime_pipeline() -> None:

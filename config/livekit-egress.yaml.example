@@ -1,0 +1,22 @@
+# livekit-egress configuration.
+#
+# Copy to config/livekit-egress.yaml (gitignored) before starting the
+# openclaw-livekit-egress container. Keys here must match livekit.yaml.
+# The egress container writes local recordings to /recordings, which
+# docker-compose bind-mounts to ./logs/voice/recordings on the host.
+
+log_level: info
+
+api_key: "devkey"
+api_secret: "devsecret-change-me-before-real-use"
+
+# On Mac with compose defaults, containers reach livekit-server through
+# host.docker.internal. Keep this aligned with LIVEKIT_URL in secrets.
+ws_url: "ws://host.docker.internal:7880"
+
+redis:
+  address: "host.docker.internal:6379"
+
+# Chrome sandbox needs SYS_ADMIN in Docker; compose grants it on the
+# egress service. Keeping the sandbox enabled matches LiveKit's default.
+enable_chrome_sandbox: true

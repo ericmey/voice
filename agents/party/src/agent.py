@@ -27,6 +27,7 @@ from livekit.plugins import elevenlabs as elevenlabs_plugin
 from livekit.plugins import google as google_plugin
 from livekit.plugins import openai as openai_plugin
 from livekit.plugins import silero as silero_plugin
+from sdk.audio_recording import start_call_audio_recording, wire_call_audio_attachment
 from sdk.config import AgentConfig
 from sdk.constants import NYLA_DISCORD_ROOM
 from sdk.env import load_env
@@ -184,8 +185,13 @@ async def entrypoint(ctx: JobContext) -> None:
     if not transcript_sid and ctx.room.name.startswith("phone-"):
         transcript_sid = ctx.room.name.removeprefix("phone-")
 
+    audio_recording = await start_call_audio_recording(
+        ctx, call_sid=transcript_sid, agent_name="phone-party"
+    )
+    wire_call_audio_attachment(ctx, audio_recording)
+
     session = AgentSession(stt=stt, vad=vad, llm=llm, tts=tts)
-    wire_transcript_logging(session, transcript_sid)
+    wire_transcript_logging(session, transcript_sid, agent_name="phone-party")
     wire_telemetry_capture(session, transcript_sid, agent_name="phone-party")
     wire_postcall_review(session, transcript_sid, agent_name="phone-party")
     wire_postcall_memory(
