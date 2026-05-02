@@ -78,14 +78,11 @@ async def entrypoint(ctx: JobContext) -> None:
     wire_otel_shutdown_flush(ctx)
     await session.start(agent=agent, room=ctx.room)
     attach_current_span_metadata(
-        agent="phone-aoi",
-        room=ctx.room.name,
-        livekit_job_id=getattr(ctx.job, "id", None),
-        call_sid=transcript_sid,
-        sip_call_id=call_sid,
-        caller_from=caller_from,
+        session_id=transcript_sid,
+        enduser_id=caller_from,
         dialed_number=caller.dialed_number,
         caller_source=caller.source,
+        lk_job_id=getattr(ctx.job, "id", None),
     )
 
     trace(f"session started room={ctx.room.name}")

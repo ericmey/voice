@@ -12,21 +12,22 @@ def test_recording_dirs_default_under_voice_logs(monkeypatch, tmp_path) -> None:
     assert audio_recording._recordings_host_dir() == tmp_path / "voice" / "recordings"
 
 
-def test_enabled_reads_new_var_first(monkeypatch) -> None:
+def test_enabled_when_env_true(monkeypatch) -> None:
     monkeypatch.setenv("OPENCLAW_RECORD_AUDIO", "true")
-    monkeypatch.setenv("LANGSMITH_ATTACH_AUDIO", "false")
-    assert audio_recording._enabled() is True
-
-
-def test_enabled_falls_back_to_legacy_alias(monkeypatch) -> None:
-    monkeypatch.delenv("OPENCLAW_RECORD_AUDIO", raising=False)
-    monkeypatch.setenv("LANGSMITH_ATTACH_AUDIO", "true")
     assert audio_recording._enabled() is True
 
 
 def test_enabled_default_false(monkeypatch) -> None:
     monkeypatch.delenv("OPENCLAW_RECORD_AUDIO", raising=False)
-    monkeypatch.delenv("LANGSMITH_ATTACH_AUDIO", raising=False)
+    assert audio_recording._enabled() is False
+
+
+def test_enabled_legacy_alias_no_longer_honored(monkeypatch) -> None:
+    """LANGSMITH_ATTACH_AUDIO was retired alongside the SigNoz refactor.
+    Operators must use OPENCLAW_RECORD_AUDIO; the old alias is silently
+    ignored so a stale .env file can't accidentally re-enable recording."""
+    monkeypatch.delenv("OPENCLAW_RECORD_AUDIO", raising=False)
+    monkeypatch.setenv("LANGSMITH_ATTACH_AUDIO", "true")
     assert audio_recording._enabled() is False
 
 

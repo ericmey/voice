@@ -5,8 +5,7 @@ exposes the resulting file path/URL as an OTel span attribute so any
 backend (SigNoz, Phoenix, Datadog, ...) can link the call run to its
 recording without a vendor-specific upload SDK.
 
-Enable with ``OPENCLAW_RECORD_AUDIO=true`` (legacy alias
-``LANGSMITH_ATTACH_AUDIO=true`` is honored for backward compatibility).
+Enable with ``OPENCLAW_RECORD_AUDIO=true``.
 
 The agent entrypoint calls :func:`start_call_audio_recording` after
 ``ctx.connect`` and :func:`wire_call_audio_attachment` to register a
@@ -55,19 +54,8 @@ class CallAudioRecording:
 
 
 def _enabled() -> bool:
-    """Audio recording is opt-in.
-
-    Reads ``OPENCLAW_RECORD_AUDIO`` first, then the legacy
-    ``LANGSMITH_ATTACH_AUDIO`` alias. The legacy alias is honored
-    because the deploy script still renders it from the secrets file
-    until it's removed in a follow-up cleanup.
-    """
-    for var in ("OPENCLAW_RECORD_AUDIO", "LANGSMITH_ATTACH_AUDIO"):
-        value = os.environ.get(var)
-        if value is None:
-            continue
-        return value.lower() in ("true", "1", "yes")
-    return False
+    """Audio recording is opt-in via ``OPENCLAW_RECORD_AUDIO=true``."""
+    return os.environ.get("OPENCLAW_RECORD_AUDIO", "").lower() in ("true", "1", "yes")
 
 
 def _voice_logs_dir() -> Path:

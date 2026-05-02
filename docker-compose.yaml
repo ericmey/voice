@@ -109,7 +109,7 @@ services:
 #   - http://localhost:4318/v1/...  — OTLP HTTP (point agents here)
 #   - http://localhost:4317         — OTLP gRPC
 #
-# Agents flip on by setting OPENCLAW_OTEL_EXPORTERS=langsmith,otlp and
+# Agents flip on by setting OPENCLAW_OTEL_ENABLED=true and
 # OPENCLAW_OTLP_ENDPOINT=http://localhost:4318/v1/traces in
 # secrets/livekit-agents.env. Logs ship through the same OTLP endpoint
 # via OTLPLogExporter when OPENCLAW_OTEL_LOGS_ENABLED=true.

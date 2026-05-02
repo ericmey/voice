@@ -87,8 +87,9 @@ cmd_up() {
       printf "\n"
       printf "    1. Open http://localhost:8080 in your browser.\n"
       printf "    2. Create the admin user + org (local-only, never leaves your laptop).\n"
-      printf "    3. Then re-deploy your agents with OPENCLAW_OTEL_EXPORTERS=langsmith,otlp\n"
-      printf "       (or just 'otlp') and traces will start flowing.\n"
+      printf "    3. Then 'make deploy' your agents (OPENCLAW_OTEL_ENABLED=true,\n"
+      printf "       OPENCLAW_OTLP_ENDPOINT=http://localhost:4318/v1/traces) and\n"
+      printf "       traces will start flowing.\n"
       printf "\n"
       return 0
     fi

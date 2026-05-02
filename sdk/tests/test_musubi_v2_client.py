@@ -159,6 +159,10 @@ async def test_shared_session_reuses_keepalive_session(monkeypatch: pytest.Monke
 
     assert first is second
     assert FakeClientSession.created == 1
+    # ``_shared_session_for`` is typed as returning ``aiohttp.ClientSession``;
+    # the monkeypatch above swaps in ``FakeClientSession``. Narrow with
+    # isinstance so pyright sees the fake's ``.kwargs`` attribute.
+    assert isinstance(first, FakeClientSession)
     assert first.kwargs["connector"].kwargs["limit"] == 20
 
 

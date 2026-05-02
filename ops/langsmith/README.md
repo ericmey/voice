@@ -1,17 +1,19 @@
 # LangSmith — infrastructure as code (archived)
 
-> **Status (2026-05-01): archived.** The repo standardized on
-> SigNoz as the primary observability backend. The agents no longer
-> ship spans to LangSmith by default (`OPENCLAW_OTEL_EXPORTERS=otlp`,
-> see `docs/OBSERVABILITY.md`).
+> **Status (2026-05-01): archived.** The repo standardized on SigNoz
+> as the only configured observability backend. The agent SDK no
+> longer dual-exports to LangSmith — see `docs/LANGSMITH.md` for
+> the reactivation pathway (local OTel collector fan-out, or revert
+> the deletion of `sdk/src/sdk/livekit_otel_enricher.py`).
 >
-> This directory is preserved untouched so an operator can flip back
-> to LangSmith later without re-deriving the IaC. To reactivate:
+> This directory is preserved untouched so an operator can keep the
+> LangSmith IaC (projects, datasets, evaluators) without re-deriving
+> it. The Make targets below still work against the LangSmith API:
 >
-> 1. Add `langsmith` to `OPENCLAW_OTEL_EXPORTERS` in
->    `secrets/livekit-agents.env`.
-> 2. Run `make langsmith-plan-legacy` / `make langsmith-provision-legacy`
->    (intentionally hidden from `make help`).
+>   * `make langsmith-plan-legacy` — dry-run preview
+>   * `make langsmith-provision-legacy` — apply
+>
+> Both are intentionally hidden from `make help`.
 
 ---
 

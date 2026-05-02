@@ -1,55 +1,38 @@
-"""OpenTelemetry tracing, logs, and metrics setup for OpenClaw LiveKit
-agents.
+"""OpenTelemetry tracing, logs, and metrics for the OpenClaw voice agents.
 
-The pipeline is OTel-first: every span uses standard semantic conventions
-(``gen_ai.*``, ``openinference.*``, ``http.*``, ``service.*``) so it works
-unchanged across SigNoz, Phoenix, Honeycomb, Datadog, Jaeger, LangSmith,
-or any OTLP-compatible backend. SigNoz is the default primary backend
-(see ``docs/OBSERVABILITY.md``).
+SigNoz is the only configured backend. The setup mirrors the
+`SigNoz LiveKit observability guide
+<https://signoz.io/docs/livekit-observability>`_ verbatim and relies on
+LiveKit Agents 1.5+ emitting native ``gen_ai.*`` semantic-convention
+attributes plus ``lk.*`` LiveKit-specific attributes. We add no span
+enrichment beyond:
 
-Architecture::
+* :class:`NoiseSpanFilter` — drops the few LiveKit spans that are pure
+  UI noise (``agent_speaking``, ``user_speaking``, ``drain_agent_activity``,
+  ``on_enter``, ``on_exit``) so the trace tree stays readable. SigNoz has
+  no built-in span-name dropper; this is the minimum custom code needed
+  to keep the call view focused on conversation content.
+* :func:`attach_current_span_metadata` — stamps SIP / caller identity
+  onto the active ``agent_session`` span as standard OTel SemConv
+  attributes (``session.id``, ``enduser.id``) plus a small set of
+  telephony-routing fields (``openclaw.dialed_number`` /
+  ``openclaw.caller_source`` / ``openclaw.lk_job_id``) not covered by
+  SemConv.
 
-    TracerProvider(Resource(service.name=..., service.version=..., agent=...))
-      ├── LiveKitOtelEnricher                        (enrichment only)
-      │     - lk.* → gen_ai.*, openinference.*, openclaw.*
-      │     - thread_id grouping, deferred job spans
-      ├── BatchSpanProcessor → OTLP/HTTP → SigNoz    (default)
-      ├── BatchSpanProcessor → OTLP/HTTP → LangSmith (optional)
-      ├── BatchSpanProcessor → OTLP/HTTP → Phoenix   (optional)
-      └── BatchSpanProcessor → ConsoleSpanExporter   (when OPENCLAW_OTEL_DEBUG=true)
+Configuration:
 
-    LoggerProvider(...) → BatchLogRecordProcessor → OTLP/HTTP   (logs)
-    MeterProvider(...)  → PeriodicExportingMetricReader → OTLP  (metrics)
-
-Auto-instrumentation: ``aiohttp-client``, ``requests``, ``logging``, and
-optional system-metrics are wired so every outbound HTTP call becomes a
-child ``http.client`` span (with histogram metric), every Python log
-record carries ``trace_id`` / ``span_id`` / ``service.name`` for
-correlation, and host CPU/memory/disk gauges populate when the
-``opentelemetry-instrumentation-system-metrics`` package is installed.
-
-Configuration (see ``config/secrets.env.example`` for defaults):
-
-* ``OPENCLAW_OTEL_ENABLED=true`` — master switch (legacy alias:
-  ``LANGSMITH_TRACING=true``).
-* ``OPENCLAW_OTEL_EXPORTERS`` — comma-separated list. Default ``otlp``.
-  Recognized values: ``otlp``, ``phoenix``, ``langsmith``, ``console``.
-* Per-exporter knobs:
-  - ``OPENCLAW_OTLP_ENDPOINT`` / ``OPENCLAW_OTLP_HEADERS`` — SigNoz or
-    any generic OTLP/HTTP target. Default
-    ``http://localhost:4318/v1/traces``.
-  - ``OPENCLAW_PHOENIX_ENDPOINT`` (default
-    ``http://localhost:6006/v1/traces``).
-  - ``OTEL_EXPORTER_OTLP_ENDPOINT`` / ``OTEL_EXPORTER_OTLP_HEADERS`` —
-    LangSmith. Per-agent ``Langsmith-Project`` is rewritten in.
-* ``OPENCLAW_OTEL_DEBUG=true`` — adds the console exporter for local diag.
+* ``OPENCLAW_OTEL_ENABLED=true`` — master switch.
+* ``OPENCLAW_OTLP_ENDPOINT`` / ``OPENCLAW_OTLP_HEADERS`` — SigNoz OTLP/HTTP
+  endpoint (e.g. ``https://ingest.<region>.signoz.cloud:443``) and headers
+  (e.g. ``signoz-ingestion-key=<key>``).
+* ``OPENCLAW_OTEL_DEBUG=true`` — adds a ConsoleSpanExporter for local diag.
 * ``OPENCLAW_OTEL_HTTP_INSTRUMENTATION=false`` — disable HTTP auto-instr.
+* ``OPENCLAW_OTEL_VERBOSE=true`` — keep the noise spans in the trace tree.
 * ``OPENCLAW_OTEL_LOGS_ENABLED`` / ``OPENCLAW_OTEL_METRICS_ENABLED`` —
   explicit overrides (auto-on alongside an OTLP exporter).
 
-Setup MUST happen before ``AgentServer()`` is instantiated; LiveKit caches
-the tracer provider at server-construction time. The agent ``load_env()``
-calls :func:`setup_otel_tracing` at module-top before any LiveKit import.
+Setup MUST happen before ``AgentServer()`` is instantiated; LiveKit
+caches the tracer provider at server-construction time.
 """
 
 from __future__ import annotations
@@ -62,6 +45,8 @@ import socket
 import uuid
 from typing import Any
 
+from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor
+
 logger = logging.getLogger("openclaw-livekit.tracing")
 
 _initialized = False
@@ -72,6 +57,48 @@ _atexit_registered = False
 _instance_id = uuid.uuid4().hex
 
 
+# Spans that are pure UI noise. Filtered out unless OPENCLAW_OTEL_VERBOSE
+# is set. ``agent_speaking`` / ``user_speaking`` mark TTS playback and
+# user audio capture, not conversation events; ``on_enter`` / ``on_exit``
+# / ``drain_agent_activity`` are framework lifecycle hooks. None contain
+# fields the SigNoz LiveKit dashboard queries.
+_NOISE_SPAN_NAMES = frozenset(
+    {
+        "agent_speaking",
+        "user_speaking",
+        "drain_agent_activity",
+        "on_enter",
+        "on_exit",
+    }
+)
+
+
+class NoiseSpanFilter(SpanProcessor):
+    """Drop LiveKit framework-noise spans before they reach the exporter.
+
+    Wraps another :class:`SpanProcessor` and forwards everything except
+    spans whose name is in :data:`_NOISE_SPAN_NAMES`. Honours
+    ``OPENCLAW_OTEL_VERBOSE=true`` to disable filtering for deep dives.
+    """
+
+    def __init__(self, downstream: SpanProcessor) -> None:
+        self._downstream = downstream
+
+    def on_start(self, span: Span, parent_context: Any = None) -> None:
+        self._downstream.on_start(span, parent_context)
+
+    def on_end(self, span: ReadableSpan) -> None:
+        if not _verbose_telemetry_enabled() and span.name in _NOISE_SPAN_NAMES:
+            return
+        self._downstream.on_end(span)
+
+    def shutdown(self) -> None:
+        self._downstream.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        return self._downstream.force_flush(timeout_millis)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -80,11 +107,10 @@ _instance_id = uuid.uuid4().hex
 def setup_otel_tracing() -> None:
     """Wire OTel tracing if enabled. Idempotent.
 
-    Reads ``OPENCLAW_OTEL_ENABLED`` (or legacy ``LANGSMITH_TRACING``).
-    Configures the TracerProvider with one enrichment processor plus one
-    BatchSpanProcessor per configured exporter, then publishes the
-    provider to both the global OTel registry and LiveKit's own dynamic
-    tracer wrapper.
+    Reads ``OPENCLAW_OTEL_ENABLED``. Configures the TracerProvider with
+    one BatchSpanProcessor wrapped in :class:`NoiseSpanFilter`, then
+    publishes the provider to both the global OTel registry and
+    LiveKit's dynamic tracer wrapper.
     """
     global _initialized, _provider, _atexit_registered
 
@@ -99,17 +125,10 @@ def setup_otel_tracing() -> None:
         _debug(f"[OTEL-SETUP] pid={pid} OPENCLAW_OTEL_ENABLED off — disabled")
         return
 
-    # Optional but cheap: rewrite the LangSmith project header from the
-    # agent name so each agent lands in its own LangSmith project even
-    # when only OTEL_EXPORTER_OTLP_HEADERS is set.
-    _rewrite_langsmith_project_header()
-
     try:
         from livekit.agents.telemetry import set_tracer_provider as set_livekit_tracer_provider
         from opentelemetry import trace as otel_trace
         from opentelemetry.sdk.trace import TracerProvider
-
-        from sdk.livekit_otel_enricher import LiveKitOtelEnricher
     except ImportError as exc:
         _debug(f"[OTEL-SETUP] pid={pid} ImportError: {exc} — disabled")
         logger.warning(
@@ -121,18 +140,12 @@ def setup_otel_tracing() -> None:
 
     provider = TracerProvider(resource=_build_resource())
 
-    # Enrichment processor: maps LiveKit lk.* attrs to OTel-GenAI
-    # semantic-convention keys plus OpenClaw filter dimensions. Runs
-    # once, BEFORE the export processors, so every backend sees the
-    # same enriched span.
-    provider.add_span_processor(LiveKitOtelEnricher(enrichment_only=True))
-
-    exporters = _configure_exporters(provider)
-    if not exporters:
-        logger.warning(
-            "OTEL tracing enabled but no exporters configured — set OPENCLAW_OTEL_EXPORTERS"
-        )
+    if not _add_otlp_exporter(provider):
+        logger.warning("OTEL tracing enabled but no OTLP exporter configured — disabled")
         return
+
+    if _debug_enabled():
+        _add_console_exporter(provider)
 
     otel_trace.set_tracer_provider(provider)
     set_livekit_tracer_provider(provider)
@@ -152,11 +165,8 @@ def setup_otel_tracing() -> None:
 
     _provider = provider
     _initialized = True
-    _debug(
-        f"[OTEL-SETUP] pid={pid} ENABLED — exporters={exporters} "
-        f"resource={dict(provider.resource.attributes)}"
-    )
-    logger.info("OTel tracing enabled (exporters=%s)", ",".join(exporters))
+    _debug(f"[OTEL-SETUP] pid={pid} ENABLED resource={dict(provider.resource.attributes)}")
+    logger.info("OTel tracing enabled (SigNoz)")
 
 
 def force_flush_otel_tracing(timeout_millis: int = 10000) -> bool:
@@ -213,15 +223,31 @@ def wire_otel_shutdown_flush(ctx: Any, timeout_millis: int = 10000) -> None:
         logger.warning("OTel shutdown flush hook registration failed: %s", exc)
 
 
-def attach_current_span_metadata(**metadata: Any) -> None:
-    """Attach call/job metadata to the active OTel span.
+def attach_current_span_metadata(
+    *,
+    session_id: str | None = None,
+    enduser_id: str | None = None,
+    dialed_number: str | None = None,
+    caller_source: str | None = None,
+    lk_job_id: str | None = None,
+) -> None:
+    """Stamp SIP / caller identity onto the active ``agent_session`` span.
 
-    LiveKit's ``AgentSession.start`` leaves the session span in the active
-    OTel context. Agent entrypoints call this after caller resolution so
-    the root run carries call_sid, caller, room, route/source.
+    LiveKit's ``AgentSession.start()`` creates an ``agent_session`` span
+    and attaches it as the active OTel context (see
+    ``livekit/agents/voice/agent_session.py:653-660``). Agent
+    entrypoints call this immediately after ``await session.start(...)``
+    so the call's root span carries:
 
-    Writes both ``langsmith.metadata.*`` (LangSmith sidebar / filters)
-    and plain ``otel`` attribute keys (visible in any backend).
+    * ``session.id`` — SIP Call-ID (OTel SemConv standard).
+    * ``enduser.id`` — caller phone number in E.164 (OTel SemConv).
+    * ``openclaw.dialed_number`` — which DID the caller dialed.
+    * ``openclaw.caller_source`` — twilio / sip / livekit-cloud / ...
+    * ``openclaw.lk_job_id`` — LiveKit job ID for cross-log correlation.
+
+    Operators filter Traces by ``service.name`` plus any of the above on
+    the root ``agent_session`` span, then drill into the trace tree
+    (``agent_turn`` / ``llm_request`` / ``tts_node`` / ``function_tool``).
     """
     try:
         from opentelemetry import trace as otel_trace
@@ -232,27 +258,16 @@ def attach_current_span_metadata(**metadata: Any) -> None:
     if span is None or not span.is_recording():
         return
 
-    exported_metadata: dict[str, str] = {}
-    for key, value in metadata.items():
-        if value is None or value == "":
-            continue
-        clean_key = key.replace(".", "_")
-        value_str = str(value)
-        # Plain OTel-visible attribute (any backend).
-        span.set_attribute(f"openclaw.{clean_key}", value_str)
-        # LangSmith sidebar / filter mirror.
-        ls_key = f"langsmith.metadata.{clean_key}"
-        span.set_attribute(ls_key, value_str)
-        exported_metadata[ls_key] = value_str
-
-    if not exported_metadata:
-        return
-    try:
-        from .livekit_otel_enricher import remember_live_trace_call_metadata
-
-        remember_live_trace_call_metadata(span.get_span_context().trace_id, exported_metadata)
-    except Exception:
-        return
+    if session_id:
+        span.set_attribute("session.id", str(session_id))
+    if enduser_id:
+        span.set_attribute("enduser.id", str(enduser_id))
+    if dialed_number:
+        span.set_attribute("openclaw.dialed_number", str(dialed_number))
+    if caller_source:
+        span.set_attribute("openclaw.caller_source", str(caller_source))
+    if lk_job_id:
+        span.set_attribute("openclaw.lk_job_id", str(lk_job_id))
 
 
 # ---------------------------------------------------------------------------
@@ -261,11 +276,7 @@ def attach_current_span_metadata(**metadata: Any) -> None:
 
 
 def _otel_enabled() -> bool:
-    for var in ("OPENCLAW_OTEL_ENABLED", "LANGSMITH_TRACING"):
-        value = os.environ.get(var, "").lower()
-        if value in ("true", "1", "yes"):
-            return True
-    return False
+    return os.environ.get("OPENCLAW_OTEL_ENABLED", "").lower() in ("true", "1", "yes")
 
 
 def _http_instrumentation_enabled() -> bool:
@@ -277,10 +288,11 @@ def _http_instrumentation_enabled() -> bool:
 
 
 def _debug_enabled() -> bool:
-    for var in ("OPENCLAW_OTEL_DEBUG", "LANGSMITH_PROCESSOR_DEBUG"):
-        if os.environ.get(var, "").lower() in ("true", "1", "yes"):
-            return True
-    return False
+    return os.environ.get("OPENCLAW_OTEL_DEBUG", "").lower() in ("true", "1", "yes")
+
+
+def _verbose_telemetry_enabled() -> bool:
+    return os.environ.get("OPENCLAW_OTEL_VERBOSE", "").lower() in ("true", "1", "yes")
 
 
 def _debug(message: str) -> None:
@@ -295,35 +307,8 @@ def _agent_name() -> str:
     return (os.environ.get("OPENCLAW_AGENT_NAME") or "").strip().lower() or "unknown"
 
 
-def _agent_langsmith_project() -> str | None:
-    explicit = os.environ.get("LANGSMITH_PROJECT")
-    if explicit:
-        return explicit
-    name = _agent_name()
-    if name in ("", "unknown"):
-        return None
-    return {
-        "aoi": "Aoi",
-        "nyla": "Nyla",
-        "party": "Party",
-    }.get(name, name.title())
-
-
-def _rewrite_langsmith_project_header() -> None:
-    headers = os.environ.get("OTEL_EXPORTER_OTLP_HEADERS")
-    project = _agent_langsmith_project()
-    if not headers or not project:
-        return
-    parts = [part for part in headers.split(",") if part]
-    parts = [part for part in parts if not part.lower().startswith("langsmith-project=")]
-    parts.append(f"Langsmith-Project={project}")
-    new_headers = ",".join(parts)
-    os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = new_headers
-    _debug(f"[OTEL-SETUP] LangSmith project header set to {project!r}")
-
-
 def _build_resource() -> Any:
-    """Identify this process to every backend."""
+    """Identify this process to SigNoz."""
     from opentelemetry.sdk.resources import (
         DEPLOYMENT_ENVIRONMENT,
         HOST_NAME,
@@ -349,102 +334,31 @@ def _build_resource() -> Any:
         DEPLOYMENT_ENVIRONMENT: environment,
         HOST_NAME: socket.gethostname(),
         PROCESS_PID: os.getpid(),
-        "openclaw.agent": agent,
         "openclaw.platform": platform.platform(),
         "openclaw.python_version": platform.python_version(),
     }
     return Resource.create(attrs)
 
 
-def _configure_exporters(provider: Any) -> list[str]:
-    """Register one BatchSpanProcessor per configured exporter.
-
-    Default = ``otlp`` (SigNoz-primary, established 2026-05-01). Set
-    ``OPENCLAW_OTEL_EXPORTERS=langsmith`` to fan out to LangSmith
-    (legacy) or ``OPENCLAW_OTEL_EXPORTERS=otlp,langsmith`` to dual-export
-    while migrating.
-    """
-    requested = os.environ.get("OPENCLAW_OTEL_EXPORTERS", "otlp")
-    names = [n.strip().lower() for n in requested.split(",") if n.strip()]
-    if not names:
-        names = ["otlp"]
-
-    enabled: list[str] = []
-    for name in names:
-        try:
-            if _add_exporter(provider, name):
-                enabled.append(name)
-        except Exception as exc:
-            logger.warning("Failed to configure %r exporter: %s", name, exc)
-
-    if _debug_enabled() and "console" not in enabled:
-        # Always-on console fallback when debug is set.
-        try:
-            if _add_exporter(provider, "console"):
-                enabled.append("console")
-        except Exception as exc:
-            logger.warning("Failed to configure console exporter: %s", exc)
-
-    return enabled
-
-
-def _add_exporter(provider: Any, name: str) -> bool:
+def _add_otlp_exporter(provider: Any) -> bool:
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-    if name == "langsmith":
-        endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
-        headers = os.environ.get("OTEL_EXPORTER_OTLP_HEADERS")
-        if not endpoint or not headers:
-            logger.warning(
-                "langsmith exporter requested but OTEL_EXPORTER_OTLP_ENDPOINT or "
-                "OTEL_EXPORTER_OTLP_HEADERS is missing — skipping"
-            )
-            return False
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    endpoint = os.environ.get("OPENCLAW_OTLP_ENDPOINT")
+    headers = _parse_headers(os.environ.get("OPENCLAW_OTLP_HEADERS"))
+    if not endpoint:
+        logger.warning("OPENCLAW_OTLP_ENDPOINT not set — SigNoz exporter disabled")
+        return False
 
-        provider.add_span_processor(
-            BatchSpanProcessor(
-                OTLPSpanExporter(),
-                # Tight flush window for short voice jobs — see
-                # docs/LANGSMITH.md "Flush on short jobs".
-                max_queue_size=2048,
-                max_export_batch_size=64,
-                schedule_delay_millis=1000,
-            )
-        )
-        return True
+    batch = BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, headers=headers))
+    provider.add_span_processor(NoiseSpanFilter(batch))
+    return True
 
-    if name == "phoenix":
-        endpoint = os.environ.get("OPENCLAW_PHOENIX_ENDPOINT", "http://localhost:6006/v1/traces")
-        headers = _parse_headers(os.environ.get("OPENCLAW_PHOENIX_HEADERS"))
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
-        provider.add_span_processor(
-            BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, headers=headers))
-        )
-        return True
+def _add_console_exporter(provider: Any) -> None:
+    from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
 
-    if name == "otlp":
-        endpoint = os.environ.get("OPENCLAW_OTLP_ENDPOINT")
-        headers = _parse_headers(os.environ.get("OPENCLAW_OTLP_HEADERS"))
-        if not endpoint:
-            logger.warning("otlp exporter requested but OPENCLAW_OTLP_ENDPOINT missing — skipping")
-            return False
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-
-        provider.add_span_processor(
-            BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, headers=headers))
-        )
-        return True
-
-    if name == "console":
-        from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
-
-        provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
-        return True
-
-    logger.warning("Unknown OTel exporter %r — skipping", name)
-    return False
+    provider.add_span_processor(NoiseSpanFilter(SimpleSpanProcessor(ConsoleSpanExporter())))
 
 
 def _parse_headers(raw: str | None) -> dict[str, str] | None:
@@ -463,9 +377,26 @@ def _parse_headers(raw: str | None) -> dict[str, str] | None:
 
 
 def _install_http_instrumentation(provider: Any) -> None:
-    """Auto-instrument outbound HTTP so Musubi / gateway / weather calls
-    show up as ``http.client`` child spans under whatever tool is active.
+    """Auto-instrument outbound HTTP for ``http.client`` spans + duration metric.
+
+    ``http.client.duration`` is the metric the SigNoz LiveKit dashboard's
+    "HTTP Request Duration" panel reads. Three instrumentors cover the
+    libraries the LiveKit plugins use:
+
+    * **httpx** — openai plugin, google.genai SDK
+    * **aiohttp-client** — elevenlabs plugin
+    * **requests** — Twilio SDK and gateway HTTP calls
     """
+    try:
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
+        HTTPXClientInstrumentor().instrument(tracer_provider=provider)
+        _debug("[OTEL-SETUP] httpx instrumented")
+    except ImportError:
+        _debug("[OTEL-SETUP] httpx instrumentation unavailable (package not installed)")
+    except Exception as exc:
+        logger.debug("httpx instrumentation failed: %s", exc)
+
     try:
         from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
 
@@ -488,18 +419,12 @@ def _install_http_instrumentation(provider: Any) -> None:
 
 
 def _logs_enabled() -> bool:
-    """Logs ship via OTLP only when an OTLP-compatible backend is configured.
-    LangSmith does NOT accept OTel logs, so we only enable the logs pipeline
-    when a non-LangSmith exporter is in OPENCLAW_OTEL_EXPORTERS or when
-    OPENCLAW_OTEL_LOGS_ENABLED=true is set explicitly.
-    """
     explicit = os.environ.get("OPENCLAW_OTEL_LOGS_ENABLED", "").lower()
     if explicit in ("true", "1", "yes"):
         return True
     if explicit in ("false", "0", "no"):
         return False
-    exporters = os.environ.get("OPENCLAW_OTEL_EXPORTERS", "otlp").lower()
-    return any(name.strip() in {"otlp", "phoenix", "console"} for name in exporters.split(","))
+    return bool(os.environ.get("OPENCLAW_OTLP_ENDPOINT"))
 
 
 def _install_logs_pipeline(resource: Any) -> None:
@@ -507,11 +432,10 @@ def _install_logs_pipeline(resource: Any) -> None:
 
     Two effects:
       1. ``LoggingInstrumentor`` injects ``otelTraceID`` / ``otelSpanID`` /
-         ``otelServiceName`` into every Python LogRecord so existing JSON
-         log files cross-correlate with traces.
+         ``otelServiceName`` into every Python LogRecord so JSON log files
+         cross-correlate with traces.
       2. An ``LoggingHandler`` fans every record into the OTel logs SDK,
-         which batches and exports via OTLPLogExporter to whatever backend
-         is configured (SigNoz, Loki via collector, Datadog, ...).
+         which batches and exports via OTLPLogExporter to SigNoz.
     """
     global _logger_provider
 
@@ -547,14 +471,9 @@ def _install_logs_pipeline(resource: Any) -> None:
         set_logger_provider(provider)
         _logger_provider = provider
 
-        # Attach an OTel handler at the root so every logger downstream
-        # (including livekit.agents.*, sdk.*, app code) ships its records.
         otel_handler = LoggingHandler(level=logging.NOTSET, logger_provider=provider)
         logging.getLogger().addHandler(otel_handler)
 
-        # Inject trace_id/span_id into LogRecord attributes for use in
-        # local JSON formatters too — operators can grep agent log
-        # files by the same trace ID they see in LangSmith / SigNoz.
         LoggingInstrumentor().instrument(set_logging_format=False)
 
         _debug(f"[OTEL-SETUP] logs pipeline enabled (endpoint={endpoint or 'default'})")
@@ -563,29 +482,22 @@ def _install_logs_pipeline(resource: Any) -> None:
 
 
 def _metrics_enabled() -> bool:
-    """Metrics pipeline auto-enables for OTLP-compatible backends.
-
-    The SigNoz LiveKit dashboard's "HTTP Request Duration" panel reads
-    ``http.client.duration`` histograms — only published when the OTel
-    metrics SDK is wired AND an HTTP client instrumentor is configured
-    to emit metrics (it auto-emits them once a meter provider exists).
-    Honour ``OPENCLAW_OTEL_METRICS_ENABLED`` for explicit override.
-    """
     explicit = os.environ.get("OPENCLAW_OTEL_METRICS_ENABLED", "").lower()
     if explicit in ("true", "1", "yes"):
         return True
     if explicit in ("false", "0", "no"):
         return False
-    exporters = os.environ.get("OPENCLAW_OTEL_EXPORTERS", "otlp").lower()
-    return any(name.strip() in {"otlp", "phoenix", "console"} for name in exporters.split(","))
+    return bool(os.environ.get("OPENCLAW_OTLP_ENDPOINT"))
 
 
 def _install_metrics_pipeline(resource: Any) -> None:
     """Wire OTel metrics SDK + OTLP exporter so SigNoz dashboards work.
 
     Lights up:
-      * ``http.client.duration`` (auto from aiohttp/requests instrumentors),
-      * ``system.*`` host metrics (CPU, mem, network, disk),
+      * ``http.client.duration`` (auto from httpx/aiohttp/requests
+        instrumentors)
+      * ``system.*`` host metrics (CPU, mem, network, disk) from
+        :class:`SystemMetricsInstrumentor`
       * any custom counters/histograms downstream code records via
         ``opentelemetry.metrics.get_meter("openclaw")``.
     """
@@ -622,9 +534,6 @@ def _install_metrics_pipeline(resource: Any) -> None:
         otel_metrics.set_meter_provider(provider)
         _meter_provider = provider
 
-        # Optional system-metrics instrumentor — provides CPU/memory/disk/
-        # network gauges when the package is installed. Silently skip when
-        # missing so the metrics pipeline still ships application metrics.
         try:
             from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
 
@@ -641,6 +550,7 @@ def _install_metrics_pipeline(resource: Any) -> None:
 
 
 __all__ = [
+    "NoiseSpanFilter",
     "attach_current_span_metadata",
     "force_flush_otel_tracing",
     "setup_otel_tracing",

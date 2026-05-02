@@ -42,6 +42,13 @@ No exceptions. Especially not for "small" things.
 - Keep responses concise. Don't pad with apologies or summaries of what
   you just did — Eric reads the diff.
 
+## Continuous learning
+
+[docs/AGENT-LESSONS.md](docs/AGENT-LESSONS.md) is your persistent memory
+across sessions in this repo. Read it at session start. When you
+encounter a non-trivial pattern (good or bad), append a dated entry.
+Append-only; do not edit prior entries.
+
 ## What this repo is
 
 Standalone monorepo for the voice stack. Five subprojects plus an

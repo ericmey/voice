@@ -10,7 +10,9 @@ SHELL := /usr/bin/env bash
         register-sip tail truncate-logs \
         sync-venvs lint typecheck verify \
         signoz-up signoz-down signoz-status signoz-logs signoz signoz-update signoz-nuke \
-        signoz-wire-gateway signoz-verify-gateway
+        signoz-wire-gateway signoz-verify-gateway signoz-admin \
+        host-collector-install host-collector-restart host-collector-status \
+        host-collector-logs host-collector-uninstall
 
 help: ## List the common verbs
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[1;34m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -91,8 +93,13 @@ signoz-update: ## Pull the latest SigNoz upstream (run signoz-up afterward to ap
 signoz-nuke: ## DELETE all SigNoz data (ClickHouse + sqlite + zookeeper volumes)
 	scripts/signoz.sh nuke
 
-signoz-import-dashboards: ## Import ops/signoz/dashboards/*.json into local SigNoz (set SIGNOZ_USER + SIGNOZ_PASS)
-	scripts/signoz-import-dashboards.sh
+signoz-import-dashboards: ## Import ops/signoz/dashboards/*.json into local SigNoz (autoloads secrets/signoz.env if present)
+	@if [ -f secrets/signoz.env ]; then \
+		set -a; . ./secrets/signoz.env; set +a; \
+		scripts/signoz-import-dashboards.sh; \
+	else \
+		scripts/signoz-import-dashboards.sh; \
+	fi
 
 signoz-wire-gateway: ## Wire the OpenClaw gateway's diagnostics-otel plugin into local SigNoz (idempotent; restarts the gateway)
 	scripts/signoz-wire-gateway.sh
@@ -100,12 +107,36 @@ signoz-wire-gateway: ## Wire the OpenClaw gateway's diagnostics-otel plugin into
 signoz-verify-gateway: ## Print current gateway diagnostics.otel config + plugin status (read-only)
 	scripts/signoz-wire-gateway.sh --verify
 
-# ---- LangSmith provisioning (legacy — only used if you re-enable the
-# langsmith exporter via OPENCLAW_OTEL_EXPORTERS=langsmith). The repo
-# standardized on SigNoz on 2026-05-01; the targets and ops/langsmith/
-# tree stay around so a future operator can reactivate the LangSmith
-# IaC without rebuilding it from scratch. They're hidden from `make
-# help` by omitting the leading `##`.
+signoz-admin: ## Raw curl wrapper against the SigNoz admin API. ARGS='METHOD PATH [body]'  e.g. ARGS='GET /api/v1/dashboards'
+	@if [ -z "$(ARGS)" ]; then \
+		echo "usage: make signoz-admin ARGS='GET /api/v1/dashboards'"; \
+		exit 2; \
+	fi; \
+	scripts/signoz-admin.sh $(ARGS)
+
+# ---- Host-side OTel Collector (hostmetrics + dockerstats + httpcheck + filelog)
+host-collector-install: ## Download otelcol-contrib + bootstrap launchd job exporting host/docker/vendor telemetry to SigNoz
+	scripts/install-host-otel-collector.sh
+
+host-collector-restart: ## Re-render configs and bootstrap the launchd job (picks up template changes)
+	scripts/install-host-otel-collector.sh --restart
+
+host-collector-status: ## Print binary version, plist path, launchd state, recent log lines
+	scripts/install-host-otel-collector.sh --status
+
+host-collector-logs: ## Tail the host collector's stdout + stderr logs
+	tail -f $${HOME}/.openclaw/logs/otel-collector.log $${HOME}/.openclaw/logs/otel-collector.err.log
+
+host-collector-uninstall: ## Bootout the launchd job + remove plist (binary + config kept)
+	scripts/install-host-otel-collector.sh --uninstall
+
+# ---- LangSmith provisioning (archived) — see docs/LANGSMITH.md.
+# Kept around so a future operator can reactivate the LangSmith IaC
+# (projects, datasets, evaluator config) without rebuilding it from
+# scratch. The agent SDK no longer dual-exports to LangSmith;
+# reactivation requires either reverting the enricher deletion or
+# adding a fan-out OTel collector. Hidden from `make help` by
+# omitting the leading `##`.
 
 langsmith-plan-legacy:
 	uv run python -m ops.langsmith.provision --dry-run

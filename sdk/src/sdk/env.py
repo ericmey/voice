@@ -4,7 +4,7 @@ Loads ``./.env`` (next to the agent script) for agent-specific knobs.
 In production, the launchd plist exports all vars directly before
 spawning the worker, so .env files are a dev-mode convenience.
 
-Also wires LangSmith OTel tracing if ``LANGSMITH_TRACING=true`` — the
+Also wires SigNoz OTel tracing if ``OPENCLAW_OTEL_ENABLED=true`` — the
 hook lives here because every agent calls ``load_env()`` at module
 top, before LiveKit's ``AgentServer`` is instantiated. LiveKit caches
 the tracer provider at server-construction time; missing this window
@@ -34,6 +34,6 @@ def load_env() -> None:
     if not os.environ.get("ELEVEN_API_KEY") and os.environ.get("ELEVENLABS_API_KEY"):
         os.environ["ELEVEN_API_KEY"] = os.environ["ELEVENLABS_API_KEY"]
 
-    # No-op when OPENCLAW_OTEL_ENABLED / LANGSMITH_TRACING are unset or
-    # false — keeps unit tests and CI hermetic. Idempotent across re-imports.
+    # No-op when OPENCLAW_OTEL_ENABLED is unset or false — keeps unit
+    # tests and CI hermetic. Idempotent across re-imports.
     setup_otel_tracing()

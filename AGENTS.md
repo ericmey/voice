@@ -4,6 +4,15 @@ Generic technical runbook for any AI coding agent (Claude Code, Codex,
 Cursor, Aider, etc.) working in the `openclaw-livekit` monorepo. For
 Claude-specific identity / working-style guidance see [CLAUDE.md](CLAUDE.md).
 
+## Continuous learning (read this first)
+
+[docs/AGENT-LESSONS.md](docs/AGENT-LESSONS.md) is the persistent memory
+across agent sessions for this repo. Read it at the start of any
+non-trivial task. When you encounter a pattern worth remembering — a
+trap you fell into, a rule the user gave you, a third-party contract
+that surprised you — append a dated entry. Append-only; do not edit
+prior entries.
+
 ## Monorepo layout
 
 ```

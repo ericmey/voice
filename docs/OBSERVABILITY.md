@@ -6,20 +6,20 @@ running locally. SigNoz is the call-narrative view, the slow-tool
 microscope, the log explorer, the metrics dashboard, and the service
 map — all in one UI on your laptop.
 
-The agent code is vendor-neutral. To fan data out to a hosted APM
-(Datadog, Honeycomb, Grafana Cloud, Phoenix, LangSmith, ...) you point
-the OTLP exporter at a different endpoint — *no code changes*. See
-[Switching/adding backends](#switchingadding-backends) below.
+The agent code is vendor-neutral OTLP/HTTP. To send the same data to a
+different OTel backend, point `OPENCLAW_OTLP_ENDPOINT` somewhere else —
+no code changes.
 
-> **History:** the repo previously dual-exported to LangSmith. As of
-> 2026-05-01 we standardized on SigNoz alone. The LangSmith provisioning
-> tree (`ops/langsmith/`) is preserved as an archive — see
-> `ops/langsmith/README.md` for how to reactivate it if you ever need
-> the LangSmith UX again.
+> **History:** the repo previously dual-exported to LangSmith / Phoenix
+> via custom span enrichment. As of 2026-05-01 we standardized on
+> SigNoz alone and removed the custom enricher. Native LiveKit Agents
+> 1.5+ telemetry (`gen_ai.*` SemConv, `lk.*`) is sufficient on its own.
+> The LangSmith provisioning tree (`ops/langsmith/`) is preserved as an
+> archive — see `ops/langsmith/README.md` for how to reactivate it.
 
 ```
 LiveKit agents (Python, this repo)
-  ├─ OTel TracerProvider ──┬─ LiveKitOtelEnricher        (gen_ai.*, openinference.*, openclaw.*)
+  ├─ OTel TracerProvider ──┬─ NoiseSpanFilter (drops agent_speaking / on_enter / on_exit / ...)
   │                        └─ BatchSpanProcessor → OTLP/HTTP → SigNoz :4318
   └─ OTel LoggerProvider ──── BatchLogRecordProcessor → OTLP/HTTP → SigNoz :4318
                                   service.name=openclaw-livekit-{nyla,aoi,party}
@@ -59,7 +59,6 @@ In `secrets/livekit-agents.env` (already done by default for new clones):
 
 ```bash
 OPENCLAW_OTEL_ENABLED=true
-OPENCLAW_OTEL_EXPORTERS=otlp
 OPENCLAW_OTLP_ENDPOINT=http://localhost:4318/v1/traces
 OPENCLAW_OTEL_LOGS_ENABLED=true
 OPENCLAW_DEPLOYMENT_ENVIRONMENT=production
@@ -131,6 +130,56 @@ Gateway-specific span / metric prefixes you'll see (full reference in
   `openclaw.tool.loop.duration_ms`, plus a Node.js liveness family
   (`event_loop_delay_*`, `cpu_core_ratio`, `memory.rss_bytes`).
 
+## Wiring the host (macOS) — host metrics, container stats, vendor uptime
+
+The two sources above (LiveKit agents and OpenClaw gateway) cover the
+*application* layer. To get **host metrics**, **container metrics**,
+and **external vendor uptime** in the same SigNoz instance, run a
+host-side OTel Collector via launchd. The collector is `otelcol-contrib`
+v0.151.0 from the upstream
+[opentelemetry-collector-releases](https://github.com/open-telemetry/opentelemetry-collector-releases)
+project; install + plist + config templates all live in this repo.
+
+```bash
+make host-collector-install      # download binary + render configs + bootstrap launchd
+make host-collector-status       # binary version, plist path, launchd state, recent logs
+make host-collector-logs         # tail otel-collector.log + .err.log
+make host-collector-restart      # re-render configs and bootstrap (picks up template changes)
+make host-collector-uninstall    # remove launchd plist (binary + config preserved)
+```
+
+The collector runs **five pipelines**, each appearing as its own
+`service.name` in SigNoz:
+
+| service.name                        | Pipeline               | What it surfaces                                                     |
+| ----------------------------------- | ---------------------- | -------------------------------------------------------------------- |
+| `host-mac`                          | `metrics/host`         | `system.cpu.*`, `system.memory.*`, `system.disk.*`, `system.network.*`, `system.filesystem.*`, `system.cpu.load_average.{1m,5m,15m}`, `system.processes.*` |
+| Each container name (8+ services)   | `metrics/docker`       | `container.cpu.*`, `container.memory.*`, `container.network.*`, `container.blockio.*` (per container; the receiver mounts `/var/run/docker.sock`) |
+| `httpcheck`                         | `metrics/httpcheck`    | `httpcheck.status` (per `http.url` × `http.status_code` × `http.status_class`), `httpcheck.duration`, `httpcheck.error` |
+| `openclaw-gateway` (file-side)      | `logs/openclaw`        | Tails `~/.openclaw/logs/gateway.log` + `gateway.err.log` (additive to the OTLP-pushed logs from the gateway plugin)            |
+| `openclaw-livekit-host` (file-side) | `logs/agents`          | Tails `<repo>/logs/voice/agent-*.log` + `*.err.log` (belt-and-suspenders for crashes before the agent OTel SDK initializes)    |
+
+Container metrics: the host collector uses a transform processor that
+copies `container.name` → `service.name`, so the eight containers in
+your local stack each appear as their own service node in the SigNoz
+service map (`openclaw-redis`, `openclaw-livekit-server`,
+`openclaw-livekit-sip`, `openclaw-livekit-egress`, `signoz`,
+`signoz-clickhouse`, `signoz-zookeeper-1`, `signoz-otel-collector`).
+
+Vendor uptime: the `httpcheck` receiver pings these endpoints every 60s
+unauthenticated. The metric is "vendor responded with HTTP" — auth
+failures (`401`/`403`) are *good* signal because they mean the vendor
+is reachable. To add or remove targets, edit
+`config/otel-collector/config.yaml.template` and run
+`make host-collector-restart`.
+
+The collector exposes two debug surfaces locally:
+
+* `http://127.0.0.1:13133/` — health check (200 = collector is healthy)
+* `http://127.0.0.1:55679/debug/tracez` — zPages: live trace inspection
+  *for the collector itself* (useful when a receiver is mute and you
+  want to see whether spans are being dropped)
+
 ## The drill-down workflow
 
 Everything in one place. The same UI walks the call narrative *and*
@@ -139,11 +188,14 @@ gives you the microscope.
 1. **Open Traces in SigNoz**: `http://localhost:8080` → Traces.
 2. **Find the call**: filter by `service.name=openclaw-livekit-<agent>`,
    sort by duration, pick the one you care about. Or search by
-   `openclaw.call_sid=SCL_...` if you have it from agent logs.
-3. **Inspect the parent span**: the `agent_session` / job span carries
-   `openclaw.call_sid`, `openclaw.agent`, plus a tree of child spans
-   for each `user_turn`, `function_tool`, `llm_node`, and outbound
-   `http.client` call.
+   `session.id=<sip-call-id>` (set on the root `agent_session` span)
+   or `enduser.id=<caller-phone>` if you have either from agent logs.
+3. **Inspect the parent span**: the `agent_session` span carries
+   `session.id` (SIP Call-ID), `enduser.id` (caller E.164),
+   `openclaw.dialed_number`, `openclaw.caller_source`,
+   `openclaw.lk_job_id`, plus a tree of child spans for each
+   `agent_turn`, `function_tool`, `llm_request`, `tts_request`,
+   and outbound `http.client` call.
 4. **Drill into a slow tool**: click `function_tool: get_household_status`
    → see every `http.client` child span with `http.method`, `http.url`,
    `http.status_code`, exact timings, retries, and the gap between
@@ -169,38 +221,37 @@ gives you the microscope.
 | `deployment.environment`  | `$OPENCLAW_DEPLOYMENT_ENVIRONMENT` (default `production`)   |
 | `host.name`               | hostname                                                    |
 | `process.pid`             | OS pid                                                      |
-| `openclaw.agent`          | `nyla` / `aoi` / `party`                                    |
 
 SigNoz's Service Map groups by `service.name`; the environment selector
-groups by `deployment.environment`; the `openclaw.agent` filter narrows
-to one agent.
+groups by `deployment.environment`.
 
 ### Span attributes (per-event)
 
-GenAI semantic-convention keys land natively in SigNoz:
+LiveKit Agents 1.5+ emits these natively. We add zero enrichment.
+
+GenAI semantic-convention keys (on `llm_request` / `agent_turn`):
 
 * `gen_ai.system`, `gen_ai.request.model`, `gen_ai.operation.name`
 * `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`,
   `gen_ai.usage.total_tokens`
-* `gen_ai.server.time_to_first_token` (TTFT, milliseconds)
-* `gen_ai.tool.name`, `gen_ai.tool.input`, `gen_ai.tool.output`,
-  `gen_ai.tool.call.id`
+* `gen_ai.server.time_to_first_token` (TTFT)
+* `gen_ai.choice` events with the assistant's response text
 
-OpenInference keys (compatible with Phoenix/Arize if you ever fan out):
+LiveKit-specific keys (`lk.*`):
 
-* `openinference.span.kind` ∈ `LLM`, `TOOL`, `CHAIN`
+* `lk.function_tool.name`, `lk.function_tool.arguments`,
+  `lk.function_tool.output` — every tool call
+* `lk.transcript.text`, `lk.transcript.role` — STT / assistant turn text
+* `lk.tts.duration`, `lk.tts.audio_duration` — TTS timings
 
-OpenClaw-specific keys (handy filter dimensions):
+Per-call routing identity (set by `attach_current_span_metadata`,
+SemConv where one exists):
 
-* `openclaw.call_sid` — stable per-call ID, ties every span on a call
-* `openclaw.role` — `user` / `assistant` / `system`
-* `openclaw.tool_name`, `openclaw.tool.result`, `openclaw.tool.error`
-* `openclaw.user_question` — last user transcript on tool spans
-* `openclaw.audio.path`, `openclaw.audio.url`, `openclaw.audio.bytes`,
-  `openclaw.audio.duration_seconds` (when audio recording is enabled)
-
-The legacy `langsmith.*` mirrors are still written for any downstream
-that consumes them; they're harmless to SigNoz.
+* `session.id` — SIP Call-ID (OTel SemConv standard for session keys)
+* `enduser.id` — caller phone in E.164 (OTel SemConv); accepts PII
+* `openclaw.dialed_number` — which DID the caller dialed
+* `openclaw.caller_source` — `twilio` / `sip` / `livekit-cloud` / ...
+* `openclaw.lk_job_id` — LiveKit job ID for cross-log correlation
 
 ### Errors
 
@@ -213,12 +264,22 @@ SigNoz's Exceptions tab aggregates these by exception type per service.
 
 ## Auto-instrumented HTTP
 
-`opentelemetry-instrumentation-aiohttp-client` and
-`opentelemetry-instrumentation-requests` are wired automatically. Every
-outbound HTTP call your agent makes (Musubi v2, gateway, weather,
-external APIs) becomes a child `http.client` span with `http.method`,
-`http.url`, `http.status_code`, and timings. That's how the SigNoz
-"why was tool X slow" workflow works.
+Three instrumentors are wired automatically when
+`OPENCLAW_OTEL_HTTP_INSTRUMENTATION` is unset (the default):
+
+* `opentelemetry-instrumentation-httpx` — covers the openai plugin
+  and google.genai SDK.
+* `opentelemetry-instrumentation-aiohttp-client` — covers the
+  elevenlabs plugin.
+* `opentelemetry-instrumentation-requests` — covers the Twilio SDK
+  and gateway HTTP calls.
+
+Every outbound HTTP call your agent makes (Musubi v2, gateway, weather,
+LLM/TTS provider) becomes a child `http.client` span with `http.method`,
+`http.url`, `http.status_code`, and timings, plus an
+`http.client.duration` histogram entry. That's how the SigNoz
+"why was tool X slow" workflow works and how the LiveKit dashboard's
+"HTTP Request Duration" panel populates.
 
 ## Audio recording
 
@@ -272,17 +333,34 @@ OPENCLAW_SIGNOZ_REF=v0.69.0 make signoz-up
 
 Or set `OPENCLAW_SIGNOZ_REF` in your shell rc.
 
-## Importing the SigNoz LiveKit dashboard
+## Importing dashboards into SigNoz
 
-SigNoz publishes a purpose-built **LiveKit dashboard**:
-<https://signoz.io/docs/dashboards/dashboard-templates/livekit-dashboard/>.
-The JSON lives in
-[`SigNoz/dashboards/livekit/`](https://github.com/SigNoz/dashboards/tree/main/livekit)
-upstream and is committed locally at
-`ops/signoz/dashboards/livekit-dashboard.json`.
+The repo ships **three** dashboard JSONs in `ops/signoz/dashboards/`,
+each copied verbatim from the
+[upstream SigNoz dashboards repo](https://github.com/SigNoz/dashboards).
+We deliberately do not ship custom dashboards; native templates work
+because LiveKit emits the attributes they expect.
 
-It maps cleanly onto the spans LiveKit emits — every panel populates
-without code changes:
+| Dashboard                          | Audience      | Drill purpose                                                                  |
+| ---------------------------------- | ------------- | ------------------------------------------------------------------------------ |
+| `livekit-dashboard.json`           | Voice agents  | Tokens, models, error rate, P95 latency, TTS duration, conversation analytics. |
+| `hostmetrics-dashboard.json`       | Host (macOS)  | CPU / memory / disk / network / load average / processes.                      |
+| `container-metrics-dashboard.json` | Docker        | Per-container CPU / memory / network / blockio for the SigNoz + LiveKit stacks.|
+
+To import all three at once (one-time, after SigNoz first-run UI signup):
+
+```bash
+SIGNOZ_USER=you@example.com \
+SIGNOZ_PASS='...' \
+make signoz-import-dashboards
+```
+
+The script POSTs every `*.json` in `ops/signoz/dashboards/` to
+`http://localhost:8080/api/v1/dashboards`. SigNoz dedupes by title,
+so a second run is a safe no-op.
+
+The LiveKit dashboard maps cleanly onto the spans the framework emits —
+every panel populates without code changes:
 
 | Panel                                | Trace filter                                              |
 | ------------------------------------ | --------------------------------------------------------- |
@@ -296,17 +374,9 @@ without code changes:
 | HTTP Request Duration                | `http.client.duration` histogram (OTel HTTP instrumentor) |
 | Logs                                 | `service.name` (OTel logs)                                |
 
-To import (one-time, after SigNoz first-run UI signup):
-
-```bash
-SIGNOZ_USER=you@example.com \
-SIGNOZ_PASS='...' \
-make signoz-import-dashboards
-```
-
-Or paste the JSON manually via the SigNoz UI:
-**Dashboards → + New dashboard → Import JSON** →
-`ops/signoz/dashboards/livekit-dashboard.json`.
+Or paste any JSON manually via the SigNoz UI:
+**Dashboards → + New dashboard → Import JSON** → pick a file from
+`ops/signoz/dashboards/`.
 
 To pull updates from upstream:
 
@@ -320,23 +390,22 @@ Roll your own panels by querying ClickHouse directly via the SigNoz
 Query Builder; the relevant tables are `signoz_traces.signoz_index_v3`
 and `signoz_logs.logs_v2`.
 
-## Switching/adding backends
+## Switching backends
 
-Nothing in the agent code is SigNoz-specific. To send the same data to
-another OTLP-compatible target:
+Nothing in the agent code is SigNoz-specific — it's plain OTLP/HTTP.
+To send the same data somewhere else:
 
-1. Drop a collector or use the vendor's OTLP endpoint directly.
-2. Set `OPENCLAW_OTEL_EXPORTERS=otlp,phoenix` (or any combination of
-   `otlp`, `phoenix`, `langsmith`, `console`).
-3. Set the matching endpoint env vars
-   (`OPENCLAW_OTLP_ENDPOINT`, `OPENCLAW_PHOENIX_ENDPOINT`, ...; see
-   `config/secrets.env.example`).
-4. `make deploy`.
+1. Stand up a collector (or use the vendor's OTLP endpoint directly).
+2. Point `OPENCLAW_OTLP_ENDPOINT` at it. Pass any auth headers via
+   `OPENCLAW_OTLP_HEADERS` (`key=value,key2=value2`).
+3. `make deploy`.
 
-The same `gen_ai.*`, `http.*`, `openinference.*`, and `service.*`
-attributes ship to whichever target is configured. The
-`LiveKitOtelEnricher` (in `sdk/src/sdk/livekit_otel_enricher.py`)
-attaches its attributes once and they're consumed everywhere.
+The same `gen_ai.*`, `lk.*`, `http.*`, and `service.*` attributes ship
+to whichever target is configured. The `NoiseSpanFilter` is the only
+custom span processor in the pipeline, and it just drops a handful of
+LiveKit framework-internal spans (`agent_speaking`, `on_enter`, etc.)
+to keep the trace tree readable. Set `OPENCLAW_OTEL_VERBOSE=true` to
+disable that filter for deep dives.
 
 ## Verifying ingestion
 

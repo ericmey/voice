@@ -1,50 +1,51 @@
 # LangSmith (archived)
 
 > **As of 2026-05-01 the repo standardized on SigNoz as the primary
-> observability backend.** This document is archived. For the active
-> observability docs see **[OBSERVABILITY.md](OBSERVABILITY.md)**.
+> (and only) observability backend.** This document is archived. For
+> the active observability docs see
+> **[OBSERVABILITY.md](OBSERVABILITY.md)**.
 
-The LangSmith provisioning code (`ops/langsmith/`) is kept in-tree as
-an opt-in component but is not part of the default agent runtime. The
-former `LangSmithSpanProcessor` was renamed to `LiveKitOtelEnricher`
-(in `sdk/src/sdk/livekit_otel_enricher.py`) at the same time and is now
-vendor-neutral — it writes the same `gen_ai.*` semantic-convention
-attributes to whichever backend is configured.
+## What was removed
+
+* The custom OTel span enricher
+  (`sdk/src/sdk/livekit_otel_enricher.py`, formerly the
+  `LangSmithSpanProcessor`) — its mappings duplicated what LiveKit
+  Agents 1.5+ already emits natively.
+* The multi-exporter knob (`OPENCLAW_OTEL_EXPORTERS`) and the
+  `_rewrite_langsmith_project_header` helper in `sdk/tracing.py`.
+* The dual-export to `https://api.smith.langchain.com/otel`.
 
 ## Why we moved off LangSmith as the primary
 
 * **Single pane of glass.** SigNoz hosts traces, logs, metrics, the
   service map, and exception tracking under one URL. LangSmith is
   call-narrative only; everything else (HTTP child spans, log
-  correlation, P95 latency by service) was already happening in SigNoz.
+  correlation, P95 latency by service) was already in SigNoz.
 * **Open telemetry, open data.** ClickHouse on disk, queryable however
   we want. No per-trace pricing, no PII leaving the laptop.
-* **One set of conventions.** SigNoz reads stock GenAI semantic-convention
-  attributes (`gen_ai.*`, `openinference.*`, `http.*`, `service.*`) — the
-  same attributes the agent SDK already emits.
+* **One set of conventions.** LiveKit Agents 1.5+ emits the GenAI
+  semantic-convention attributes (`gen_ai.*`) SigNoz dashboards
+  already read. Custom enrichment only added duplicates.
 
-## How to reactivate LangSmith if you ever need it
+## What still exists
 
-1. Add `langsmith` to `OPENCLAW_OTEL_EXPORTERS` in
-   `secrets/livekit-agents.env`:
+* `ops/langsmith/` — provisioning code (project setup, datasets,
+  rules) preserved as an archive in case the LangSmith UX ever needs
+  to be reactivated for evals or judges.
+* `Makefile` targets `langsmith-plan-legacy` / `langsmith-provision-legacy`
+  still call into `ops/langsmith/provision`.
 
-   ```bash
-   OPENCLAW_OTEL_EXPORTERS=otlp,langsmith
-   OTEL_EXPORTER_OTLP_ENDPOINT=https://api.smith.langchain.com/otel
-   OTEL_EXPORTER_OTLP_HEADERS="x-api-key=...,Langsmith-Project=Harem World"
-   LANGSMITH_TRACING=true
-   ```
+## Reactivating LangSmith
 
-2. (Optional) Re-run the LangSmith infrastructure-as-code:
+There is no built-in dual-export pathway any more. If you need LangSmith
+again, the cleanest options are:
 
-   ```bash
-   make langsmith-plan-legacy
-   make langsmith-provision-legacy
-   ```
+1. Run a local OTel collector (`otelcol-contrib`) that fans out from
+   one OTLP receiver to two OTLP exporters — one to SigNoz, one to
+   `https://api.smith.langchain.com/otel`. Point `OPENCLAW_OTLP_ENDPOINT`
+   at the local collector. No code changes here.
+2. Or revert this commit's removal of `livekit_otel_enricher.py` and
+   the `OPENCLAW_OTEL_EXPORTERS` branching in `sdk/tracing.py` — the
+   git history has the full prior implementation.
 
-3. `make deploy`.
-
-The `LiveKitOtelEnricher` will continue to write
-`langsmith.span.kind` / `langsmith.metadata.*` mirrors alongside the
-canonical `gen_ai.*` attributes, and the second exporter will fan the
-same data out to LangSmith. The SigNoz path keeps working unchanged.
+The agent SDK itself stays vendor-neutral OTLP/HTTP either way.
