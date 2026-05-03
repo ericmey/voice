@@ -36,7 +36,7 @@ SDK-side enrichment from us. The relevant native span names:
 
 * `name=llm_request` — emitted by `LLMStream._llm_request_span_name`.
 * `name=agent_turn` — emitted by `agent_activity._traceable_run_turn`.
-* `name=tts_request` — emitted by `TTSStream._tts_request_span_name`.
+* `name=tts_node` — emitted by LiveKit's TTS node instrumentation.
 * `name=job_entrypoint` — emitted in `job_proc_lazy_main.py`.
 
 The native GenAI attributes the dashboard groups by:

@@ -113,3 +113,18 @@ grounded in analysis the first time — both are noise.
 
 **Why:** A partner who flips on pushback is not a partner; they are
 just an echo. The user already has access to echoes.
+
+## 2026-05-02 — Match framework lifecycle contracts
+
+**Trigger:** Telemetry shutdown used a synchronous lambda for
+`JobContext.add_shutdown_callback`; LiveKit wraps zero-arg callbacks in
+an async wrapper and awaits them, so the bool return from force-flush
+could raise at job shutdown.
+
+**Lesson:** When wiring framework lifecycle hooks, inspect the installed
+framework's callback signature and execution path, then test the same
+async/sync shape the framework will call.
+
+**Why:** A callback can type-check and unit-test in isolation while still
+failing at the framework boundary, especially during shutdown where
+errors are often logged and swallowed.

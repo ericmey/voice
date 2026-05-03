@@ -14,6 +14,7 @@ Pin the contract:
 
 from __future__ import annotations
 
+import asyncio
 import os
 from types import SimpleNamespace
 from typing import cast
@@ -303,7 +304,11 @@ def test_wire_shutdown_flush_registers_job_callback() -> None:
     ctx.add_shutdown_callback.assert_called_once()
     callback = ctx.add_shutdown_callback.call_args.args[0]
     with patch.object(tracing, "force_flush_otel_tracing", return_value=True) as mock_flush:
-        callback()
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(callback("job_shutdown"))
+        finally:
+            loop.close()
     mock_flush.assert_called_once_with(2345)
 
 

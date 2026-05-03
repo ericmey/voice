@@ -140,8 +140,12 @@ cmd_nuke() {
 cmd_update() {
   ensure_repo
   log "pulling latest SigNoz from ${SIGNOZ_REF}"
-  git -C "${SIGNOZ_HOME}" fetch origin "${SIGNOZ_REF}"
-  git -C "${SIGNOZ_HOME}" reset --hard "origin/${SIGNOZ_REF}"
+  git -C "${SIGNOZ_HOME}" fetch --tags origin "${SIGNOZ_REF}" || git -C "${SIGNOZ_HOME}" fetch --tags origin
+  if git -C "${SIGNOZ_HOME}" rev-parse --verify --quiet "origin/${SIGNOZ_REF}" >/dev/null; then
+    git -C "${SIGNOZ_HOME}" reset --hard "origin/${SIGNOZ_REF}"
+  else
+    git -C "${SIGNOZ_HOME}" reset --hard "${SIGNOZ_REF}"
+  fi
   log "run 'scripts/signoz.sh up' to apply"
 }
 

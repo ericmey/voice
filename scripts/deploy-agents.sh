@@ -41,11 +41,6 @@ set -a; . "${SECRETS}"; set +a
 : "${MUSUBI_V2_BASE_URL:?MUSUBI_V2_BASE_URL missing from ${SECRETS}}"
 : "${MUSUBI_V2_TOKEN_NYLA:?MUSUBI_V2_TOKEN_NYLA missing from ${SECRETS}}"
 : "${MUSUBI_V2_TOKEN_AOI:?MUSUBI_V2_TOKEN_AOI missing from ${SECRETS}}"
-# Required by Party (chained STT/LLM/TTS pipeline). Other agents don't
-# use them but they're always rendered into the plist for uniformity —
-# fail loudly here so they don't crash silently at first call.
-: "${OPENAI_API_KEY:?OPENAI_API_KEY missing from ${SECRETS} (Party uses Whisper STT)}"
-: "${ELEVENLABS_API_KEY:?ELEVENLABS_API_KEY missing from ${SECRETS} (Party uses ElevenLabs TTS)}"
 
 # Agents to deploy (default: all three). Build the array from positional
 # args, or fall back to all three if none were given — the explicit $#
@@ -54,6 +49,17 @@ if [[ $# -eq 0 ]]; then
   agents=(nyla aoi party)
 else
   agents=("$@")
+fi
+
+needs_party_keys=false
+for agent in "${agents[@]}"; do
+  if [[ "${agent}" == "party" ]]; then
+    needs_party_keys=true
+  fi
+done
+if [[ "${needs_party_keys}" == "true" ]]; then
+  : "${OPENAI_API_KEY:?OPENAI_API_KEY missing from ${SECRETS} (Party uses Whisper STT)}"
+  : "${ELEVENLABS_API_KEY:?ELEVENLABS_API_KEY missing from ${SECRETS} (Party uses ElevenLabs TTS)}"
 fi
 
 agent_label() {
@@ -93,17 +99,6 @@ agent_musubi_token() {
   esac
 }
 
-agent_langsmith_project() {
-  # LangSmith projects are per agent by default. Operators can override
-  # each one from secrets/livekit-agents.env without changing the script.
-  case "$1" in
-    nyla)  echo "${LANGSMITH_PROJECT_NYLA:-Nyla}" ;;
-    aoi)   echo "${LANGSMITH_PROJECT_AOI:-Aoi}" ;;
-    party) echo "${LANGSMITH_PROJECT_PARTY:-Party}" ;;
-    *)     die "no LangSmith project mapping for: $1" ;;
-  esac
-}
-
 render_plist() {
   local agent="$1"
   local label
@@ -114,9 +109,6 @@ render_plist() {
   local musubi_token
   musubi_token="$(agent_musubi_token "$agent")"
   [[ -n "${musubi_token}" ]] || die "musubi token for ${agent} is empty — check secrets file"
-  local langsmith_project
-  langsmith_project="$(agent_langsmith_project "$agent")"
-  [[ -n "${langsmith_project}" ]] || die "LangSmith project for ${agent} is empty — check secrets file"
   local out="${LAUNCH_AGENTS_DIR}/ai.openclaw.livekit-agent-${agent}.plist"
 
   # sed-based render. envsubst would swallow any $... in paths; explicit
@@ -124,7 +116,6 @@ render_plist() {
   sed \
     -e "s|{{AGENT_NAME}}|${agent}|g" \
     -e "s|{{AGENT_LABEL}}|${label}|g" \
-    -e "s|{{LANGSMITH_PROJECT}}|${langsmith_project}|g" \
     -e "s|{{MONOREPO_ROOT}}|${REPO_ROOT}|g" \
     -e "s|{{LIVEKIT_VOICE_LOGS}}|${VOICE_LOGS}|g" \
     -e "s|{{HOME}}|${HOME}|g" \
@@ -137,8 +128,8 @@ render_plist() {
     -e "s|{{MUSUBI_V2_BASE_URL}}|${MUSUBI_V2_BASE_URL}|g" \
     -e "s|{{MUSUBI_V2_TOKEN}}|${musubi_token}|g" \
     -e "s|{{OPENCLAW_BIN}}|${OPENCLAW_BIN}|g" \
-    -e "s|{{OPENAI_API_KEY}}|${OPENAI_API_KEY}|g" \
-    -e "s|{{ELEVENLABS_API_KEY}}|${ELEVENLABS_API_KEY}|g" \
+    -e "s|{{OPENAI_API_KEY}}|${OPENAI_API_KEY:-}|g" \
+    -e "s|{{ELEVENLABS_API_KEY}}|${ELEVENLABS_API_KEY:-}|g" \
     -e "s|{{OPENCLAW_OTEL_ENABLED}}|${OPENCLAW_OTEL_ENABLED:-true}|g" \
     -e "s|{{OPENCLAW_OTEL_DEBUG}}|${OPENCLAW_OTEL_DEBUG:-false}|g" \
     -e "s|{{OPENCLAW_OTEL_VERBOSE}}|${OPENCLAW_OTEL_VERBOSE:-false}|g" \
@@ -151,6 +142,8 @@ render_plist() {
     -e "s|{{OPENCLAW_OTLP_LOGS_ENDPOINT}}|${OPENCLAW_OTLP_LOGS_ENDPOINT:-}|g" \
     -e "s|{{OPENCLAW_OTLP_LOGS_HEADERS}}|${OPENCLAW_OTLP_LOGS_HEADERS:-}|g" \
     -e "s|{{OPENCLAW_OTEL_METRICS_ENABLED}}|${OPENCLAW_OTEL_METRICS_ENABLED:-true}|g" \
+    -e "s|{{OPENCLAW_OTLP_METRICS_ENDPOINT}}|${OPENCLAW_OTLP_METRICS_ENDPOINT:-}|g" \
+    -e "s|{{OPENCLAW_OTLP_METRICS_HEADERS}}|${OPENCLAW_OTLP_METRICS_HEADERS:-}|g" \
     -e "s|{{OPENCLAW_RECORD_AUDIO}}|${OPENCLAW_RECORD_AUDIO:-false}|g" \
     -e "s|{{LIVEKIT_EGRESS_HOST_RECORDINGS_DIR}}|${LIVEKIT_EGRESS_HOST_RECORDINGS_DIR:-${VOICE_LOGS}/recordings}|g" \
     -e "s|{{LIVEKIT_EGRESS_CONTAINER_RECORDINGS_DIR}}|${LIVEKIT_EGRESS_CONTAINER_RECORDINGS_DIR:-/recordings}|g" \

@@ -253,19 +253,15 @@ class TelemetryCollector:
         """Compute session-level summary stats from accumulated data."""
         duration = time.time() - self.started_at
 
-        # Latency stats — chained pipeline emits per-turn metrics rolled
-        # into ChatMessage.metrics; realtime models emit them via a
-        # separate ``metrics_collected`` event we capture into
-        # ``self.realtime_metrics``. If chained values are absent, fall
-        # back to realtime ttft (genuinely the only latency signal we
-        # have for realtime). Filter ttft >= 0 — the framework uses -1
-        # to mean "no audio token sent."
+        # Latency stats — chained pipeline emits true per-turn e2e metrics
+        # rolled into ChatMessage.metrics; realtime models emit TTFT via a
+        # separate ``metrics_collected`` event. Keep those signals distinct:
+        # realtime TTFT is useful, but it is not end-to-end response latency.
         e2e_values = [t["e2e_latency"] for t in self.turns if "e2e_latency" in t]
         ttft_values = [t["llm_node_ttft"] for t in self.turns if "llm_node_ttft" in t]
-        if not e2e_values and self.realtime_metrics:
-            e2e_values = [m["ttft"] for m in self.realtime_metrics if m.get("ttft", -1) >= 0]
+        realtime_ttft_values = [m["ttft"] for m in self.realtime_metrics if m.get("ttft", -1) >= 0]
         if not ttft_values and self.realtime_metrics:
-            ttft_values = [m["ttft"] for m in self.realtime_metrics if m.get("ttft", -1) >= 0]
+            ttft_values = realtime_ttft_values
 
         def _stats(values: list[float]) -> dict[str, float | None]:
             if not values:
@@ -288,6 +284,7 @@ class TelemetryCollector:
             "total_turns": len(self.turns),
             "e2e_latency": _stats(e2e_values),
             "llm_ttft": _stats(ttft_values),
+            "realtime_ttft": _stats(realtime_ttft_values),
             "interruptions": len(interruptions),
             "false_interruptions": self.false_interruptions,
             "backchannels": len(backchannels),

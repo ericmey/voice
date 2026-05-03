@@ -8,9 +8,10 @@ recording without a vendor-specific upload SDK.
 Enable with ``OPENCLAW_RECORD_AUDIO=true``.
 
 The agent entrypoint calls :func:`start_call_audio_recording` after
-``ctx.connect`` and :func:`wire_call_audio_attachment` to register a
-shutdown hook that finalizes the egress and decorates the active span
-with the recording metadata.
+``ctx.connect``, :func:`annotate_call_audio_recording` immediately after
+``session.start()`` (while LiveKit's ``agent_session`` span is active),
+and :func:`wire_call_audio_attachment` to register a shutdown hook that
+finalizes the egress file.
 
 Where to listen to the audio:
 
@@ -153,7 +154,6 @@ async def start_call_audio_recording(
     )
     logger.info("audio egress started: call_sid=%s egress_id=%s", call_sid, egress_id)
     trace(f"audio egress started call_sid={call_sid} egress_id={egress_id}")
-    _annotate_active_span(recording, finalized=False)
     return recording
 
 
@@ -190,13 +190,12 @@ async def _wait_for_recording(path: Path, timeout_seconds: float) -> bool:
     return False
 
 
-def _annotate_active_span(recording: CallAudioRecording, *, finalized: bool) -> None:
+def _annotate_active_span(recording: CallAudioRecording) -> None:
     """Decorate the currently active OTel span with audio recording metadata.
 
-    Two write windows: ``start_call_audio_recording`` writes path/mime
-    immediately so the recording is discoverable mid-call, and the
-    shutdown hook updates the span with size/duration once egress
-    finalizes the file.
+    This must run while LiveKit's ``agent_session`` span is active. The
+    job shutdown callback runs after LiveKit closes the session span, so
+    finalization is for disk correctness, not span mutation.
     """
     try:
         from opentelemetry import trace as otel_trace
@@ -213,16 +212,13 @@ def _annotate_active_span(recording: CallAudioRecording, *, finalized: bool) -> 
     public_url = _public_audio_url(recording)
     if public_url:
         span.set_attribute("openclaw.audio.url", public_url)
-    if finalized and recording.host_path.exists():
-        try:
-            size = recording.host_path.stat().st_size
-            span.set_attribute("openclaw.audio.bytes", int(size))
-        except OSError:
-            pass
-        span.set_attribute(
-            "openclaw.audio.duration_seconds",
-            round(time.time() - recording.started_at, 1),
-        )
+
+
+def annotate_call_audio_recording(recording: CallAudioRecording | None) -> None:
+    """Stamp recording path/URL metadata on the active ``agent_session`` span."""
+    if recording is None:
+        return
+    _annotate_active_span(recording)
 
 
 async def finalize_call_audio_recording(
@@ -230,11 +226,11 @@ async def finalize_call_audio_recording(
     *,
     timeout_seconds: float = 30.0,
 ) -> None:
-    """Stop egress, wait for the file to settle, decorate the trace.
+    """Stop egress and wait for the file to settle.
 
     Replaces the legacy LangSmith upload path. The recording stays on
-    disk; observability backends discover it via the
-    ``openclaw.audio.path`` / ``openclaw.audio.url`` span attributes.
+    disk; observability backends discover it via the path / URL span
+    attributes written earlier by :func:`annotate_call_audio_recording`.
     """
     if recording is None:
         return
@@ -244,7 +240,6 @@ async def finalize_call_audio_recording(
         logger.warning("audio recording finalize: file not ready: %s", recording.host_path)
         trace(f"audio recording finalize: file not ready: {recording.host_path}")
         return
-    _annotate_active_span(recording, finalized=True)
     logger.info(
         "audio recording finalized: %s (%d bytes)",
         recording.host_path,
@@ -258,9 +253,7 @@ attach_call_audio_to_langsmith = finalize_call_audio_recording
 
 
 def wire_call_audio_attachment(ctx: Any, recording: CallAudioRecording | None) -> None:
-    """Register a shutdown hook that finalizes the recording and writes
-    its location into the active OTel span.
-    """
+    """Register a shutdown hook that finalizes the recording file."""
     if recording is None:
         return
     add_shutdown_callback = getattr(ctx, "add_shutdown_callback", None)

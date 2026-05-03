@@ -46,13 +46,15 @@ fi
 METHOD="$1"; shift
 URL_PATH="$1"; shift
 BODY="${1:-}"
+RESP_FILE="$(mktemp "${TMPDIR:-/tmp}/signoz-admin-resp.XXXXXX")"
+trap 'rm -f "${RESP_FILE}"' EXIT
 
 curl_args=(
     -sS
     -X "${METHOD}"
     -H "SIGNOZ-API-KEY: ${SIGNOZ_API_KEY}"
     -H 'content-type: application/json'
-    -o /tmp/signoz-admin-resp
+    -o "${RESP_FILE}"
     -w '%{http_code}'
 )
 
@@ -67,10 +69,10 @@ fi
 HTTP_CODE=$(curl "${curl_args[@]}" "${SIGNOZ_URL}${URL_PATH}")
 
 # Print body (pretty-printed if JSON, raw otherwise).
-if python3 -m json.tool /tmp/signoz-admin-resp 2>/dev/null; then
+if python3 -m json.tool "${RESP_FILE}" 2>/dev/null; then
     :
 else
-    cat /tmp/signoz-admin-resp
+    cat "${RESP_FILE}"
     echo
 fi
 

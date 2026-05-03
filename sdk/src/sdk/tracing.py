@@ -217,8 +217,12 @@ def wire_otel_shutdown_flush(ctx: Any, timeout_millis: int = 10000) -> None:
     add_shutdown_callback = getattr(ctx, "add_shutdown_callback", None)
     if add_shutdown_callback is None:
         return
+
+    async def _flush_otel(_reason: str = "") -> None:
+        force_flush_otel_tracing(timeout_millis)
+
     try:
-        add_shutdown_callback(lambda: force_flush_otel_tracing(timeout_millis))
+        add_shutdown_callback(_flush_otel)
     except Exception as exc:
         logger.warning("OTel shutdown flush hook registration failed: %s", exc)
 
@@ -427,6 +431,26 @@ def _logs_enabled() -> bool:
     return bool(os.environ.get("OPENCLAW_OTLP_ENDPOINT"))
 
 
+# Loggers whose records must never enter the OTel logs pipeline. Shipping
+# them creates a feedback loop: the OTLP HTTP exporter POSTs to the
+# collector, urllib3 logs the POST at DEBUG, the root LoggingHandler
+# captures that DEBUG line, ships it via OTLP, which causes another
+# POST. Throttled only by BatchLogRecordProcessor flush cadence — at
+# DEBUG verbosity it produces ~1k records/sec of pure self-traffic.
+_OTEL_INTERNAL_LOGGER_PREFIXES = (
+    "urllib3",
+    "opentelemetry.exporter",
+    "opentelemetry.sdk._logs",
+    "opentelemetry.sdk.trace.export",
+    "opentelemetry.sdk.metrics.export",
+)
+
+
+class _OtelInternalLoopFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not record.name.startswith(_OTEL_INTERNAL_LOGGER_PREFIXES)
+
+
 def _install_logs_pipeline(resource: Any) -> None:
     """Bridge stdlib ``logging`` to OTel + ship records via OTLP.
 
@@ -436,6 +460,10 @@ def _install_logs_pipeline(resource: Any) -> None:
          cross-correlate with traces.
       2. An ``LoggingHandler`` fans every record into the OTel logs SDK,
          which batches and exports via OTLPLogExporter to SigNoz.
+
+    The handler is filtered to exclude OTel-internal HTTP/exporter
+    loggers (see :data:`_OTEL_INTERNAL_LOGGER_PREFIXES`) — without that
+    filter the exporter logs itself and the pipeline runs away.
     """
     global _logger_provider
 
@@ -472,7 +500,14 @@ def _install_logs_pipeline(resource: Any) -> None:
         _logger_provider = provider
 
         otel_handler = LoggingHandler(level=logging.NOTSET, logger_provider=provider)
+        otel_handler.addFilter(_OtelInternalLoopFilter())
         logging.getLogger().addHandler(otel_handler)
+
+        # Belt-and-suspenders: even if some other handler (file, stderr)
+        # is attached at DEBUG, the OTLP HTTP transport's per-POST chatter
+        # is never useful operational signal — drop it at the source.
+        logging.getLogger("urllib3").setLevel(logging.WARNING)
+        logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 
         LoggingInstrumentor().instrument(set_logging_format=False)
 

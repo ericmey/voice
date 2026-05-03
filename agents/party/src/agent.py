@@ -27,7 +27,11 @@ from livekit.plugins import elevenlabs as elevenlabs_plugin
 from livekit.plugins import google as google_plugin
 from livekit.plugins import openai as openai_plugin
 from livekit.plugins import silero as silero_plugin
-from sdk.audio_recording import start_call_audio_recording, wire_call_audio_attachment
+from sdk.audio_recording import (
+    annotate_call_audio_recording,
+    start_call_audio_recording,
+    wire_call_audio_attachment,
+)
 from sdk.config import AgentConfig
 from sdk.constants import NYLA_DISCORD_ROOM
 from sdk.env import load_env
@@ -211,9 +215,10 @@ async def entrypoint(ctx: JobContext) -> None:
         caller_source=caller.source,
         lk_job_id=getattr(ctx.job, "id", None),
     )
+    annotate_call_audio_recording(audio_recording)
     trace("party session: silero-vad -> whisper-1 -> gemini-3.1-flash-lite -> elevenlabs")
 
-    trace("party: entrypoint complete, greeting delivered via on_enter")
+    trace("party: entrypoint complete, greeting scheduled via on_enter")
 
 
 if __name__ == "__main__":

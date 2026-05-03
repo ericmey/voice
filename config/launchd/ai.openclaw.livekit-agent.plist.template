@@ -5,7 +5,6 @@
   Substitutions (handled by scripts/deploy-agents.sh):
     {{AGENT_NAME}}            nyla | aoi | party
     {{AGENT_LABEL}}           human-readable description
-    {{LANGSMITH_PROJECT}}      per-agent LangSmith project name
     {{MONOREPO_ROOT}}         absolute path to the openclaw-livekit checkout
     {{LIVEKIT_VOICE_LOGS}}    directory for voice-stack logs (default <repo>/logs/voice)
 
@@ -116,6 +115,10 @@
       <string>{{OPENCLAW_OTLP_LOGS_HEADERS}}</string>
       <key>OPENCLAW_OTEL_METRICS_ENABLED</key>
       <string>{{OPENCLAW_OTEL_METRICS_ENABLED}}</string>
+      <key>OPENCLAW_OTLP_METRICS_ENDPOINT</key>
+      <string>{{OPENCLAW_OTLP_METRICS_ENDPOINT}}</string>
+      <key>OPENCLAW_OTLP_METRICS_HEADERS</key>
+      <string>{{OPENCLAW_OTLP_METRICS_HEADERS}}</string>
       <key>OPENCLAW_RECORD_AUDIO</key>
       <string>{{OPENCLAW_RECORD_AUDIO}}</string>
       <key>LIVEKIT_EGRESS_HOST_RECORDINGS_DIR</key>

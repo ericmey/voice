@@ -31,6 +31,8 @@ set -euo pipefail
 
 SIGNOZ_URL="${SIGNOZ_URL:-http://localhost:8080}"
 DASH_DIR="${SIGNOZ_DASHBOARD_DIR:-ops/signoz/dashboards}"
+RESP_FILE="$(mktemp "${TMPDIR:-/tmp}/signoz-import-resp.XXXXXX")"
+trap 'rm -f "${RESP_FILE}"' EXIT
 
 auth_header=""
 auth_method=""
@@ -92,7 +94,7 @@ skip=0
 fail=0
 for f in "${files[@]}"; do
   echo "[signoz-import] POST $(basename "${f}")"
-  HTTP_CODE=$(curl -sS -o /tmp/signoz-import-resp -w '%{http_code}' \
+  HTTP_CODE=$(curl -sS -o "${RESP_FILE}" -w '%{http_code}' \
     -X POST "${SIGNOZ_URL}/api/v1/dashboards" \
     -H "${auth_header}" \
     -H 'content-type: application/json' \
@@ -100,7 +102,7 @@ for f in "${files[@]}"; do
   case "${HTTP_CODE}" in
     2*)  echo "[signoz-import]   imported (HTTP ${HTTP_CODE})";  ((ok++)) ;;
     409) echo "[signoz-import]   already exists (HTTP 409) — skipping";  ((skip++)) ;;
-    *)   echo "[signoz-import]   FAILED (HTTP ${HTTP_CODE}):"; cat /tmp/signoz-import-resp; echo;  ((fail++)) ;;
+    *)   echo "[signoz-import]   FAILED (HTTP ${HTTP_CODE}):"; cat "${RESP_FILE}"; echo;  ((fail++)) ;;
   esac
 done
 

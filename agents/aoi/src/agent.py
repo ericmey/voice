@@ -12,7 +12,11 @@ import logging
 from _shared import AOI_CONFIG, AoiAgent, build_model, build_tools, load_env_once, load_persona
 from livekit.agents import AgentSession, JobContext, cli
 from livekit.agents.worker import AgentServer
-from sdk.audio_recording import start_call_audio_recording, wire_call_audio_attachment
+from sdk.audio_recording import (
+    annotate_call_audio_recording,
+    start_call_audio_recording,
+    wire_call_audio_attachment,
+)
 from sdk.postcall import wire_postcall_review
 from sdk.postcall_memory import wire_postcall_memory
 from sdk.telemetry import wire_telemetry_capture
@@ -84,6 +88,7 @@ async def entrypoint(ctx: JobContext) -> None:
         caller_source=caller.source,
         lk_job_id=getattr(ctx.job, "id", None),
     )
+    annotate_call_audio_recording(audio_recording)
 
     trace(f"session started room={ctx.room.name}")
 

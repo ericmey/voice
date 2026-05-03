@@ -144,8 +144,8 @@ def test_record_overlap_distinguishes_interruption_from_backchannel() -> None:
 
 def test_summary_uses_realtime_ttft_when_chained_metrics_absent() -> None:
     """Realtime models (Gemini realtime) emit TTFT via ``metrics_collected``,
-    not via per-turn ``ChatMessage.metrics``. The summary must fall back
-    to the realtime channel so Nyla/Aoi calls don't show null latency.
+    not via per-turn ``ChatMessage.metrics``. The summary exposes that as
+    TTFT, not e2e latency.
     """
     c = telemetry.TelemetryCollector("call-1", "phone-nyla")
     c.record_realtime_metrics(_FakeRealtimeMetrics(request_id="r1", ttft=0.4, duration=1.0))
@@ -155,9 +155,12 @@ def test_summary_uses_realtime_ttft_when_chained_metrics_absent() -> None:
 
     summary = c.build_summary()
 
+    assert summary["e2e_latency"]["count"] == 0
     assert summary["llm_ttft"]["count"] == 2
     assert summary["llm_ttft"]["min"] == 0.4
     assert summary["llm_ttft"]["max"] == 0.6
+    assert summary["realtime_ttft"]["count"] == 2
+    assert summary["realtime_ttft"]["avg"] == 0.5
 
 
 def test_flush_writes_json_with_complete_shape(tmp_path, monkeypatch) -> None:
@@ -187,6 +190,7 @@ def test_flush_writes_json_with_complete_shape(tmp_path, monkeypatch) -> None:
     assert doc["latency_source"] == "chained"
     assert doc["summary"]["total_turns"] == 1
     assert doc["summary"]["e2e_latency"]["count"] == 1
+    assert doc["summary"]["realtime_ttft"]["count"] == 1
     assert doc["summary"]["interruptions"] == 1
     assert doc["summary"]["tool_calls_total"] == 1
     assert len(doc["turns"]) == 1

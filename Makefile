@@ -10,6 +10,7 @@ SHELL := /usr/bin/env bash
         register-sip tail truncate-logs \
         sync-venvs lint typecheck verify \
         signoz-up signoz-down signoz-status signoz-logs signoz signoz-update signoz-nuke \
+        signoz-import-dashboards \
         signoz-wire-gateway signoz-verify-gateway signoz-admin \
         host-collector-install host-collector-restart host-collector-status \
         host-collector-logs host-collector-uninstall

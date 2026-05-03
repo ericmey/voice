@@ -194,7 +194,7 @@ gives you the microscope.
    `session.id` (SIP Call-ID), `enduser.id` (caller E.164),
    `openclaw.dialed_number`, `openclaw.caller_source`,
    `openclaw.lk_job_id`, plus a tree of child spans for each
-   `agent_turn`, `function_tool`, `llm_request`, `tts_request`,
+   `agent_turn`, `function_tool`, `llm_request`, `tts_node`,
    and outbound `http.client` call.
 4. **Drill into a slow tool**: click `function_tool: get_household_status`
    → see every `http.client` child span with `http.method`, `http.url`,
@@ -289,10 +289,9 @@ have:
 
 * LiveKit Egress write each call's audio to
   `${LIVEKIT_EGRESS_HOST_RECORDINGS_DIR}/<agent>/<call_sid>.ogg`.
-* The agent stamp the active call span with `openclaw.audio.path`,
-  `openclaw.audio.url`, `openclaw.audio.bytes`, and
-  `openclaw.audio.duration_seconds` so the recording is one click
-  away in SigNoz.
+* The agent stamps the active call span with `openclaw.audio.path`
+  and, when configured, `openclaw.audio.url` so the recording is one
+  click away in SigNoz.
 
 If you set the public base URL, SigNoz shows it as a clickable link.
 Without one, you'll see the local filesystem path and can `open` it
@@ -369,7 +368,7 @@ every panel populates without code changes:
 | Error Rate, Errors                   | `has_error=true`                                          |
 | Agent Response Latency (P95)         | `name=agent_turn` duration                                |
 | Number of Conversations / Avg Turns  | `name=agent_turn` count per `trace_id`                    |
-| TTS Duration                         | `name=tts_request` duration                               |
+| TTS Duration                         | `name=tts_node` duration                                  |
 | Services and Languages               | `name=job_entrypoint`, groupBy `service.name`, lang       |
 | HTTP Request Duration                | `http.client.duration` histogram (OTel HTTP instrumentor) |
 | Logs                                 | `service.name` (OTel logs)                                |
