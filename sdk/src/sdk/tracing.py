@@ -27,9 +27,10 @@ Configuration:
 
 * ``OPENCLAW_OTEL_ENABLED=true`` — master switch.
 * ``OPENCLAW_OTLP_ENDPOINT`` / ``OPENCLAW_OTLP_HEADERS`` — OTLP/HTTP
-  endpoint (default in this fleet: ``http://shiori.mey.house:4318``)
-  and any auth headers required by the backend (none for the
-  shiori LGTM stack on the internal VLAN).
+  traces endpoint (default in this fleet:
+  ``http://shiori.mey.house:4318/v1/traces``) and any auth headers
+  required by the backend (none for the shiori LGTM stack on the
+  internal VLAN).
 * ``OPENCLAW_OTEL_DEBUG=true`` — adds a ConsoleSpanExporter for local diag.
 * ``OPENCLAW_OTEL_HTTP_INSTRUMENTATION=false`` — disable HTTP auto-instr.
 * ``OPENCLAW_OTEL_VERBOSE=true`` — keep the noise spans in the trace tree.
@@ -331,7 +332,8 @@ def _build_resource() -> Any:
 
     agent = _agent_name()
     environment = os.environ.get(
-        "OPENCLAW_DEPLOYMENT_ENVIRONMENT", os.environ.get("DEPLOYMENT_ENVIRONMENT", "production")
+        "OPENCLAW_DEPLOYMENT_ENVIRONMENT",
+        os.environ.get("DEPLOYMENT_ENVIRONMENT", "harem-world"),
     )
     version = os.environ.get("OPENCLAW_SERVICE_VERSION", "dev")
 

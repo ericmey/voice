@@ -104,7 +104,7 @@ services:
 # plugin only does HTTP/protobuf).
 #
 # Agents flip on by setting OPENCLAW_OTEL_ENABLED=true and
-# OPENCLAW_OTLP_ENDPOINT=http://shiori.mey.house:4318 in
+# OPENCLAW_OTLP_ENDPOINT=http://shiori.mey.house:4318/v1/traces in
 # secrets/livekit-agents.env. Logs ship through the same OTLP endpoint
 # via OTLPLogExporter when OPENCLAW_OTEL_LOGS_ENABLED=true.
 #

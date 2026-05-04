@@ -131,6 +131,15 @@ def test_resource_attributes_identify_agent(monkeypatch) -> None:
     assert "host.name" in attrs
 
 
+def test_resource_attributes_default_to_fleet_environment(monkeypatch) -> None:
+    monkeypatch.delenv("OPENCLAW_DEPLOYMENT_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("DEPLOYMENT_ENVIRONMENT", raising=False)
+
+    resource = tracing._build_resource()
+
+    assert dict(resource.attributes)["deployment.environment"] == "harem-world"
+
+
 def test_resource_attributes_fallback_when_agent_name_unset(monkeypatch) -> None:
     """Without ``OPENCLAW_AGENT_NAME`` (e.g. in pytest's hermetic env),
     service.name must still be valid — falls back to a stable label."""

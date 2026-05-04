@@ -75,7 +75,7 @@ truncate-logs: ## Zero out all agent logs (clean baseline for testing)
 # Collector). The collector is bind-managed in the
 # ~/Vaults/Aoi/wiki/services/observability/ canonical compose, NOT in
 # this repo. Configure the agents via OPENCLAW_OTLP_ENDPOINT (default
-# http://shiori.mey.house:4318). See docs/OBSERVABILITY.md.
+# http://shiori.mey.house:4318/v1/traces). See docs/OBSERVABILITY.md.
 
 # ---- Host-side OTel Collector (hostmetrics + dockerstats + httpcheck + filelog)
 host-collector-install: ## Download otelcol-contrib + bootstrap launchd job exporting host/docker/vendor telemetry to shiori

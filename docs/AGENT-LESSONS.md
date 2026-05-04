@@ -128,3 +128,19 @@ async/sync shape the framework will call.
 **Why:** A callback can type-check and unit-test in isolation while still
 failing at the framework boundary, especially during shutdown where
 errors are often logged and swallowed.
+
+## 2026-05-04 — Migration defaults must move with docs
+
+**Trigger:** The observability backend migrated from local SigNoz to the
+shiori LGTM stack, but `scripts/deploy-agents.sh` still defaulted
+`OPENCLAW_OTLP_ENDPOINT` to `http://localhost:4318/v1/traces` when the
+secrets file omitted the variable.
+
+**Lesson:** Backend migrations must update deploy-time fallbacks and
+code defaults, not just examples and docs. Search for old endpoints,
+old environment labels, and comments that omit required OTLP signal
+paths like `/v1/traces`.
+
+**Why:** A clean deploy can look correctly documented while launchd
+quietly renders a stale endpoint, causing telemetry to disappear
+without an application failure.
