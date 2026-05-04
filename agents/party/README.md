@@ -7,8 +7,8 @@ Unlike the realtime Aoi / Nyla agents, Party composes discrete components:
 
 - **STT:** OpenAI Whisper-1
 - **VAD:** Silero (segments caller audio into utterances)
-- **LLM:** Gemini 3.1 Flash Lite Preview (text)
-- **TTS:** ElevenLabs `eleven_v3`
+- **LLM:** Gemini 3.1 Flash-Lite Preview (text)
+- **TTS:** ElevenLabs `eleven_flash_v2_5`
 
 The goal is to evolve this into a multi-participant room where several
 characters can share a call.

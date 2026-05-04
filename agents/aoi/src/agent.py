@@ -1,4 +1,4 @@
-"""Aoi voice agent — Gemini 2.5 Flash Native Audio, voice "Leda".
+"""Aoi voice agent — Gemini 2.5 Flash Native Audio, voice "Kore".
 
 Registers as "phone-aoi" with LiveKit. Mirrors phone-nyla's setup until
 Aoi gets her own specialized configuration; see src/_shared.py for the

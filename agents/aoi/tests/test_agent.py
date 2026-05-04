@@ -205,6 +205,11 @@ class TestProviderImports:
 
         assert genai_types is not None
 
+    def test_native_audio_model_is_current_preview(self):
+        from tools.base_agent import GEMINI_NATIVE_AUDIO_MODEL
+
+        assert GEMINI_NATIVE_AUDIO_MODEL == "gemini-2.5-flash-native-audio-preview-12-2025"
+
     def test_import_end_call_tool(self):
         from livekit.agents.beta import EndCallTool
 

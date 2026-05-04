@@ -95,6 +95,9 @@ class TestAgentClass:
         for tool in expected:
             assert hasattr(agent, tool), f"Missing tool: {tool}"
 
+    def test_chained_llm_model_is_current_gemini_lite(self, agent_module):
+        assert agent_module._CHAINED_LLM_MODEL == "gemini-3.1-flash-lite-preview"
+
     def test_openclaw_request_absent(self, agent_module):
         agent = agent_module.PartyAgent(instructions="test")
         attr = getattr(agent, "openclaw_request", None)

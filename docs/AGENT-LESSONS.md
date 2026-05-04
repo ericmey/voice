@@ -144,3 +144,17 @@ paths like `/v1/traces`.
 **Why:** A clean deploy can look correctly documented while launchd
 quietly renders a stale endpoint, causing telemetry to disappear
 without an application failure.
+
+## 2026-05-04 — Verify model IDs against primary docs
+
+**Trigger:** During a LiveKit agent setup review, a model string looked
+invalid from a broad search result, but the model-specific Gemini docs
+showed `gemini-3.1-flash-lite-preview` was valid.
+
+**Lesson:** For provider model IDs, open the model-specific primary
+docs (or inspect the installed provider's default) before changing code.
+Search snippets are not enough.
+
+**Why:** Model names move quickly and search results can surface stale
+or partial tables. A well-intentioned "fix" can downgrade or break a
+working agent.

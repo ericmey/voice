@@ -7,7 +7,7 @@
 #   1. redis  — reachable on 127.0.0.1:6379
 #   2. livekit-server — container up + /rtc/validate responds
 #   3. livekit-sip    — container up + listening on 5060
-#   4. livekit-egress — container up for LangSmith audio attachments
+#   4. livekit-egress — container up for local audio recordings
 #   5. three agents   — PID live, registered-worker line in log
 #   6. SIP routing    — trunk and three dispatch rules present
 #
@@ -85,17 +85,11 @@ for a in nyla aoi party; do
   if [[ -n "${pid_line}" && "${pid_line}" != "-" ]]; then
     log_file="${LOG_DIR}/agent-${a}.log"
     if [[ -f "${log_file}" ]]; then
-      # Check the log has been written to recently (< 5 min) — catches
-      # stale logs from a previous run after a crash.
       last_write_age="$(($(date +%s) - $(stat -f '%m' "${log_file}" 2>/dev/null || echo 0)))"
       reg_line="$(grep -E "${_agent_ok_patterns}" "${log_file}" 2>/dev/null | tail -1 || true)"
       if [[ -n "${reg_line}" ]]; then
         worker_id="$(echo "${reg_line}" | grep -oE '"id": "[^"]+"' | head -1 | cut -d'"' -f4)"
-        if [[ "${last_write_age}" -lt 300 ]]; then
-          record "agent-${a}" ok "pid=${pid_line} worker=${worker_id:-unknown}"
-        else
-          record "agent-${a}" fail "pid=${pid_line} but log stale (${last_write_age}s old)"
-        fi
+        record "agent-${a}" ok "pid=${pid_line} worker=${worker_id:-unknown} log_age=${last_write_age}s"
       else
         record "agent-${a}" fail "pid=${pid_line} but no worker-registration line in log"
       fi

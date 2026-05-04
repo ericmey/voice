@@ -3,8 +3,8 @@
 Registers as "phone-party" with LiveKit. Uses separate components:
   - STT: OpenAI Whisper-1 (non-streaming, needs Silero VAD)
   - VAD: Silero (segments caller audio into utterances for Whisper)
-  - LLM: Gemini 3.1 Flash Lite Preview (text model, not multimodal)
-  - TTS: ElevenLabs eleven_v3
+  - LLM: Gemini 3.1 Flash-Lite Preview (text model, not multimodal)
+  - TTS: ElevenLabs Flash v2.5
 
 Inherits the full OpenClaw platform tool set (Core, Memory, Sessions,
 Academy). memory_agent_tag defaults to ``"nyla-voice"`` because the

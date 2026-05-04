@@ -120,6 +120,9 @@ class BaseRealtimeAgent(
 # --- model + tools (shared) ---------------------------------------------
 
 
+GEMINI_NATIVE_AUDIO_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
+
+
 def build_realtime_model(voice: str = "Leda") -> google_plugin.realtime.RealtimeModel:
     """Gemini 2.5 Flash Native Audio — identical for voice and text.
 
@@ -131,7 +134,7 @@ def build_realtime_model(voice: str = "Leda") -> google_plugin.realtime.Realtime
       without Gemini ending his turn.
     """
     return google_plugin.realtime.RealtimeModel(
-        model="gemini-2.5-flash-native-audio-latest",
+        model=GEMINI_NATIVE_AUDIO_MODEL,
         voice=voice,
         realtime_input_config=genai_types.RealtimeInputConfig(
             automatic_activity_detection=genai_types.AutomaticActivityDetection(

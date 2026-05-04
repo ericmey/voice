@@ -14,22 +14,33 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMPLATE="${REPO_ROOT}/config/launchd/ai.openclaw.livekit-agent.plist.template"
 SECRETS="${OPENCLAW_SECRETS:-${REPO_ROOT}/secrets/livekit-agents.env}"
-VOICE_LOGS="${LIVEKIT_VOICE_LOGS:-${REPO_ROOT}/logs/voice}"
-OPENCLAW_BIN="${OPENCLAW_BIN:-/opt/homebrew/bin/openclaw}"
 LAUNCH_AGENTS_DIR="${HOME}/Library/LaunchAgents"
 
 log()  { printf "\033[1;34m[deploy]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[warn]\033[0m   %s\n" "$*"; }
 die()  { printf "\033[1;31m[fatal]\033[0m  %s\n" "$*" >&2; exit 1; }
 
+abs_path() {
+  case "$1" in
+    /*) printf "%s\n" "$1" ;;
+    *)  printf "%s/%s\n" "${REPO_ROOT}" "$1" ;;
+  esac
+}
+
 # ---- preflight -------------------------------------------------------
 [[ -r "${TEMPLATE}" ]] || die "template not found: ${TEMPLATE}"
 [[ -r "${SECRETS}"  ]] || die "secrets file not found: ${SECRETS} (copy config/secrets.env.example and fill in)"
-mkdir -p "${VOICE_LOGS}" "${LAUNCH_AGENTS_DIR}"
 
 # Load secrets into the current env so envsubst can see them.
 # shellcheck disable=SC1090
 set -a; . "${SECRETS}"; set +a
+
+VOICE_LOGS="$(abs_path "${LIVEKIT_VOICE_LOGS:-${REPO_ROOT}/logs/voice}")"
+OPENCLAW_BIN="${OPENCLAW_BIN:-/opt/homebrew/bin/openclaw}"
+LIVEKIT_EGRESS_HOST_RECORDINGS_DIR="$(
+  abs_path "${LIVEKIT_EGRESS_HOST_RECORDINGS_DIR:-${VOICE_LOGS}/recordings}"
+)"
+mkdir -p "${VOICE_LOGS}" "${LAUNCH_AGENTS_DIR}"
 
 : "${LIVEKIT_URL:?LIVEKIT_URL missing from ${SECRETS}}"
 : "${LIVEKIT_API_KEY:?LIVEKIT_API_KEY missing from ${SECRETS}}"
@@ -145,7 +156,7 @@ render_plist() {
     -e "s|{{OPENCLAW_OTLP_METRICS_ENDPOINT}}|${OPENCLAW_OTLP_METRICS_ENDPOINT:-}|g" \
     -e "s|{{OPENCLAW_OTLP_METRICS_HEADERS}}|${OPENCLAW_OTLP_METRICS_HEADERS:-}|g" \
     -e "s|{{OPENCLAW_RECORD_AUDIO}}|${OPENCLAW_RECORD_AUDIO:-false}|g" \
-    -e "s|{{LIVEKIT_EGRESS_HOST_RECORDINGS_DIR}}|${LIVEKIT_EGRESS_HOST_RECORDINGS_DIR:-${VOICE_LOGS}/recordings}|g" \
+    -e "s|{{LIVEKIT_EGRESS_HOST_RECORDINGS_DIR}}|${LIVEKIT_EGRESS_HOST_RECORDINGS_DIR}|g" \
     -e "s|{{LIVEKIT_EGRESS_CONTAINER_RECORDINGS_DIR}}|${LIVEKIT_EGRESS_CONTAINER_RECORDINGS_DIR:-/recordings}|g" \
     "${TEMPLATE}" > "${out}"
 
