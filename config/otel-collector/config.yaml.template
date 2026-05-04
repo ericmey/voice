@@ -8,7 +8,7 @@
 #   logs/openclaw      filelog receiver          service.name=openclaw-gateway
 #   logs/agents        filelog receiver          service.name=openclaw-livekit-<agent>
 #
-# Exports OTLP/HTTP at http://localhost:4318 (the SigNoz collector).
+# Exports OTLP/HTTP at http://shiori.mey.house:4318 (the fleet OTel Collector).
 #
 # Template variables (substituted by scripts/install-host-otel-collector.sh):
 #   {{HOSTNAME}}              the macOS hostname (auto-detected at install time)
@@ -51,7 +51,7 @@ receivers:
 
   # ---- Tier 2: docker container stats --------------------------------------
   # Reads /var/run/docker.sock (mounted via launchd plist). Picks up every
-  # container in the LiveKit + SigNoz compose stacks.
+  # container in the LiveKit compose stack.
   docker_stats:
     endpoint: unix:///var/run/docker.sock
     collection_interval: 30s
@@ -95,7 +95,7 @@ receivers:
   # ---- Filelog: gateway logs (file-based, OpenClaw also pushes via OTLP) ---
   # The OpenClaw gateway already pushes logs via its diagnostics-otel plugin,
   # but the file logs carry additional structured context (config-audit,
-  # cache-trace) that aren't in the OTLP feed. We tail them here so SigNoz
+  # cache-trace) that aren't in the OTLP feed. We tail them here so the LGTM stack
   # has a complete view.
   filelog/openclaw:
     include:
@@ -118,7 +118,7 @@ receivers:
     include_file_path: true
 
 processors:
-  # Auto-discover host.name, host.id, os.* attributes so SigNoz' hostmetrics
+  # Auto-discover host.name, host.id, os.* attributes so Grafana's hostmetrics
   # dashboards work out of the box.
   resourcedetection/system:
     detectors: [system, env]
@@ -126,7 +126,7 @@ processors:
       hostname_sources: [os]
 
   # Tag the host pipeline with service.name=host-mac so it shows up in the
-  # SigNoz services list as one entry.
+  # Grafana services list as one entry.
   resource/host:
     attributes:
       - key: service.name
@@ -142,7 +142,7 @@ processors:
         action: upsert
 
   # For docker_stats, copy container.name → service.name so each container
-  # appears as its own service node in SigNoz' service map.
+  # appears as its own service node in Grafana's service map.
   transform/container_to_service:
     metric_statements:
       - context: resource
@@ -179,11 +179,11 @@ processors:
     send_batch_size: 1024
 
 exporters:
-  # Single OTLP target: the SigNoz collector running in the local
-  # docker-compose stack. Both LiveKit agents and the OpenClaw gateway
-  # already push to this endpoint.
+  # Single OTLP target: the fleet OTel Collector on shiori (Grafana +
+  # Loki + Tempo + Mimir). Both LiveKit agents and the OpenClaw gateway
+  # also push directly to this endpoint.
   otlphttp:
-    endpoint: http://localhost:4318
+    endpoint: http://shiori.mey.house:4318
     tls:
       insecure: true
 

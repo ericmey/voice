@@ -160,7 +160,7 @@ The deploy script writes these into each agent's launchd plist from
 | `DISCORD_BOT_TOKEN` | all | Per-agent Discord identity (deploy script maps `DISCORD_TOKEN_<AGENT>` → this) |
 | `LIVEKIT_VOICE_LOGS` | all | Directory for voice logs / telemetry / transcripts |
 | `OPENCLAW_BIN` | all | Absolute path to the `openclaw` CLI binary (for tool fire-and-forget) |
-| `OPENCLAW_OTEL_ENABLED` | all | Enables SigNoz / OTel export |
+| `OPENCLAW_OTEL_ENABLED` | all | Enables OTel export (shiori LGTM stack) |
 | `OPENCLAW_OTLP_ENDPOINT`, `OPENCLAW_OTLP_HEADERS` | all | OTLP traces endpoint + optional auth headers |
 | `OPENCLAW_OTEL_LOGS_ENABLED`, `OPENCLAW_OTLP_LOGS_ENDPOINT`, `OPENCLAW_OTLP_LOGS_HEADERS` | all | Optional OTLP logs overrides |
 | `OPENCLAW_OTEL_METRICS_ENABLED`, `OPENCLAW_OTLP_METRICS_ENDPOINT`, `OPENCLAW_OTLP_METRICS_HEADERS` | all | Optional OTLP metrics overrides |

@@ -20,10 +20,10 @@ superseded, add a new dated entry that references the older one.
 
 ## 2026-05-01 — Native-first for third-party integrations
 
-**Trigger:** Asked to "implement SigNoz" for OTel observability, the
+**Trigger:** Asked to "implement OTel observability" for OTel observability, the
 agent extended an existing LangSmith-era custom telemetry layer instead
-of building only the gap between LiveKit-native spans and SigNoz-native
-ingestion. Result was decorated legacy code, not a SigNoz integration.
+of building only the gap between LiveKit-native spans and what the LGTM stack
+ingestion. Result was decorated legacy code, not an OTel integration.
 
 **Lesson:** Before touching code that integrates a third-party product,
 run this checklist in order:
@@ -40,8 +40,8 @@ ships something that looks like the asked feature but isn't.
 
 ## 2026-05-01 — Do not redefine the user's ask
 
-**Trigger:** User asked "implement SigNoz." Agent shipped a refactor of
-an existing custom telemetry layer and called it "SigNoz integration."
+**Trigger:** User asked the agent to wire a vendor-neutral OTel observability backend. Agent shipped a refactor of
+an existing custom telemetry layer and called it "observability integration."
 
 **Lesson:** Implement what was asked, not what is easiest given the
 existing code. If existing code conflicts with the ask, surface that as

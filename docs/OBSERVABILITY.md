@@ -1,116 +1,78 @@
-# Observability — SigNoz (primary)
+# Observability — shiori LGTM stack
 
 This repo emits **OpenTelemetry-first** spans, logs, and metrics and
-ships them to a single primary backend: a self-hosted **SigNoz** stack
-running locally. SigNoz is the call-narrative view, the slow-tool
-microscope, the log explorer, the metrics dashboard, and the service
-map — all in one UI on your laptop.
+ships them to the fleet's primary observability backend: a self-hosted
+**LGTM stack** (Grafana + Loki + Tempo + Mimir behind an OTel
+Collector) running on `shiori.mey.house`. Grafana is the call-narrative
+view, the slow-tool microscope (Tempo), the log explorer (Loki), the
+metrics dashboard (Mimir), and the service map — all in one UI.
 
 The agent code is vendor-neutral OTLP/HTTP. To send the same data to a
 different OTel backend, point `OPENCLAW_OTLP_ENDPOINT` somewhere else —
 no code changes.
 
-> **History:** the repo previously dual-exported to LangSmith / Phoenix
-> via custom span enrichment. As of 2026-05-01 we standardized on
-> SigNoz alone and removed the custom enricher. Native LiveKit Agents
-> 1.5+ telemetry (`gen_ai.*` SemConv, `lk.*`) is sufficient on its own.
-> The LangSmith provisioning tree (`ops/langsmith/`) is preserved as an
-> archive — see `ops/langsmith/README.md` for how to reactivate it.
+> **History:** this repo previously dual-exported to LangSmith /
+> Phoenix via custom span enrichment. As of 2026-05-01 the project
+> standardized on a single OTel backend and removed the custom
+> enricher. As of 2026-05-04 the backend is the shiori LGTM stack
+> as part of the Phase 2 fleet rebuild. Native LiveKit Agents 1.5+
+> telemetry (`gen_ai.*` SemConv, `lk.*`) is sufficient on its own.
+> The LangSmith provisioning tree (`ops/langsmith/`) is preserved as
+> an archive — see `ops/langsmith/README.md` for how to reactivate it.
 
 ```
 LiveKit agents (Python, this repo)
   ├─ OTel TracerProvider ──┬─ NoiseSpanFilter (drops agent_speaking / on_enter / on_exit / ...)
-  │                        └─ BatchSpanProcessor → OTLP/HTTP → SigNoz :4318
-  └─ OTel LoggerProvider ──── BatchLogRecordProcessor → OTLP/HTTP → SigNoz :4318
+  │                        └─ BatchSpanProcessor → OTLP/HTTP → shiori:4318 → Tempo
+  └─ OTel LoggerProvider ──── BatchLogRecordProcessor → OTLP/HTTP → shiori:4318 → Loki
                                   service.name=openclaw-livekit-{nyla,aoi,party}
 
 OpenClaw Gateway (Node.js, ~/.openclaw)
-  └─ diagnostics-otel plugin ─ traces + metrics + logs ─ OTLP/HTTP → SigNoz :4318
-                                  service.name=openclaw-gateway
+  └─ diagnostics-otel plugin ─ traces + metrics + logs ─ OTLP/HTTP → shiori:4318 → Tempo/Loki/Mimir
+                                  service.name=openclaw-gateway / openclaw-nyla
 ```
 
-Both sources land in the **same** SigNoz instance, so a Discord/SMS/voice
-turn that crosses the gateway → LiveKit boundary shows up as one set of
-correlatable services in the SigNoz service map. The W3C `traceparent`
-header propagation in OpenClaw means the gateway's model-call span and
-the LiveKit agent's `llm_request` span can even share a trace_id when
-the call originates upstream.
+Both sources land in the **same** LGTM instance, so a Discord/SMS/voice
+turn that crosses the gateway → LiveKit boundary shows up as one set
+of correlatable services in the Grafana service map. The W3C
+`traceparent` header propagation in OpenClaw means the gateway's
+model-call span and the LiveKit agent's `llm_request` span can even
+share a trace_id when the call originates upstream.
 
-## TL;DR — boot the local stack
+## TL;DR — wire your agents
 
-```bash
-make signoz-up        # bootstraps ~/.signoz/signoz on first run, then docker compose up -d
-make signoz           # opens http://localhost:8080 in your browser
-```
+The shiori LGTM stack is canonically managed outside this repo (its
+compose lives at `~/Vaults/Aoi/wiki/services/observability/`).
+Assuming it's already running on shiori, all this repo needs to do is
+point its agents at it.
 
-> **First-run only**: SigNoz won't accept traces until you complete its
-> in-UI onboarding (create the admin user + organization). On a fresh
-> stack the otel-collector receives a no-op config and resets every
-> OTLP connection until that signup is done — `signoz` container logs
-> will repeatedly print `cannot create agent without orgId` until then.
-> It's a one-time, local-only step (the credentials never leave your
-> laptop).
->
-> 1. Open `http://localhost:8080`.
-> 2. Create the admin user + org through the prompted flow.
-> 3. *Then* enable the OTLP exporter on your agents (next block).
-
-In `secrets/livekit-agents.env` (already done by default for new clones):
+In `secrets/livekit-agents.env` (already done by default in
+`config/secrets.env.example`):
 
 ```bash
 OPENCLAW_OTEL_ENABLED=true
-OPENCLAW_OTLP_ENDPOINT=http://localhost:4318/v1/traces
+OPENCLAW_OTLP_ENDPOINT=http://shiori.mey.house:4318/v1/traces
 OPENCLAW_OTEL_LOGS_ENABLED=true
-OPENCLAW_DEPLOYMENT_ENVIRONMENT=production
-OPENCLAW_SERVICE_VERSION=signoz-primary
+OPENCLAW_DEPLOYMENT_ENVIRONMENT=harem-world
+OPENCLAW_SERVICE_VERSION=dev
 ```
 
 …then `make deploy`. Every span, log, and HTTP call your agents emit
-now lands in SigNoz with the same `trace_id` linking traces to logs.
+now lands in shiori with the same `trace_id` linking traces to logs.
 
 ## Wiring the OpenClaw gateway
 
-The same SigNoz stack also receives traces, metrics, and logs from the
-locally-running OpenClaw gateway (`~/.openclaw/openclaw.json` +
-`launchd:ai.openclaw.gateway`). The gateway ships its own
-`diagnostics-otel` plugin — we just turn it on and point it at our
-collector.
+The OpenClaw gateway is wired to the same shiori LGTM stack as part
+of fleet bring-up — see `~/Vaults/Aoi/wiki/services/observability.md`
+and `~/Vaults/Aoi/wiki/gotchas/openclaw-otel-bundled-gate.md` for the
+canonical procedure (`diagnostics-otel` plugin install + the runtime
+patch required for non-bundled installs of the plugin).
 
-```bash
-make signoz-wire-gateway        # apply config + restart the gateway
-make signoz-verify-gateway      # read-only check of current state
-```
-
-What this does (idempotent — re-running is safe):
-
-1. `openclaw config set diagnostics.otel.*` — endpoint
-   `http://localhost:4318`, service name `openclaw-gateway`,
-   `protocol=http/protobuf`, traces+metrics+logs all on, `sampleRate=1.0`,
-   `flushIntervalMs=60000`.
-2. `openclaw config set plugins.allow [...]` — appends `diagnostics-otel`
-   to the gateway's plugin allowlist (idempotent merge — preserves your
-   existing list).
-3. `openclaw plugins enable diagnostics-otel` — flips the enabled bit.
-4. `launchctl kickstart -k gui/<uid>/ai.openclaw.gateway` — restart the
-   gateway so the new plugin loads. Falls back to `openclaw gateway
-   restart` if the service is not under launchd.
-
-`captureContent.*` defaults to **all five subkeys on** (`inputMessages`,
-`outputMessages`, `toolInputs`, `toolOutputs`, `systemPrompt`) so the
-gateway's debugging visibility matches what the LiveKit agents already
-export. To dial it back, set `OPENCLAW_GW_CAPTURE` before running:
-
-```bash
-OPENCLAW_GW_CAPTURE=tools_only make signoz-wire-gateway   # tool I/O only
-OPENCLAW_GW_CAPTURE=none       make signoz-wire-gateway   # bounded ids only
-```
-
-After it's wired, you'll see four service entries in SigNoz' service
-map:
+Once wired, four service entries appear in the Grafana service map:
 
 | service.name              | Source                          |
 | ------------------------- | ------------------------------- |
-| `openclaw-gateway`        | `~/.openclaw` Node.js gateway   |
+| `openclaw-gateway` / `openclaw-nyla` | `~/.openclaw` Node.js gateway |
 | `openclaw-livekit-nyla`   | This repo, voice agent          |
 | `openclaw-livekit-aoi`    | This repo, voice agent          |
 | `openclaw-livekit-party`  | This repo, voice agent          |
@@ -134,7 +96,7 @@ Gateway-specific span / metric prefixes you'll see (full reference in
 
 The two sources above (LiveKit agents and OpenClaw gateway) cover the
 *application* layer. To get **host metrics**, **container metrics**,
-and **external vendor uptime** in the same SigNoz instance, run a
+and **external vendor uptime** in the same shiori instance, run a
 host-side OTel Collector via launchd. The collector is `otelcol-contrib`
 v0.151.0 from the upstream
 [opentelemetry-collector-releases](https://github.com/open-telemetry/opentelemetry-collector-releases)
@@ -149,22 +111,21 @@ make host-collector-uninstall    # remove launchd plist (binary + config preserv
 ```
 
 The collector runs **five pipelines**, each appearing as its own
-`service.name` in SigNoz:
+`service.name` in Grafana:
 
 | service.name                        | Pipeline               | What it surfaces                                                     |
 | ----------------------------------- | ---------------------- | -------------------------------------------------------------------- |
 | `host-mac`                          | `metrics/host`         | `system.cpu.*`, `system.memory.*`, `system.disk.*`, `system.network.*`, `system.filesystem.*`, `system.cpu.load_average.{1m,5m,15m}`, `system.processes.*` |
-| Each container name (8+ services)   | `metrics/docker`       | `container.cpu.*`, `container.memory.*`, `container.network.*`, `container.blockio.*` (per container; the receiver mounts `/var/run/docker.sock`) |
+| Each container name (4+ services)   | `metrics/docker`       | `container.cpu.*`, `container.memory.*`, `container.network.*`, `container.blockio.*` (per container; the receiver mounts `/var/run/docker.sock`) |
 | `httpcheck`                         | `metrics/httpcheck`    | `httpcheck.status` (per `http.url` × `http.status_code` × `http.status_class`), `httpcheck.duration`, `httpcheck.error` |
 | `openclaw-gateway` (file-side)      | `logs/openclaw`        | Tails `~/.openclaw/logs/gateway.log` + `gateway.err.log` (additive to the OTLP-pushed logs from the gateway plugin)            |
 | `openclaw-livekit-host` (file-side) | `logs/agents`          | Tails `<repo>/logs/voice/agent-*.log` + `*.err.log` (belt-and-suspenders for crashes before the agent OTel SDK initializes)    |
 
 Container metrics: the host collector uses a transform processor that
-copies `container.name` → `service.name`, so the eight containers in
-your local stack each appear as their own service node in the SigNoz
-service map (`openclaw-redis`, `openclaw-livekit-server`,
-`openclaw-livekit-sip`, `openclaw-livekit-egress`, `signoz`,
-`signoz-clickhouse`, `signoz-zookeeper-1`, `signoz-otel-collector`).
+copies `container.name` → `service.name`, so each container in your
+local stack appears as its own service node in the Grafana service map
+(`openclaw-redis`, `openclaw-livekit-server`, `openclaw-livekit-sip`,
+`openclaw-livekit-egress`).
 
 Vendor uptime: the `httpcheck` receiver pings these endpoints every 60s
 unauthenticated. The metric is "vendor responded with HTTP" — auth
@@ -182,14 +143,15 @@ The collector exposes two debug surfaces locally:
 
 ## The drill-down workflow
 
-Everything in one place. The same UI walks the call narrative *and*
-gives you the microscope.
+Everything in one place. Grafana walks the call narrative *and* gives
+you the microscope.
 
-1. **Open Traces in SigNoz**: `http://localhost:8080` → Traces.
-2. **Find the call**: filter by `service.name=openclaw-livekit-<agent>`,
-   sort by duration, pick the one you care about. Or search by
-   `session.id=<sip-call-id>` (set on the root `agent_session` span)
-   or `enduser.id=<caller-phone>` if you have either from agent logs.
+1. **Open Grafana**: `http://shiori.mey.house:3000`.
+2. **Find the call**: Explore → Tempo datasource. Filter by
+   `service.name=openclaw-livekit-<agent>`, sort by duration, pick
+   the one you care about. Or search by `session.id=<sip-call-id>`
+   (set on the root `agent_session` span) or `enduser.id=<caller-phone>`
+   if you have either from agent logs.
 3. **Inspect the parent span**: the `agent_session` span carries
    `session.id` (SIP Call-ID), `enduser.id` (caller E.164),
    `openclaw.dialed_number`, `openclaw.caller_source`,
@@ -200,13 +162,14 @@ gives you the microscope.
    → see every `http.client` child span with `http.method`, `http.url`,
    `http.status_code`, exact timings, retries, and the gap between
    calls.
-5. **Cross to logs in the same view**: SigNoz's Logs tab is filterable
-   by `trace_id` (auto-injected by `LoggingInstrumentor`). Every log
-   line your agent emitted while that span was open shows up — connection
-   warnings, retry-with-backoff messages, the actual upstream error.
-6. **(Optional) Metrics**: Service Map shows aggregate latency per
-   agent service, error rate over time, exception counts, so you can
-   tell whether a slow run was an outlier or a trend.
+5. **Cross to logs in the same view**: Grafana's split view supports
+   "Logs for this trace" — pivots the right pane to Loki filtered by
+   `trace_id`. Every log line your agent emitted while that span was
+   open shows up — connection warnings, retry-with-backoff messages,
+   the actual upstream error.
+6. **(Optional) Metrics**: the LiveKit dashboard shows aggregate
+   latency per agent service, error rate over time, exception counts,
+   so you can tell whether a slow run was an outlier or a trend.
 
 ## What's stamped on every span
 
@@ -218,12 +181,12 @@ gives you the microscope.
 | `service.namespace`       | `openclaw`                                                  |
 | `service.version`         | `$OPENCLAW_SERVICE_VERSION` (default `dev`)                 |
 | `service.instance.id`     | unique per process                                          |
-| `deployment.environment`  | `$OPENCLAW_DEPLOYMENT_ENVIRONMENT` (default `production`)   |
+| `deployment.environment`  | `$OPENCLAW_DEPLOYMENT_ENVIRONMENT` (default `harem-world`)  |
 | `host.name`               | hostname                                                    |
 | `process.pid`             | OS pid                                                      |
 
-SigNoz's Service Map groups by `service.name`; the environment selector
-groups by `deployment.environment`.
+Grafana's Tempo service-graph groups by `service.name`; the environment
+selector groups by `deployment.environment`.
 
 ### Span attributes (per-event)
 
@@ -260,7 +223,8 @@ When a tool raises or the session aborts, the active span gets:
 * `Status.ERROR`
 * `span.record_exception(err)` — adds the stack trace as a span event
 
-SigNoz's Exceptions tab aggregates these by exception type per service.
+Tempo's span-list view filters on `status.code=error`; pair with the
+LiveKit dashboard's error-rate panel for aggregate views.
 
 ## Auto-instrumented HTTP
 
@@ -277,9 +241,9 @@ Three instrumentors are wired automatically when
 Every outbound HTTP call your agent makes (Musubi v2, gateway, weather,
 LLM/TTS provider) becomes a child `http.client` span with `http.method`,
 `http.url`, `http.status_code`, and timings, plus an
-`http.client.duration` histogram entry. That's how the SigNoz
-"why was tool X slow" workflow works and how the LiveKit dashboard's
-"HTTP Request Duration" panel populates.
+`http.client.duration` histogram entry. That's how the "why was tool X
+slow" workflow works and how the LiveKit Grafana dashboard's "HTTP
+Request Duration" panel populates.
 
 ## Audio recording
 
@@ -291,107 +255,43 @@ have:
   `${LIVEKIT_EGRESS_HOST_RECORDINGS_DIR}/<agent>/<call_sid>.ogg`.
 * The agent stamps the active call span with `openclaw.audio.path`
   and, when configured, `openclaw.audio.url` so the recording is one
-  click away in SigNoz.
+  click away in Grafana.
 
-If you set the public base URL, SigNoz shows it as a clickable link.
+If you set the public base URL, Grafana shows it as a clickable link.
 Without one, you'll see the local filesystem path and can `open` it
 from a terminal.
 
-## Managing the SigNoz stack
+## Managing the LGTM stack
 
-| Command                              | What it does                                                       |
-| ------------------------------------ | ------------------------------------------------------------------ |
-| `make signoz-up`                     | Clone (first run only) + `docker compose up -d`                    |
-| `make signoz`                        | Open `http://localhost:8080`                                       |
-| `make signoz-status`                 | `docker compose ps`                                                |
-| `make signoz-logs ARGS=<service>`    | Follow logs (`signoz`, `clickhouse`, `otel-collector`, ...)        |
-| `make signoz-down`                   | Stop containers, **preserve data**                                 |
-| `make signoz-update`                 | `git pull` upstream SigNoz; rerun `signoz-up` to apply             |
-| `make signoz-nuke`                   | `docker compose down -v` — **deletes all data**                    |
+The shiori LGTM stack itself is **not** managed from this repo.
+Canonical compose + collector config + dashboards live at:
 
-The clone target is `${OPENCLAW_SIGNOZ_HOME:-~/.signoz/signoz}`. SigNoz
-runs on its own Docker network (`signoz-net`), so it doesn't conflict
-with the LiveKit compose stack.
-
-### Resource footprint
-
-SigNoz's full stack uses ~6 containers: ClickHouse, Zookeeper,
-query-service+UI, OTel collector, schema-migrator. Plan for ~2 GB RAM
-at idle and a few GB of disk for ClickHouse over time.
-
-If your dev machine is tight, run `make signoz-down` between sessions
-— state survives, RAM is freed.
-
-### Pinning a version
-
-The clone tracks `main` by default. To pin a release:
-
-```bash
-OPENCLAW_SIGNOZ_REF=v0.69.0 make signoz-up
+```
+~/Vaults/Aoi/wiki/services/observability/
+├── compose.yml              — Loki, Tempo, Mimir, Grafana, OTel Collector
+├── config/
+│   ├── loki/loki-config.yml
+│   ├── tempo/tempo-config.yml
+│   ├── mimir/mimir-config.yml
+│   ├── grafana/{datasources,dashboards}.yml
+│   └── otel-collector/otel-collector-config.yml
+└── dashboards/              — Grafana dashboard JSONs (auto-provisioned)
 ```
 
-Or set `OPENCLAW_SIGNOZ_REF` in your shell rc.
-
-## Importing dashboards into SigNoz
-
-The repo ships **three** dashboard JSONs in `ops/signoz/dashboards/`,
-each copied verbatim from the
-[upstream SigNoz dashboards repo](https://github.com/SigNoz/dashboards).
-We deliberately do not ship custom dashboards; native templates work
-because LiveKit emits the attributes they expect.
-
-| Dashboard                          | Audience      | Drill purpose                                                                  |
-| ---------------------------------- | ------------- | ------------------------------------------------------------------------------ |
-| `livekit-dashboard.json`           | Voice agents  | Tokens, models, error rate, P95 latency, TTS duration, conversation analytics. |
-| `hostmetrics-dashboard.json`       | Host (macOS)  | CPU / memory / disk / network / load average / processes.                      |
-| `container-metrics-dashboard.json` | Docker        | Per-container CPU / memory / network / blockio for the SigNoz + LiveKit stacks.|
-
-To import all three at once (one-time, after SigNoz first-run UI signup):
+The compose runs as `cd /opt/observability && docker compose up -d`
+on shiori. To restart a single component:
 
 ```bash
-SIGNOZ_USER=you@example.com \
-SIGNOZ_PASS='...' \
-make signoz-import-dashboards
+ssh shiori.mey.house "cd /opt/observability && docker compose restart <service>"
 ```
 
-The script POSTs every `*.json` in `ops/signoz/dashboards/` to
-`http://localhost:8080/api/v1/dashboards`. SigNoz dedupes by title,
-so a second run is a safe no-op.
-
-The LiveKit dashboard maps cleanly onto the spans the framework emits —
-every panel populates without code changes:
-
-| Panel                                | Trace filter                                              |
-| ------------------------------------ | --------------------------------------------------------- |
-| Input / Output Tokens, Token Usage   | `name=llm_request` + `gen_ai.usage.*`                     |
-| Model Distribution                   | `gen_ai.request.model` (groupBy)                          |
-| Error Rate, Errors                   | `has_error=true`                                          |
-| Agent Response Latency (P95)         | `name=agent_turn` duration                                |
-| Number of Conversations / Avg Turns  | `name=agent_turn` count per `trace_id`                    |
-| TTS Duration                         | `name=tts_node` duration                                  |
-| Services and Languages               | `name=job_entrypoint`, groupBy `service.name`, lang       |
-| HTTP Request Duration                | `http.client.duration` histogram (OTel HTTP instrumentor) |
-| Logs                                 | `service.name` (OTel logs)                                |
-
-Or paste any JSON manually via the SigNoz UI:
-**Dashboards → + New dashboard → Import JSON** → pick a file from
-`ops/signoz/dashboards/`.
-
-To pull updates from upstream:
-
-```bash
-curl -fsSL "https://raw.githubusercontent.com/SigNoz/dashboards/main/livekit/livekit-dashboard.json" \
-  -o ops/signoz/dashboards/livekit-dashboard.json
-make signoz-import-dashboards
-```
-
-Roll your own panels by querying ClickHouse directly via the SigNoz
-Query Builder; the relevant tables are `signoz_traces.signoz_index_v3`
-and `signoz_logs.logs_v2`.
+Resource footprint on shiori: ~1.5 GB RAM at idle for the full LGTM
+stack. Storage scales with retention (default Mimir retention: 14d;
+Loki: 7d; Tempo: 24h). Tune in the per-component config files.
 
 ## Switching backends
 
-Nothing in the agent code is SigNoz-specific — it's plain OTLP/HTTP.
+Nothing in the agent code is shiori-specific — it's plain OTLP/HTTP.
 To send the same data somewhere else:
 
 1. Stand up a collector (or use the vendor's OTLP endpoint directly).
@@ -414,19 +314,26 @@ Quick smoke test:
 # 1. agents are up + sending
 make health
 
-# 2. agent env carries the SigNoz config
+# 2. agent env carries the OTel config
 launchctl print "gui/$(id -u)/ai.openclaw.livekit-agent-nyla" \
   | grep OPENCLAW_OTEL
 
-# 3. SigNoz collector accepted traces
-docker logs signoz-otel-collector 2>&1 | tail -30
+# 3. Mimir has metrics for our service
+curl -sS 'http://shiori.mey.house:9009/prometheus/api/v1/label/service_name/values' | jq
 
-# 4. ClickHouse has spans for our service
-docker exec signoz-clickhouse clickhouse-client --query \
-  "SELECT serviceName, name, count() FROM signoz_traces.signoz_index_v3 \
-   WHERE timestamp > now() - INTERVAL 5 MINUTE \
-   GROUP BY serviceName, name ORDER BY count() DESC"
+# 4. Loki has logs for our service (last 5 min)
+curl -sS -G 'http://shiori.mey.house:3100/loki/api/v1/query_range' \
+  --data-urlencode 'query={service_name="openclaw-livekit-nyla"}' \
+  --data-urlencode 'limit=5' \
+  --data-urlencode "start=$(($(date +%s) - 300))000000000" | jq
+
+# 5. Tempo has traces (via Grafana Explore)
+#    Open http://shiori.mey.house:3000 → Explore → Tempo
+#    Service: openclaw-livekit-nyla
 ```
 
-If the third query returns rows for `openclaw-livekit-nyla` /
-`openclaw-livekit-aoi` / `openclaw-livekit-party`, you're done.
+If the Mimir query returns `openclaw-livekit-nyla` in `service_name`,
+the metrics pipeline is healthy. If Loki returns recent stream entries,
+the logs pipeline is healthy. If Tempo Explore shows recent traces,
+the traces pipeline is healthy. The three pipelines are independent —
+verifying each gives a complete picture.

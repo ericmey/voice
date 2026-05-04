@@ -1,17 +1,17 @@
 """OpenTelemetry tracing, logs, and metrics for the OpenClaw voice agents.
 
-SigNoz is the only configured backend. The setup mirrors the
-`SigNoz LiveKit observability guide
-<https://signoz.io/docs/livekit-observability>`_ verbatim and relies on
-LiveKit Agents 1.5+ emitting native ``gen_ai.*`` semantic-convention
-attributes plus ``lk.*`` LiveKit-specific attributes. We add no span
-enrichment beyond:
+The configured backend is the fleet's LGTM stack on shiori
+(Grafana + Loki + Tempo + Mimir behind an OTel Collector). The setup
+relies on LiveKit Agents 1.5+ emitting native ``gen_ai.*``
+semantic-convention attributes plus ``lk.*`` LiveKit-specific
+attributes. We add no span enrichment beyond:
 
 * :class:`NoiseSpanFilter` — drops the few LiveKit spans that are pure
   UI noise (``agent_speaking``, ``user_speaking``, ``drain_agent_activity``,
-  ``on_enter``, ``on_exit``) so the trace tree stays readable. SigNoz has
-  no built-in span-name dropper; this is the minimum custom code needed
-  to keep the call view focused on conversation content.
+  ``on_enter``, ``on_exit``) so the trace tree stays readable. The Tempo /
+  Grafana stack has no built-in span-name dropper; this is the minimum
+  custom code needed to keep the call view focused on conversation
+  content.
 * :func:`attach_current_span_metadata` — stamps SIP / caller identity
   onto the active ``agent_session`` span as standard OTel SemConv
   attributes (``session.id``, ``enduser.id``) plus a small set of
@@ -19,12 +19,17 @@ enrichment beyond:
   ``openclaw.caller_source`` / ``openclaw.lk_job_id``) not covered by
   SemConv.
 
+The exporter speaks generic OTLP/HTTP, so any OTLP backend works
+without code changes — point ``OPENCLAW_OTLP_ENDPOINT`` at a different
+collector if the topology ever shifts.
+
 Configuration:
 
 * ``OPENCLAW_OTEL_ENABLED=true`` — master switch.
-* ``OPENCLAW_OTLP_ENDPOINT`` / ``OPENCLAW_OTLP_HEADERS`` — SigNoz OTLP/HTTP
-  endpoint (e.g. ``https://ingest.<region>.signoz.cloud:443``) and headers
-  (e.g. ``signoz-ingestion-key=<key>``).
+* ``OPENCLAW_OTLP_ENDPOINT`` / ``OPENCLAW_OTLP_HEADERS`` — OTLP/HTTP
+  endpoint (default in this fleet: ``http://shiori.mey.house:4318``)
+  and any auth headers required by the backend (none for the
+  shiori LGTM stack on the internal VLAN).
 * ``OPENCLAW_OTEL_DEBUG=true`` — adds a ConsoleSpanExporter for local diag.
 * ``OPENCLAW_OTEL_HTTP_INSTRUMENTATION=false`` — disable HTTP auto-instr.
 * ``OPENCLAW_OTEL_VERBOSE=true`` — keep the noise spans in the trace tree.
@@ -61,7 +66,7 @@ _instance_id = uuid.uuid4().hex
 # is set. ``agent_speaking`` / ``user_speaking`` mark TTS playback and
 # user audio capture, not conversation events; ``on_enter`` / ``on_exit``
 # / ``drain_agent_activity`` are framework lifecycle hooks. None contain
-# fields the SigNoz LiveKit dashboard queries.
+# fields any of our LiveKit dashboards in Grafana query.
 _NOISE_SPAN_NAMES = frozenset(
     {
         "agent_speaking",
@@ -166,7 +171,7 @@ def setup_otel_tracing() -> None:
     _provider = provider
     _initialized = True
     _debug(f"[OTEL-SETUP] pid={pid} ENABLED resource={dict(provider.resource.attributes)}")
-    logger.info("OTel tracing enabled (SigNoz)")
+    logger.info("OTel tracing enabled (shiori LGTM stack)")
 
 
 def force_flush_otel_tracing(timeout_millis: int = 10000) -> bool:
@@ -312,7 +317,7 @@ def _agent_name() -> str:
 
 
 def _build_resource() -> Any:
-    """Identify this process to SigNoz."""
+    """Identify this process to the OTLP backend (e.g. shiori)."""
     from opentelemetry.sdk.resources import (
         DEPLOYMENT_ENVIRONMENT,
         HOST_NAME,
@@ -351,7 +356,7 @@ def _add_otlp_exporter(provider: Any) -> bool:
     endpoint = os.environ.get("OPENCLAW_OTLP_ENDPOINT")
     headers = _parse_headers(os.environ.get("OPENCLAW_OTLP_HEADERS"))
     if not endpoint:
-        logger.warning("OPENCLAW_OTLP_ENDPOINT not set — SigNoz exporter disabled")
+        logger.warning("OPENCLAW_OTLP_ENDPOINT not set — OTLP exporter disabled")
         return False
 
     batch = BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, headers=headers))
@@ -383,7 +388,7 @@ def _parse_headers(raw: str | None) -> dict[str, str] | None:
 def _install_http_instrumentation(provider: Any) -> None:
     """Auto-instrument outbound HTTP for ``http.client`` spans + duration metric.
 
-    ``http.client.duration`` is the metric the SigNoz LiveKit dashboard's
+    ``http.client.duration`` is the metric our LiveKit Grafana dashboard's
     "HTTP Request Duration" panel reads. Three instrumentors cover the
     libraries the LiveKit plugins use:
 
@@ -459,7 +464,7 @@ def _install_logs_pipeline(resource: Any) -> None:
          ``otelServiceName`` into every Python LogRecord so JSON log files
          cross-correlate with traces.
       2. An ``LoggingHandler`` fans every record into the OTel logs SDK,
-         which batches and exports via OTLPLogExporter to SigNoz.
+         which batches and exports via OTLPLogExporter to the OTLP backend (Loki on shiori).
 
     The handler is filtered to exclude OTel-internal HTTP/exporter
     loggers (see :data:`_OTEL_INTERNAL_LOGGER_PREFIXES`) — without that
@@ -526,7 +531,7 @@ def _metrics_enabled() -> bool:
 
 
 def _install_metrics_pipeline(resource: Any) -> None:
-    """Wire OTel metrics SDK + OTLP exporter so SigNoz dashboards work.
+    """Wire OTel metrics SDK + OTLP exporter so Grafana dashboards (Mimir-backed) work.
 
     Lights up:
       * ``http.client.duration`` (auto from httpx/aiohttp/requests

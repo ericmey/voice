@@ -9,9 +9,6 @@ SHELL := /usr/bin/env bash
         deploy teardown cycle \
         register-sip tail truncate-logs \
         sync-venvs lint typecheck verify \
-        signoz-up signoz-down signoz-status signoz-logs signoz signoz-update signoz-nuke \
-        signoz-import-dashboards \
-        signoz-wire-gateway signoz-verify-gateway signoz-admin \
         host-collector-install host-collector-restart host-collector-status \
         host-collector-logs host-collector-uninstall
 
@@ -71,52 +68,17 @@ tail: ## Follow all three agent logs with color-coded prefix
 truncate-logs: ## Zero out all agent logs (clean baseline for testing)
 	scripts/truncate-logs.sh
 
-# ---- SigNoz (primary observability stack — traces+logs+metrics) ----
-
-signoz-up: ## Start SigNoz locally (clones to ~/.signoz on first run, then docker compose up)
-	scripts/signoz.sh up
-
-signoz-down: ## Stop SigNoz containers (data volumes preserved)
-	scripts/signoz.sh down
-
-signoz-status: ## docker compose ps for the SigNoz stack
-	scripts/signoz.sh status
-
-signoz-logs: ## Follow SigNoz container logs (pass ARGS=<service> to scope)
-	scripts/signoz.sh logs $(ARGS)
-
-signoz: ## Open the SigNoz UI in your default browser (http://localhost:8080)
-	scripts/signoz.sh open
-
-signoz-update: ## Pull the latest SigNoz upstream (run signoz-up afterward to apply)
-	scripts/signoz.sh update
-
-signoz-nuke: ## DELETE all SigNoz data (ClickHouse + sqlite + zookeeper volumes)
-	scripts/signoz.sh nuke
-
-signoz-import-dashboards: ## Import ops/signoz/dashboards/*.json into local SigNoz (autoloads secrets/signoz.env if present)
-	@if [ -f secrets/signoz.env ]; then \
-		set -a; . ./secrets/signoz.env; set +a; \
-		scripts/signoz-import-dashboards.sh; \
-	else \
-		scripts/signoz-import-dashboards.sh; \
-	fi
-
-signoz-wire-gateway: ## Wire the OpenClaw gateway's diagnostics-otel plugin into local SigNoz (idempotent; restarts the gateway)
-	scripts/signoz-wire-gateway.sh
-
-signoz-verify-gateway: ## Print current gateway diagnostics.otel config + plugin status (read-only)
-	scripts/signoz-wire-gateway.sh --verify
-
-signoz-admin: ## Raw curl wrapper against the SigNoz admin API. ARGS='METHOD PATH [body]'  e.g. ARGS='GET /api/v1/dashboards'
-	@if [ -z "$(ARGS)" ]; then \
-		echo "usage: make signoz-admin ARGS='GET /api/v1/dashboards'"; \
-		exit 2; \
-	fi; \
-	scripts/signoz-admin.sh $(ARGS)
+# ---- Observability backend ----------------------------------------
+#
+# This project ships traces / logs / metrics over OTLP/HTTP to the
+# fleet's LGTM stack on shiori (Grafana + Loki + Tempo + Mimir + OTel
+# Collector). The collector is bind-managed in the
+# ~/Vaults/Aoi/wiki/services/observability/ canonical compose, NOT in
+# this repo. Configure the agents via OPENCLAW_OTLP_ENDPOINT (default
+# http://shiori.mey.house:4318). See docs/OBSERVABILITY.md.
 
 # ---- Host-side OTel Collector (hostmetrics + dockerstats + httpcheck + filelog)
-host-collector-install: ## Download otelcol-contrib + bootstrap launchd job exporting host/docker/vendor telemetry to SigNoz
+host-collector-install: ## Download otelcol-contrib + bootstrap launchd job exporting host/docker/vendor telemetry to shiori
 	scripts/install-host-otel-collector.sh
 
 host-collector-restart: ## Re-render configs and bootstrap the launchd job (picks up template changes)

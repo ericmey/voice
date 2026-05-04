@@ -4,7 +4,8 @@ Loads ``./.env`` (next to the agent script) for agent-specific knobs.
 In production, the launchd plist exports all vars directly before
 spawning the worker, so .env files are a dev-mode convenience.
 
-Also wires SigNoz OTel tracing if ``OPENCLAW_OTEL_ENABLED=true`` — the
+Also wires OTel tracing (default backend: shiori LGTM stack) if
+``OPENCLAW_OTEL_ENABLED=true`` — the
 hook lives here because every agent calls ``load_env()`` at module
 top, before LiveKit's ``AgentServer`` is instantiated. LiveKit caches
 the tracer provider at server-construction time; missing this window

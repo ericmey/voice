@@ -1,4 +1,4 @@
-"""Tests for :mod:`sdk.tracing` — SigNoz-only OTel setup.
+"""Tests for :mod:`sdk.tracing` — OTLP/HTTP setup (default backend: shiori LGTM).
 
 Pin the contract:
 
@@ -154,7 +154,7 @@ def _fake_span(name: str) -> ReadableSpan:
 
 def test_noise_filter_drops_named_spans_by_default(monkeypatch) -> None:
     """Default mode: TTS-playback and lifecycle spans get suppressed so
-    the SigNoz trace tree only shows conversation content."""
+    the Tempo / Grafana trace tree only shows conversation content."""
     monkeypatch.delenv("OPENCLAW_OTEL_VERBOSE", raising=False)
     downstream = MagicMock()
     f = tracing.NoiseSpanFilter(downstream)

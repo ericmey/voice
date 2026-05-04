@@ -126,7 +126,7 @@ For a full-repo rollback, `git revert` the offending commit on main.
 - `make health` on demand — intentionally minimal, exits non-zero.
 - `scripts/tail-logs.sh` for live watching with `--grep` filtering.
 - `docker compose logs -f` for the infrastructure tier.
-- [OBSERVABILITY.md](OBSERVABILITY.md) for SigNoz tracing, logs, metrics,
+- [OBSERVABILITY.md](OBSERVABILITY.md) for OTel tracing (shiori LGTM stack), logs, metrics,
   dashboard import, host collector, and audio recording links.
 
 ### Future (not yet wired)

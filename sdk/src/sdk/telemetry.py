@@ -16,9 +16,9 @@ session close. If ``LIVEKIT_VOICE_LOGS`` is unset, capture is a no-op.
 
 This file is the primary input to ``postcall.py`` (post-call review). It
 is written off the OTel pipeline by design — OTel spans cover the
-SigNoz trace tree, this JSON covers the analyst's per-call ground truth.
-LiveKit Agents emits all the OTel spans / attributes the SigNoz LiveKit
-dashboard needs natively; we add no enrichment.
+Tempo / Grafana trace tree, this JSON covers the analyst's per-call
+ground truth. LiveKit Agents emits all the OTel spans / attributes our
+LiveKit Grafana dashboard needs natively; we add no enrichment.
 """
 
 from __future__ import annotations

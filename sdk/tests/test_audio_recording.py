@@ -24,7 +24,7 @@ def test_enabled_default_false(monkeypatch) -> None:
 
 
 def test_enabled_legacy_alias_no_longer_honored(monkeypatch) -> None:
-    """LANGSMITH_ATTACH_AUDIO was retired alongside the SigNoz refactor.
+    """LANGSMITH_ATTACH_AUDIO was retired alongside the OTel refactor.
     Operators must use OPENCLAW_RECORD_AUDIO; the old alias is silently
     ignored so a stale .env file can't accidentally re-enable recording."""
     monkeypatch.delenv("OPENCLAW_RECORD_AUDIO", raising=False)

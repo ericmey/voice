@@ -87,7 +87,7 @@
       <string>{{OPENAI_API_KEY}}</string>
       <key>ELEVENLABS_API_KEY</key>
       <string>{{ELEVENLABS_API_KEY}}</string>
-      <!-- OpenTelemetry → SigNoz (single configured backend).
+      <!-- OpenTelemetry → shiori LGTM stack (default backend; OTLP-generic, any backend works).
            Master switch: OPENCLAW_OTEL_ENABLED=true. Every LiveKit
            framework span and outbound HTTP call ships to whatever
            OPENCLAW_OTLP_ENDPOINT points at. See docs/OBSERVABILITY.md. -->
