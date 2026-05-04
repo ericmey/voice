@@ -46,10 +46,14 @@ record() {
 }
 
 # ---- redis ---------------------------------------------------------
-if redis-cli -h 127.0.0.1 -p 6379 ping 2>/dev/null | grep -q PONG; then
-  record "redis" ok "PONG"
+if command -v redis-cli >/dev/null 2>&1 \
+  && redis-cli -h 127.0.0.1 -p 6379 ping 2>/dev/null | grep -q PONG; then
+  record "redis" ok "PONG via host redis-cli"
+elif command -v docker >/dev/null 2>&1 \
+  && docker exec openclaw-redis redis-cli ping 2>/dev/null | grep -q PONG; then
+  record "redis" ok "PONG via openclaw-redis container"
 else
-  record "redis" fail "no PONG on 127.0.0.1:6379"
+  record "redis" fail "no PONG via host redis-cli or openclaw-redis container"
 fi
 
 # ---- livekit-server -----------------------------------------------
