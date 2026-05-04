@@ -150,6 +150,9 @@ async def test_shared_session_reuses_keepalive_session(monkeypatch: pytest.Monke
             self.kwargs = kwargs
             self.closed = False
 
+        async def close(self) -> None:
+            self.closed = True
+
     monkeypatch.setattr(musubi_v2_client.aiohttp, "TCPConnector", FakeConnector)
     monkeypatch.setattr(musubi_v2_client.aiohttp, "ClientSession", FakeClientSession)
     musubi_v2_client._shared_sessions.clear()
@@ -164,6 +167,57 @@ async def test_shared_session_reuses_keepalive_session(monkeypatch: pytest.Monke
     # isinstance so pyright sees the fake's ``.kwargs`` attribute.
     assert isinstance(first, FakeClientSession)
     assert first.kwargs["connector"].kwargs["limit"] == 20
+
+
+@pytest.mark.asyncio
+async def test_close_shared_sessions_closes_and_clears(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeConnector:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    class FakeClientSession:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+            self.closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr(musubi_v2_client.aiohttp, "TCPConnector", FakeConnector)
+    monkeypatch.setattr(musubi_v2_client.aiohttp, "ClientSession", FakeClientSession)
+    musubi_v2_client._shared_sessions.clear()
+
+    session = musubi_v2_client._shared_session_for(2.0)
+    await musubi_v2_client.close_shared_sessions()
+
+    assert isinstance(session, FakeClientSession)
+    assert session.closed is True
+    assert musubi_v2_client._shared_sessions == {}
+
+
+@pytest.mark.asyncio
+async def test_wire_musubi_v2_shutdown_registers_job_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called = False
+
+    async def fake_close_shared_sessions() -> None:
+        nonlocal called
+        called = True
+
+    class _Ctx:
+        callback: Any = None
+
+        def add_shutdown_callback(self, callback: Any) -> None:
+            self.callback = callback
+
+    monkeypatch.setattr(musubi_v2_client, "close_shared_sessions", fake_close_shared_sessions)
+    ctx = _Ctx()
+
+    musubi_v2_client.wire_musubi_v2_shutdown(ctx)
+    await ctx.callback("job_shutdown")
+
+    assert called is True
 
 
 # ---------------------------------------------------------------------------

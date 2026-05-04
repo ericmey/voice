@@ -11,9 +11,8 @@ from sdk.trace import trace
 
 logger = logging.getLogger("openclaw-livekit.agent")
 
-# Shared TCP connector for NWS weather calls — avoids TCP handshake per
-# request while keeping sessions scoped to individual requests (no cross-
-# event-loop or unclosed-session issues). The connector is closed at exit.
+# Shared TCP connector for NWS weather calls. Sessions are scoped to
+# individual requests, so there is no module-level ClientSession to close.
 _weather_connector: aiohttp.TCPConnector | None = None
 
 
@@ -24,10 +23,9 @@ def _shared_weather_connector() -> aiohttp.TCPConnector:
     return _weather_connector
 
 
-# Connector cleanup: TCPConnector.close() may be typed as async in some
-# aiohttp stub versions. We skip atexit cleanup — the OS reclaims sockets
-# on process exit, and per-request sessions (which reference this connector)
-# are properly closed after each call.
+# Connector cleanup: each per-request ClientSession owns and closes the
+# connector it used. The module-level reference is replaced on the next
+# call if that connector is closed.
 
 
 class CoreToolsMixin(Agent):

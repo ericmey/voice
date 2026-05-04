@@ -13,6 +13,7 @@ from _shared import NylaAgent, build_model, build_tools, load_env_once, load_per
 from livekit.agents import AgentSession, JobContext, cli
 from livekit.agents.voice.room_io import RoomOptions
 from livekit.agents.worker import AgentServer
+from sdk.musubi_v2_client import wire_musubi_v2_shutdown
 from sdk.postcall import wire_postcall_review
 from sdk.telemetry import wire_telemetry_capture
 from sdk.telephony import resolve_caller
@@ -68,6 +69,7 @@ async def entrypoint_text(ctx: JobContext) -> None:
     if call_sid:
         wire_postcall_review(session, call_sid, agent_name="phone-nyla-text")
     wire_otel_shutdown_flush(ctx)
+    wire_musubi_v2_shutdown(ctx)
     await session.start(
         agent=agent,
         room=ctx.room,

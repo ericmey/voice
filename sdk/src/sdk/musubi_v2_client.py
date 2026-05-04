@@ -72,6 +72,34 @@ def _shared_session_for(timeout_s: float) -> aiohttp.ClientSession:
     return session
 
 
+async def close_shared_sessions() -> None:
+    """Close all event-loop-local shared HTTP sessions."""
+    sessions = list(_shared_sessions.values())
+    _shared_sessions.clear()
+    for session in sessions:
+        if session.closed:
+            continue
+        try:
+            await session.close()
+        except Exception as exc:
+            logger.warning("Musubi v2 session close failed: %s", exc)
+
+
+def wire_musubi_v2_shutdown(ctx: Any) -> None:
+    """Register a LiveKit job shutdown hook for Musubi v2 HTTP sessions."""
+    add_shutdown_callback = getattr(ctx, "add_shutdown_callback", None)
+    if add_shutdown_callback is None:
+        return
+
+    async def _close_musubi_v2(*_args: Any) -> None:
+        await close_shared_sessions()
+
+    try:
+        add_shutdown_callback(_close_musubi_v2)
+    except Exception as exc:
+        logger.warning("Musubi v2 shutdown hook registration failed: %s", exc)
+
+
 @dataclass(frozen=True)
 class MusubiV2ClientConfig:
     """Client-level config. Resolved from env by default; tests pass
@@ -445,7 +473,9 @@ __all__ = [
     "MusubiV2ServerError",
     "MusubiV2TimeoutError",
     "capture_memory",
+    "close_shared_sessions",
     "list_episodic",
     "retrieve",
     "send_thought",
+    "wire_musubi_v2_shutdown",
 ]

@@ -12,10 +12,8 @@ import aiohttp
 MUSUBI_COLLECTION = "musubi_memories"
 MUSUBI_TIMEOUT_S = 0.5  # hard 500ms budget — same as vcr's musubi-client.ts
 
-# Shared TCP connector for embedding calls — reused across memory_store
-# invocations to avoid TCP handshake overhead, while keeping sessions
-# scoped to individual requests (no cross-event-loop issues). Closed at
-# process exit via atexit.
+# Shared TCP connector for embedding calls. Sessions are scoped to
+# individual requests, so there is no module-level ClientSession to close.
 _embed_connector: aiohttp.TCPConnector | None = None
 
 
@@ -26,10 +24,9 @@ def _shared_embed_connector() -> aiohttp.TCPConnector:
     return _embed_connector
 
 
-# Connector cleanup: TCPConnector.close() may be typed as async in some
-# aiohttp stub versions. We skip atexit cleanup — the OS reclaims sockets
-# on process exit, and per-request sessions (which reference this connector)
-# are properly closed after each call.
+# Connector cleanup: each per-request ClientSession owns and closes the
+# connector it used. The module-level reference is replaced on the next
+# call if that connector is closed.
 
 
 def qdrant_url() -> str:
