@@ -22,7 +22,7 @@ exposes them to the voice model as callable tools.
 | `musubi_recent` | [memory.py](src/tools/memory.py) | `MusubiToolsMixin` | Recent voice-channel memories (recency-ordered, agent-tag filtered) | `limit=10` |
 | `musubi_search` | [memory.py](src/tools/memory.py) | `MusubiToolsMixin` | Cross-channel hybrid retrieve (`<tenant>/*/episodic`, deep mode, includes provisional) | `query`, `limit=5` |
 | `musubi_remember` | [memory.py](src/tools/memory.py) | `MusubiToolsMixin` | Persist a memory for future recall (canonical Musubi episodic) | `content`, `topics=[]`, `importance=7` |
-| `musubi_think` | [memory.py](src/tools/memory.py) | `MusubiToolsMixin` | Presence-to-presence thought delivery (canonical API) | `to_agent`, `content`, `channel="default"` |
+| `musubi_think` | [memory.py](src/tools/memory.py) | `MusubiToolsMixin` | Presence-to-presence thought delivery (canonical API) | `to_presence`, `content`, `channel="default"` |
 | `sessions_send` | [sessions.py](src/tools/sessions.py) | `SessionsToolsMixin` | Send a task/message to another AI agent | `agent_id`, `message`, `deliver_to="room"` |
 | `sessions_spawn` | [sessions.py](src/tools/sessions.py) | `SessionsToolsMixin` | Spawn a new agent session to handle a task | `agent_id`, `task`, `deliver_to="room"` |
 | `academy_selfie` | [academy.py](src/tools/academy.py) | `AcademyToolsMixin` | Request a selfie of the speaking agent from Mizuki | `mood`, `nsfw=False` |

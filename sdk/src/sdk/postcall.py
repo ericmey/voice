@@ -269,7 +269,7 @@ def build_review_task(
             "   - **Any prompt_suggestions in your review** → append a row to `prompt_changelog.md` with status `pending`",
             "",
             "3. **Escalation** (only if triggered):",
-            "   - **Score < 4** → Post to Discord (account: rin, channel: 1480975834150866956) with: call SID, score, top issue, and what you're investigating. Tag Eric.",
+            "   - **Score < 4** → Post to the configured review/escalation Discord target with: call SID, score, top issue, and what you're investigating.",
             "   - **Same issue type in 3+ consecutive calls** → Send a Musubi thought to `aoi-terminal` with a fix brief: what's broken, how often, and your recommended fix.",
             "   - **Critical severity** → Do both of the above regardless of score.",
             "",

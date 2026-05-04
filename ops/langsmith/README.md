@@ -1,10 +1,8 @@
 # LangSmith — infrastructure as code (archived)
 
-> **Status (2026-05-01): archived.** The repo standardized on the
-> shiori LGTM stack (Grafana + Loki + Tempo + Mimir behind an OTel
-> Collector) as the only configured observability backend. The agent
-> SDK no
-> longer dual-exports to LangSmith — see `docs/LANGSMITH.md` for
+> **Status (2026-05-01): archived.** The repo standardized on
+> vendor-neutral OTLP/HTTP as the active observability path. The agent
+> SDK no longer dual-exports to LangSmith — see `docs/LANGSMITH.md` for
 > the reactivation pathway (local OTel collector fan-out, or revert
 > the deletion of `sdk/src/sdk/livekit_otel_enricher.py`).
 >

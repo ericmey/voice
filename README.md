@@ -30,10 +30,8 @@ Every Python package is a uv workspace member declared in the root
 ## Quickstart
 
 ```bash
-# Clone into ~/Projects/
-mkdir -p ~/Projects
-git clone git@github.com:ericmey/openclaw-livekit.git ~/Projects/openclaw-livekit
-cd ~/Projects/openclaw-livekit
+git clone <repo-url> openclaw-livekit
+cd openclaw-livekit
 
 # First time on a new machine
 make bootstrap
@@ -78,8 +76,9 @@ make health                 # verify everything is green
 
 ## Status
 
-Personal project, running in my house. Shared publicly for reference and
-portfolio. Not actively maintained as an open-source community project.
+Personal project shared publicly for reference. Real deployment requires
+your own LiveKit, SIP, provider API, Discord/OpenClaw, Musubi, and OTLP
+configuration.
 
 ## License
 

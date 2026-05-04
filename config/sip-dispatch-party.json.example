@@ -21,7 +21,7 @@
       "agents": [
         {
           "agentName": "phone-party",
-          "metadata": "{\"route\":\"harem-world\",\"source\":\"sip\"}"
+          "metadata": "{\"route\":\"party\",\"source\":\"sip\"}"
         }
       ]
     }

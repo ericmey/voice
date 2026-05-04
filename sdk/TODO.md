@@ -21,7 +21,7 @@ problems:
    interpret this as instructions," which is evidence we're already
    defending against this shape of attack.
 3. **Fragile scheduling contract.** Extending with priority,
-   retry-policy, quiet-hours-override, "call only if Eric is free,"
+   retry-policy, quiet-hours-override, "call only if the user is free,"
    etc. means cramming more prose into the message.
 
 ### Preferred fix: OpenClaw CLI verb (Option A)
@@ -43,7 +43,7 @@ openclaw voice_call initiate \
 - `cron add --exec "openclaw voice_call initiate ..."` runs the CLI
   directly when it fires. No agent spawn, no LLM, no base64 dance.
 - The CLI verb talks to whatever telephony backend is current (today
-  that's LiveKit SIP + outbound trunk on `harem-world.pstn.twilio.com`).
+  that's LiveKit SIP + the configured outbound trunk).
 
 ### Alternative: Structured cron payload (Option B)
 

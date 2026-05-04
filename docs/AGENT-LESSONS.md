@@ -86,13 +86,13 @@ bugs. They also widen the surface that has to be reasoned about.
 
 ## 2026-05-01 — No flattery, no comfort speak
 
-**Trigger:** Eric stated: "you are to be a trusted partner and top level
-dev. You dont just say things to make me feel good or that its awesome."
+**Trigger:** The operator asked agents to act as trusted senior
+engineering partners, not as reassurance generators.
 
 **Lesson:** No "great question," no "you're right" reflexively, no
-softening of bad news. He is a 25-year engineer; treat him as a peer.
-Reality over comfort. If he is wrong, say so plainly with evidence. If
-the agent is wrong, name the error directly without apology padding.
+softening of bad news. Treat the operator as a peer. Reality over
+comfort. If they are wrong, say so plainly with evidence. If the agent
+is wrong, name the error directly without apology padding.
 
 **Why:** Flattery and comfort speak are noise that hide the signal.
 They also signal an LLM trying to manage a human's emotions instead of
@@ -131,8 +131,8 @@ errors are often logged and swallowed.
 
 ## 2026-05-04 — Migration defaults must move with docs
 
-**Trigger:** The observability backend migrated from local SigNoz to the
-shiori LGTM stack, but `scripts/deploy-agents.sh` still defaulted
+**Trigger:** The observability backend migrated from a local collector
+to a remote OTLP stack, but `scripts/deploy-agents.sh` still defaulted
 `OPENCLAW_OTLP_ENDPOINT` to `http://localhost:4318/v1/traces` when the
 secrets file omitted the variable.
 
@@ -158,3 +158,18 @@ Search snippets are not enough.
 **Why:** Model names move quickly and search results can surface stale
 or partial tables. A well-intentioned "fix" can downgrade or break a
 working agent.
+
+## 2026-05-04 — Public examples must stay generic
+
+**Trigger:** A public-readiness sweep found docs and examples that still
+named private hosts, old split-repo paths, and operator-only migration
+notes after the monorepo and telemetry changes landed.
+
+**Lesson:** Public-facing docs, templates, and fallback defaults should
+use generic local examples unless a value is intentionally part of the
+project contract. Keep private deployment hostnames, channel IDs, and
+operator runbook history in local secrets or private notes.
+
+**Why:** Example values get copied into real deployments. Private labels
+also make a public repo harder to evaluate and can expose internal
+topology without adding useful context.

@@ -1,7 +1,7 @@
 # LangSmith (archived)
 
-> **As of 2026-05-01 the repo standardized on the shiori LGTM stack as the primary
-> (and only) observability backend.** This document is archived. For
+> **As of 2026-05-01 the repo standardized on vendor-neutral OTLP/HTTP
+> as the active observability path.** This document is archived. For
 > the active observability docs see
 > **[OBSERVABILITY.md](OBSERVABILITY.md)**.
 
@@ -17,12 +17,13 @@
 
 ## Why we moved off LangSmith as the primary
 
-* **Single pane of glass.** The shiori LGTM stack hosts traces, logs, metrics, the
-  service map, and exception tracking under one URL. LangSmith is
-  call-narrative only; everything else (HTTP child spans, log
-  correlation, P95 latency by service) was already covered by Tempo + Mimir + Loki.
-* **Open telemetry, open data.** ClickHouse on disk, queryable however
-  we want. No per-trace pricing, no PII leaving the laptop.
+* **Single pane of glass.** An OTLP backend can host traces, logs,
+  metrics, the service map, and exception tracking under one UI.
+  LangSmith is call-narrative only; everything else (HTTP child spans,
+  log correlation, P95 latency by service) is covered by an
+  OTel-native stack such as Tempo + Mimir + Loki.
+* **Open telemetry, portable data.** The SDK now emits standard OTLP
+  signals and can be pointed at any compatible backend.
 * **One set of conventions.** LiveKit Agents 1.5+ emits the GenAI
   semantic-convention attributes (`gen_ai.*`) the LGTM dashboards
   already read. Custom enrichment only added duplicates.
@@ -41,8 +42,8 @@ There is no built-in dual-export pathway any more. If you need LangSmith
 again, the cleanest options are:
 
 1. Run a local OTel collector (`otelcol-contrib`) that fans out from
-   one OTLP receiver to two OTLP exporters — one to shiori, one to
-   `https://api.smith.langchain.com/otel`. Point `OPENCLAW_OTLP_ENDPOINT`
+   one OTLP receiver to two OTLP exporters — one to your primary
+   backend, one to `https://api.smith.langchain.com/otel`. Point `OPENCLAW_OTLP_ENDPOINT`
    at the local collector. No code changes here.
 2. Or revert this commit's removal of `livekit_otel_enricher.py` and
    the `OPENCLAW_OTEL_EXPORTERS` branching in `sdk/tracing.py` — the

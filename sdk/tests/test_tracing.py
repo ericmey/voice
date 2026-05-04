@@ -1,4 +1,4 @@
-"""Tests for :mod:`sdk.tracing` — OTLP/HTTP setup (default backend: shiori LGTM).
+"""Tests for :mod:`sdk.tracing` — OTLP/HTTP setup.
 
 Pin the contract:
 
@@ -131,13 +131,13 @@ def test_resource_attributes_identify_agent(monkeypatch) -> None:
     assert "host.name" in attrs
 
 
-def test_resource_attributes_default_to_fleet_environment(monkeypatch) -> None:
+def test_resource_attributes_default_to_local_environment(monkeypatch) -> None:
     monkeypatch.delenv("OPENCLAW_DEPLOYMENT_ENVIRONMENT", raising=False)
     monkeypatch.delenv("DEPLOYMENT_ENVIRONMENT", raising=False)
 
     resource = tracing._build_resource()
 
-    assert dict(resource.attributes)["deployment.environment"] == "harem-world"
+    assert dict(resource.attributes)["deployment.environment"] == "local"
 
 
 def test_resource_attributes_fallback_when_agent_name_unset(monkeypatch) -> None:

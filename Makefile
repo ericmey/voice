@@ -71,14 +71,13 @@ truncate-logs: ## Zero out all agent logs (clean baseline for testing)
 # ---- Observability backend ----------------------------------------
 #
 # This project ships traces / logs / metrics over OTLP/HTTP to the
-# fleet's LGTM stack on shiori (Grafana + Loki + Tempo + Mimir + OTel
-# Collector). The collector is bind-managed in the
-# ~/Vaults/Aoi/wiki/services/observability/ canonical compose, NOT in
-# this repo. Configure the agents via OPENCLAW_OTLP_ENDPOINT (default
-# http://shiori.mey.house:4318/v1/traces). See docs/OBSERVABILITY.md.
+# configured OTLP backend (for example Grafana + Loki + Tempo + Mimir
+# behind an OTel Collector). The collector is NOT in this compose.
+# Configure the agents via OPENCLAW_OTLP_ENDPOINT (default example:
+# http://localhost:4318/v1/traces). See docs/OBSERVABILITY.md.
 
 # ---- Host-side OTel Collector (hostmetrics + dockerstats + httpcheck + filelog)
-host-collector-install: ## Download otelcol-contrib + bootstrap launchd job exporting host/docker/vendor telemetry to shiori
+host-collector-install: ## Download otelcol-contrib + bootstrap launchd job exporting host/docker/vendor telemetry
 	scripts/install-host-otel-collector.sh
 
 host-collector-restart: ## Re-render configs and bootstrap the launchd job (picks up template changes)

@@ -8,7 +8,8 @@
 #   logs/openclaw      filelog receiver          service.name=openclaw-gateway
 #   logs/agents        filelog receiver          service.name=openclaw-livekit-<agent>
 #
-# Exports OTLP/HTTP at http://shiori.mey.house:4318 (the fleet OTel Collector).
+# Exports OTLP/HTTP to an upstream collector. Override by editing this
+# template before running `make host-collector-install`.
 #
 # Template variables (substituted by scripts/install-host-otel-collector.sh):
 #   {{HOSTNAME}}              the macOS hostname (auto-detected at install time)
@@ -88,7 +89,7 @@ receivers:
         method: GET
       - endpoint: https://api.deepgram.com/
         method: GET
-      - endpoint: http://musubi.mey.house:8100/health
+      - endpoint: http://localhost:8100/health
         method: GET
     collection_interval: 60s
 
@@ -179,11 +180,9 @@ processors:
     send_batch_size: 1024
 
 exporters:
-  # Single OTLP target: the fleet OTel Collector on shiori (Grafana +
-  # Loki + Tempo + Mimir). Both LiveKit agents and the OpenClaw gateway
-  # also push directly to this endpoint.
+  # Single OTLP target. Replace with your collector URL.
   otlphttp:
-    endpoint: http://shiori.mey.house:4318
+    endpoint: http://localhost:4318
     tls:
       insecure: true
 

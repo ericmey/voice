@@ -19,9 +19,8 @@ scripts/cycle-agents.sh nyla    # cycle one
 ### Deploy a fresh machine
 
 ```bash
-mkdir -p ~/Projects
-git clone git@github.com:ericmey/openclaw-livekit.git ~/Projects/openclaw-livekit
-cd ~/Projects/openclaw-livekit
+git clone <repo-url> openclaw-livekit
+cd openclaw-livekit
 make bootstrap                  # installs deps, drops config templates
 
 # Edit the files bootstrap drops in ./config/ and
@@ -57,7 +56,7 @@ make health                     # confirm everything is green
 docker compose logs -f livekit-sip
 
 # Then: agent logs (what the model saw)
-make tail --grep "tool=|Error"
+scripts/tail-logs.sh --grep "tool=|Error"
 
 # Then: health check
 make health
@@ -111,10 +110,10 @@ To roll a single subproject's files back:
 
 ```bash
 # Find the old commit
-git log --oneline openclaw-livekit-agent-sdk/
+git log --oneline sdk/
 
 # Restore at that commit
-git checkout <old-sha> -- openclaw-livekit-agent-sdk/
+git checkout <old-sha> -- sdk/
 make cycle                      # rebuild venvs if needed, restart agents
 ```
 
@@ -126,11 +125,11 @@ For a full-repo rollback, `git revert` the offending commit on main.
 - `make health` on demand — intentionally minimal, exits non-zero.
 - `scripts/tail-logs.sh` for live watching with `--grep` filtering.
 - `docker compose logs -f` for the infrastructure tier.
-- [OBSERVABILITY.md](OBSERVABILITY.md) for OTel tracing (shiori LGTM stack), logs, metrics,
+- [OBSERVABILITY.md](OBSERVABILITY.md) for OTel tracing, logs, metrics,
   dashboard import, host collector, and audio recording links.
 
 ### Future (not yet wired)
-- Cronned `make health --json` → Discord webhook on failure.
+- Cronned `scripts/health-check.sh --json` → Discord webhook on failure.
 - Prometheus exporter on the agent worker count + livekit-sip call stats.
 - Drift detection cron that re-reads `config/*.json` and diffs.
 

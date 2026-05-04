@@ -120,11 +120,11 @@ def test_default_base_url_exported() -> None:
 
 
 def test_from_env_reads_both_vars(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(MUSUBI_V2_BASE_URL_ENV, "https://musubi.mey.house/v1/")
+    monkeypatch.setenv(MUSUBI_V2_BASE_URL_ENV, "https://musubi.example.com/v1/")
     monkeypatch.setenv(MUSUBI_V2_TOKEN_ENV, "real-token")
     cfg = MusubiV2ClientConfig.from_env()
     # Trailing slash stripped.
-    assert cfg.base_url == "https://musubi.mey.house/v1"
+    assert cfg.base_url == "https://musubi.example.com/v1"
     assert cfg.token == "real-token"
 
 

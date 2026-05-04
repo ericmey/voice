@@ -4,7 +4,7 @@ tools mixin against a real Musubi server. Skipped by default so
 
 To run:
 
-    MUSUBI_LIVE_BASE_URL=http://musubi.mey.house:8100/v1 \
+    MUSUBI_LIVE_BASE_URL=http://localhost:8100/v1 \
     MUSUBI_LIVE_TOKEN=<harness-bearer> \
     MUSUBI_LIVE_NS_ROOT=harness/v2-smoke \
     uv run pytest sdk/tests/test_musubi_live_smoke.py -v

@@ -38,9 +38,9 @@
                       └───────────────────────────────┘
 ```
 
-## The five subprojects
+## Workspace Packages
 
-### `openclaw-livekit-agent-sdk/`
+### `sdk/`
 Shared Python package imported by the three agents. Contains:
 
 - **`config.py`** — `AgentConfig` dataclass (agent_name, memory_agent_tag,
@@ -58,31 +58,30 @@ Shared Python package imported by the three agents. Contains:
 - **`musubi_v2_client.py`** — async HTTP client for the canonical Musubi API.
 - **`trace.py`**, **`transcript.py`**, **`env.py`** — ancillary.
 
-### `openclaw-livekit-agent-nyla/`
+### `agents/nyla/`
 Realtime voice persona. Gemini 2.5 Flash Native Audio, Leda voice. Registers
 as `phone-nyla`. Household router — no delegation restrictions.
 
-### `openclaw-livekit-agent-aoi/`
+### `agents/aoi/`
 Realtime voice persona. Same model as Nyla, Kore voice, distinct prompt.
-Tighter delegation allowlist (`{yumi, rin, aoi, momo, nyla}`) — technical
+Tighter delegation allowlist (`{yumi, rin, aoi, nyla}`) — technical
 partner, not household router.
 
-### `openclaw-livekit-agent-party/`
+### `agents/party/`
 Chained STT/LLM/TTS variant. Whisper → Silero VAD → Gemini text LLM →
 ElevenLabs TTS. Same persona/tools as Nyla; different voice engine for A/B.
 
-### `openclaw-livekit-sip/`
-Not Python — holds the livekit-sip Docker image config, migration notes,
-and the bootstrap script for bringing up a fresh SIP trunk. Consumed by
-the top-level compose file and `scripts/register-sip-routing.sh`.
+### `tools/`
+Shared LiveKit `@function_tool` mixins composed by the agents. See
+[tools/README.md](../tools/README.md).
 
 ## Call path
 
-1. **PSTN dial** reaches Twilio on a DID (`+1 317 653 4945`, etc.).
+1. **PSTN dial** reaches Twilio on a DID.
 2. Twilio's Origination Connection Policy routes the SIP INVITE to this
    host's public IP:5060 over TCP.
 3. **livekit-sip** receives the INVITE. Looks up:
-   - Inbound trunk match (all four DIDs live under `twilio-primary`).
+   - Inbound trunk match.
    - Caller allowlist check against `allowed_numbers` on the trunk —
      rejects at 486 if the FROM number isn't on the list.
    - Dispatch rule match by dialed DID (`numbers` field, not
@@ -95,7 +94,8 @@ the top-level compose file and `scripts/register-sip-routing.sh`.
    replying in audio.
 7. Function-tool calls during the session are regular Python async
    methods; any actuator-shaped tool (delegation, memory, images) goes
-   through `cli_spawner.fire_and_forget_async` to the `openclaw` CLI.
+   through `cli_spawner.fire_and_forget_async` to the configured
+   `openclaw` CLI.
 
 ## Why agents aren't in docker-compose
 

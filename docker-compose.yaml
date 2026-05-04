@@ -97,21 +97,15 @@ services:
       - ./logs/voice/recordings:/recordings
 
 # Observability — full traces + logs + metrics with trace correlation —
-# runs in the fleet's LGTM stack on shiori (Grafana + Loki + Tempo +
-# Mimir behind an OTel Collector), NOT in this compose. The collector
-# accepts OTLP/HTTP at http://shiori.mey.house:4318 and OTLP/gRPC at
-# :4317 (HTTP is what these agents use; OpenClaw's diagnostics-otel
-# plugin only does HTTP/protobuf).
+# is exported over OTLP/HTTP to whatever collector you configure in
+# secrets/livekit-agents.env. The collector is intentionally not part of
+# this compose file; run your own local collector/LGTM stack or point at
+# a hosted OTLP backend.
 #
 # Agents flip on by setting OPENCLAW_OTEL_ENABLED=true and
-# OPENCLAW_OTLP_ENDPOINT=http://shiori.mey.house:4318/v1/traces in
+# OPENCLAW_OTLP_ENDPOINT=http://localhost:4318/v1/traces in
 # secrets/livekit-agents.env. Logs ship through the same OTLP endpoint
 # via OTLPLogExporter when OPENCLAW_OTEL_LOGS_ENABLED=true.
-#
-# Grafana UI + dashboards: http://shiori.mey.house:3000
-# Mimir API:               http://shiori.mey.house:9009
-# Loki API:                http://shiori.mey.house:3100
-# Stack canonical:         ~/Vaults/Aoi/wiki/services/observability/
 
 # Named volume for persistent Redis state. Survives container recreation
 # and Docker Desktop updates. Wiped only by `docker compose down -v`.

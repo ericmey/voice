@@ -1,8 +1,8 @@
 """OpenTelemetry tracing, logs, and metrics for the OpenClaw voice agents.
 
-The configured backend is the fleet's LGTM stack on shiori
-(Grafana + Loki + Tempo + Mimir behind an OTel Collector). The setup
-relies on LiveKit Agents 1.5+ emitting native ``gen_ai.*``
+The configured backend is any OTLP/HTTP-compatible collector, commonly
+Grafana + Loki + Tempo + Mimir behind an OTel Collector. The setup relies
+on LiveKit Agents 1.5+ emitting native ``gen_ai.*``
 semantic-convention attributes plus ``lk.*`` LiveKit-specific
 attributes. We add no span enrichment beyond:
 
@@ -27,10 +27,9 @@ Configuration:
 
 * ``OPENCLAW_OTEL_ENABLED=true`` — master switch.
 * ``OPENCLAW_OTLP_ENDPOINT`` / ``OPENCLAW_OTLP_HEADERS`` — OTLP/HTTP
-  traces endpoint (default in this fleet:
-  ``http://shiori.mey.house:4318/v1/traces``) and any auth headers
-  required by the backend (none for the shiori LGTM stack on the
-  internal VLAN).
+  traces endpoint (default:
+  ``http://localhost:4318/v1/traces``) and any auth headers required by
+  the backend.
 * ``OPENCLAW_OTEL_DEBUG=true`` — adds a ConsoleSpanExporter for local diag.
 * ``OPENCLAW_OTEL_HTTP_INSTRUMENTATION=false`` — disable HTTP auto-instr.
 * ``OPENCLAW_OTEL_VERBOSE=true`` — keep the noise spans in the trace tree.
@@ -172,7 +171,7 @@ def setup_otel_tracing() -> None:
     _provider = provider
     _initialized = True
     _debug(f"[OTEL-SETUP] pid={pid} ENABLED resource={dict(provider.resource.attributes)}")
-    logger.info("OTel tracing enabled (shiori LGTM stack)")
+    logger.info("OTel tracing enabled (OTLP/HTTP)")
 
 
 def force_flush_otel_tracing(timeout_millis: int = 10000) -> bool:
@@ -318,7 +317,7 @@ def _agent_name() -> str:
 
 
 def _build_resource() -> Any:
-    """Identify this process to the OTLP backend (e.g. shiori)."""
+    """Identify this process to the OTLP backend."""
     from opentelemetry.sdk.resources import (
         DEPLOYMENT_ENVIRONMENT,
         HOST_NAME,
@@ -333,7 +332,7 @@ def _build_resource() -> Any:
     agent = _agent_name()
     environment = os.environ.get(
         "OPENCLAW_DEPLOYMENT_ENVIRONMENT",
-        os.environ.get("DEPLOYMENT_ENVIRONMENT", "harem-world"),
+        os.environ.get("DEPLOYMENT_ENVIRONMENT", "local"),
     )
     version = os.environ.get("OPENCLAW_SERVICE_VERSION", "dev")
 
@@ -466,7 +465,7 @@ def _install_logs_pipeline(resource: Any) -> None:
          ``otelServiceName`` into every Python LogRecord so JSON log files
          cross-correlate with traces.
       2. An ``LoggingHandler`` fans every record into the OTel logs SDK,
-         which batches and exports via OTLPLogExporter to the OTLP backend (Loki on shiori).
+         which batches and exports via OTLPLogExporter to the OTLP backend.
 
     The handler is filtered to exclude OTel-internal HTTP/exporter
     loggers (see :data:`_OTEL_INTERNAL_LOGGER_PREFIXES`) — without that

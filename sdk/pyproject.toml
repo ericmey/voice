@@ -12,7 +12,7 @@ dependencies = [
     "aiohttp",
     "langsmith>=0.7.38",
     "python-dotenv",
-    # OTel tracing → shiori LGTM stack (vendor-neutral OTLP/HTTP). The
+    # OTel tracing → vendor-neutral OTLP/HTTP. The
     # pipeline activates whenever OPENCLAW_OTEL_ENABLED is true.
     "opentelemetry-sdk>=1.27",
     "opentelemetry-exporter-otlp-proto-http>=1.27",
@@ -25,7 +25,7 @@ dependencies = [
     "opentelemetry-instrumentation-aiohttp-client>=0.48b0",
     "opentelemetry-instrumentation-requests>=0.48b0",
     # OTel logs pipeline: ships Python `logging` records as OTLP log
-    # records with trace correlation. Loki on shiori uses these.
+    # records with trace correlation. Backends such as Loki use these.
     "opentelemetry-instrumentation-logging>=0.48b0",
     # OTel metrics pipeline: feeds SystemMetrics + http.client.duration
     # histograms (visible via Mimir-backed Grafana panels). Auto-enabled

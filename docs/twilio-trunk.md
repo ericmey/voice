@@ -69,8 +69,8 @@ webhooks (the current bridge path). Once you attach a number to the
 trunk, inbound calls bypass Programmable Voice entirely and route to
 the trunk's Origination URI.
 
-**Important:** Don't attach production DIDs until Phase 5 testing
-(per [MIGRATION.md](../MIGRATION.md)).
+**Important:** Test with a spare DID first. Move production numbers only
+after inbound routing, dispatch rules, and a live call all pass.
 
 ## 5. Codec lock
 
@@ -125,10 +125,10 @@ Call the DID. Expected:
 - Twilio Console → **Call Logs** shows the call hitting the trunk
 - `livekit-sip` logs show SIP INVITE received
 - LiveKit server logs show room creation
-- If you have a dispatch rule set up (see [MIGRATION.md](../MIGRATION.md)
-  Phase 3), agent joins the room
+- If you have a dispatch rule set up (`make register-sip`), agent joins
+  the room
 - Without a dispatch rule, the call connects to an empty room — that's
-  OK for Phase 2. Move on to Phase 3.
+  OK during first trunk validation. Register the dispatch rules next.
 
 ## Common failure modes
 
@@ -151,4 +151,4 @@ Paste into `secrets/livekit-sip-trunk.md` (not this repo):
 - livekit-sip outbound trunk ID (`ST_...`):
 - DID(s) attached:
 
-You'll need these for the dispatch rule creation in Phase 3.
+You'll need these for `config/sip-*.json` and `make register-sip`.

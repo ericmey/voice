@@ -2,7 +2,7 @@
 
 Records each call to disk through the ``livekit-egress`` service and
 exposes the resulting file path/URL as an OTel span attribute so any
-backend (shiori LGTM, Phoenix, Datadog, ...) can link the call run to its
+backend (Grafana/Tempo, Phoenix, Datadog, ...) can link the call run to its
 recording without a vendor-specific upload SDK.
 
 Enable with ``OPENCLAW_RECORD_AUDIO=true``.

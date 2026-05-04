@@ -20,7 +20,7 @@
     <string>ai.openclaw.otel-collector</string>
 
     <key>Comment</key>
-    <string>Host OTel Collector — hostmetrics + dockerstats + httpcheck + filelog → shiori LGTM</string>
+    <string>Host OTel Collector — hostmetrics + dockerstats + httpcheck + filelog → OTLP backend</string>
 
     <key>RunAtLoad</key>
     <true/>
