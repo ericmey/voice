@@ -16,6 +16,17 @@ make cycle                      # cycles all three
 scripts/cycle-agents.sh nyla    # cycle one
 ```
 
+`make cycle` is graceful by default: it sends `SIGTERM` to each launchd
+job, waits for the old PID to exit, and lets LiveKit drain active jobs
+before the replacement worker registers. The default wait is 1860s,
+slightly longer than LiveKit's 30-minute worker drain timeout. Override
+with `LIVEKIT_AGENT_DRAIN_WAIT_SECONDS=<seconds>` if needed.
+
+For emergencies only, set `LIVEKIT_AGENT_FORCE_ON_TIMEOUT=true` to fall
+back to `launchctl kickstart -k` after the drain wait expires. Forced
+restart can interrupt an active call and may emit LiveKit process-pool
+shutdown noise in Loki.
+
 ### Deploy a fresh machine
 
 ```bash
@@ -46,8 +57,9 @@ make health                     # confirm everything is green
 ### Rotate an API key
 
 1. Edit `secrets/livekit-agents.env`.
-2. `make deploy` — re-renders plists with the new value + kickstarts
-   each agent. No other file needs to change.
+2. `make deploy` — re-renders plists with the new value, temporarily
+   disables launchd restart, sends `SIGTERM`, waits for LiveKit drain,
+   then bootstraps the updated plist. No other file needs to change.
 
 ### Configure OpenClaw delegation
 

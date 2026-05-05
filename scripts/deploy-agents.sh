@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # Render launchd plists from the template + secrets file and install them.
-# Idempotent: safe to re-run. Reloading an agent kickstarts it, which
-# picks up code and env changes without a reinstall.
+# Idempotent: safe to re-run. Reloading an agent sends SIGTERM and waits
+# for LiveKit to drain the old worker before launchd starts the
+# replacement, so deploys do not intentionally interrupt active calls.
 #
 # Usage:
 #   scripts/deploy-agents.sh                  # all three agents
@@ -54,6 +55,8 @@ set -a; . "${SECRETS}"; set +a
 VOICE_LOGS="$(abs_path "${LIVEKIT_VOICE_LOGS:-${REPO_ROOT}/logs/voice}")"
 OPENCLAW_BIN="${OPENCLAW_BIN:-$(default_openclaw_bin)}"
 OPENCLAW_SERVICE_VERSION="${OPENCLAW_SERVICE_VERSION:-$(default_service_version)}"
+LIVEKIT_AGENT_DRAIN_WAIT_SECONDS="${LIVEKIT_AGENT_DRAIN_WAIT_SECONDS:-1860}"
+LIVEKIT_AGENT_EXIT_TIMEOUT="${LIVEKIT_AGENT_EXIT_TIMEOUT:-${LIVEKIT_AGENT_DRAIN_WAIT_SECONDS}}"
 LIVEKIT_EGRESS_HOST_RECORDINGS_DIR="$(
   abs_path "${LIVEKIT_EGRESS_HOST_RECORDINGS_DIR:-${VOICE_LOGS}/recordings}"
 )"
@@ -70,6 +73,12 @@ mkdir -p "${VOICE_LOGS}" "${LAUNCH_AGENTS_DIR}"
 : "${MUSUBI_V2_TOKEN_NYLA:?MUSUBI_V2_TOKEN_NYLA missing from ${SECRETS}}"
 : "${MUSUBI_V2_TOKEN_AOI:?MUSUBI_V2_TOKEN_AOI missing from ${SECRETS}}"
 [[ -x "${OPENCLAW_BIN}" ]] || die "OPENCLAW_BIN is not executable: ${OPENCLAW_BIN}"
+case "${LIVEKIT_AGENT_DRAIN_WAIT_SECONDS}" in
+  ''|*[!0-9]*) die "LIVEKIT_AGENT_DRAIN_WAIT_SECONDS must be an integer" ;;
+esac
+case "${LIVEKIT_AGENT_EXIT_TIMEOUT}" in
+  ''|*[!0-9]*) die "LIVEKIT_AGENT_EXIT_TIMEOUT must be an integer" ;;
+esac
 case "${OPENCLAW_OTEL_ENABLED:-true}" in
   1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss])
     : "${OPENCLAW_OTLP_ENDPOINT:?OPENCLAW_OTLP_ENDPOINT missing from ${SECRETS} while OPENCLAW_OTEL_ENABLED is true}"
@@ -152,6 +161,7 @@ render_plist() {
     -e "s|{{AGENT_LABEL}}|${label}|g" \
     -e "s|{{MONOREPO_ROOT}}|${REPO_ROOT}|g" \
     -e "s|{{LIVEKIT_VOICE_LOGS}}|${VOICE_LOGS}|g" \
+    -e "s|{{LIVEKIT_AGENT_EXIT_TIMEOUT}}|${LIVEKIT_AGENT_EXIT_TIMEOUT}|g" \
     -e "s|{{HOME}}|${HOME}|g" \
     -e "s|{{LIVEKIT_URL}}|${LIVEKIT_URL}|g" \
     -e "s|{{LIVEKIT_API_KEY}}|${LIVEKIT_API_KEY}|g" \
@@ -201,18 +211,83 @@ ensure_venv_ready() {
   fi
 }
 
+launchctl_pid() {
+  local label="$1"
+  launchctl list "${label}" 2>/dev/null \
+    | awk -F'= ' '/"PID"/ { gsub(/[;"]/, "", $2); print $2; exit }'
+}
+
+pid_alive() {
+  local pid="$1"
+  [[ -n "${pid}" ]] && kill -0 "${pid}" >/dev/null 2>&1
+}
+
+wait_for_pid_exit() {
+  local label="$1"
+  local pid="$2"
+  local waited=0
+
+  while pid_alive "${pid}"; do
+    if (( waited >= LIVEKIT_AGENT_DRAIN_WAIT_SECONDS )); then
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  log "${label} old pid ${pid} exited after ${waited}s"
+  return 0
+}
+
+wait_for_running_pid() {
+  local label="$1"
+  local waited=0
+  local pid
+
+  while (( waited < 30 )); do
+    pid="$(launchctl_pid "${label}")"
+    if [[ -n "${pid}" ]]; then
+      log "${label} running with pid ${pid}"
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  return 1
+}
+
 reload_plist() {
   local agent="$1"
   local label="ai.openclaw.livekit-agent-${agent}"
   local path="${LAUNCH_AGENTS_DIR}/${label}.plist"
   local domain_target="gui/$(id -u)/${label}"
+  local old_pid
 
-  # Idempotent replace: bootout (if loaded), then bootstrap.
+  # Idempotent replace: disable KeepAlive restarts, ask the loaded worker
+  # to drain via SIGTERM, wait for the old PID to exit, then bootout and
+  # bootstrap the freshly rendered plist. Relying on bootout alone is not
+  # enough: launchd may impose its own stop timeout before LiveKit's
+  # drain_timeout elapses.
   if launchctl print "${domain_target}" >/dev/null 2>&1; then
+    old_pid="$(launchctl_pid "${label}")"
+    log "disabling ${label} while old worker drains"
+    launchctl disable "${domain_target}" 2>/dev/null || true
+    log "sending SIGTERM to ${label}; LiveKit may drain active jobs before exit"
+    launchctl kill TERM "${domain_target}" 2>/dev/null || true
+    if [[ -n "${old_pid}" ]]; then
+      wait_for_pid_exit "${label}" "${old_pid}" \
+        || die "${label} did not exit within ${LIVEKIT_AGENT_DRAIN_WAIT_SECONDS}s"
+    fi
     launchctl bootout "gui/$(id -u)" "${path}" 2>/dev/null || true
   fi
+  launchctl enable "${domain_target}" 2>/dev/null || true
   launchctl bootstrap "gui/$(id -u)" "${path}"
-  launchctl kickstart -k "${domain_target}"
+  wait_for_running_pid "${label}" || {
+    warn "${label} did not start at bootstrap; kickstarting without force"
+    launchctl kickstart "${domain_target}"
+    wait_for_running_pid "${label}" || die "${label} did not start"
+  }
   log "bootstrapped ${label}"
 }
 

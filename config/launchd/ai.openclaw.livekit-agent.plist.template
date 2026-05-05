@@ -28,6 +28,11 @@
     <true/>
     <key>ThrottleInterval</key>
     <integer>5</integer>
+    <!-- LiveKit drains active jobs on SIGTERM. Keep launchd's kill
+         timeout longer than the worker drain window so a deploy/cycle
+         does not cut off an in-flight phone call. -->
+    <key>ExitTimeOut</key>
+    <integer>{{LIVEKIT_AGENT_EXIT_TIMEOUT}}</integer>
 
     <key>ProgramArguments</key>
     <array>

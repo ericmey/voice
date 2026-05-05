@@ -230,3 +230,19 @@ ask-style behavior when a real async completion channel exists.
 **Why:** Duplicating OpenClaw routing in the voice stack makes calls more
 fragile, slower, and harder to debug. The real OpenClaw agent should own
 skills, tools, delivery, and channel-specific behavior.
+
+## 2026-05-05 — Cycle LiveKit workers with TERM, not force
+
+**Trigger:** `make cycle` used `launchctl kickstart -k`, and Loki showed
+LiveKit's process pool raising `Cannot close a process while it is still
+running` during redeploy windows.
+
+**Lesson:** LiveKit agents drain active jobs on `SIGTERM`/`SIGINT`.
+Operations scripts should send TERM, wait for the old PID to exit, and
+reserve forced `kickstart -k` for explicit timeout escape hatches. The
+launchd plist also needs an `ExitTimeOut` at least as long as the
+LiveKit drain window.
+
+**Why:** Forced restarts can interrupt active phone calls and create
+scary-but-avoidable ERROR logs. Letting LiveKit drain keeps redeploys
+aligned with the worker lifecycle.
