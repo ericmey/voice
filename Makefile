@@ -8,6 +8,7 @@ SHELL := /usr/bin/env bash
 .PHONY: help bootstrap up down logs health test \
         deploy teardown cycle \
         register-sip tail truncate-logs \
+        voice-harness \
         sync-venvs lint typecheck verify \
         host-collector-install host-collector-restart host-collector-status \
         host-collector-logs host-collector-uninstall
@@ -67,6 +68,9 @@ tail: ## Follow all three agent logs with color-coded prefix
 
 truncate-logs: ## Zero out all agent logs (clean baseline for testing)
 	scripts/truncate-logs.sh
+
+voice-harness: ## Exercise voice OpenClaw delegation tools without a live phone call
+	uv run python sdk/scripts/voice_tool_harness.py
 
 # ---- Observability backend ----------------------------------------
 #

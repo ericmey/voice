@@ -63,6 +63,13 @@ when unset, and `OPENCLAW_HOOKS_PATH` defaults to `/hooks`.
 The remaining CLI spawner is preserved only for disabled callback code
 while the callback redesign is pending.
 
+## Testing without a phone call
+
+Run `make voice-harness` to instantiate the real agent class and exercise
+`openclaw_delegate` in mock mode. The harness verifies the model-visible
+tool surface and prints the Gateway hook payload that would be submitted.
+See [docs/VOICE-TOOL-HARNESS.md](../docs/VOICE-TOOL-HARNESS.md).
+
 ## Adding a new tool
 
 1. Either extend an existing mixin with a new `@function_tool`-decorated

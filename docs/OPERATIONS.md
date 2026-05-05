@@ -64,6 +64,19 @@ Keep `OPENCLAW_HOOK_TOKEN` distinct from `GATEWAY_AUTH_TOKEN`. On the
 OpenClaw side, enable hooks and constrain `hooks.allowedAgentIds` to the
 agents the phone stack may route to.
 
+### Test tools without a phone call
+
+Use the no-phone harness for routine regression checks:
+
+```bash
+make voice-harness
+uv run python sdk/scripts/voice_tool_harness.py --agent aoi --case ops-check
+```
+
+Mock mode is default and sends nothing to OpenClaw. Add `--live-hooks`
+only for an intentional Gateway acceptance smoke. See
+[VOICE-TOOL-HARNESS.md](VOICE-TOOL-HARNESS.md).
+
 ### Debug a silently-failing call
 
 ```bash
