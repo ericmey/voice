@@ -6,6 +6,13 @@ variables in `secrets/livekit-agents.env` at your own collector, whether
 that is a local Grafana LGTM stack, Grafana Cloud, Honeycomb, Datadog,
 or another OTLP-compatible backend.
 
+Useful external references:
+
+- [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)
+- [OTLP protocol](https://opentelemetry.io/docs/specs/otlp/)
+- [Grafana Cloud OTLP](https://grafana.com/docs/grafana-cloud/send-data/otlp/)
+- [Grafana OpenTelemetry Collector setup](https://grafana.com/docs/opentelemetry/collector/opentelemetry-collector/)
+
 ## Agent Wiring
 
 Example local collector configuration:

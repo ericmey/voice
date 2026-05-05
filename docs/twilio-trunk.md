@@ -4,7 +4,12 @@ Step-by-step for configuring the Twilio side. Do this after
 `livekit-sip` is running locally but before you point any real DIDs at
 it — you'll want to test with a single number first.
 
-**Authoritative source:** [LiveKit's Twilio trunk docs](https://docs.livekit.io/telephony/start/providers/twilio/).
+**Authoritative sources:**
+
+- [LiveKit's Twilio trunk docs](https://docs.livekit.io/telephony/start/providers/twilio/)
+- [Twilio Elastic SIP Trunking](https://www.twilio.com/docs/sip-trunking)
+- [Twilio SIP trunking IP addresses](https://www.twilio.com/docs/sip-trunking/ip-addresses)
+
 This page mirrors the flow with OpenClaw-specific notes.
 
 ## Prerequisites

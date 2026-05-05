@@ -27,6 +27,46 @@ openclaw-livekit/
 Every Python package is a uv workspace member declared in the root
 `pyproject.toml`. One `.venv/` at the root serves them all.
 
+## Bring Your Own Stack
+
+This repo is a working reference for one personal voice stack, not a
+drop-in product. The included agents (`nyla`, `aoi`, `party`) and tools
+are samples you can replace with your own personas, model choices, and
+tool mixins.
+
+Before trying to run it, have these pieces at hand:
+
+| Area | What you provide | Where to configure |
+|------|------------------|--------------------|
+| LiveKit + SIP | LiveKit server/API keys and SIP bridge config | `config/livekit*.yaml`, `docker-compose.yaml` |
+| SIP provider | A DID/trunk provider such as Twilio | `config/sip-*.json`, [docs/twilio-trunk.md](docs/twilio-trunk.md) |
+| Agents | Personas, prompts, voices, models | `agents/*`, `scripts/deploy-agents.sh` |
+| Tools | Function tools the voice model may call | `tools/src/tools/`, [tools/README.md](tools/README.md) |
+| OpenClaw | Optional Gateway hook target for async delegation | `OPENCLAW_HOOK_*`, [OpenClaw](https://github.com/openclaw/openclaw) |
+| Musubi | Optional memory/presence service | `MUSUBI_V2_*`, [Musubi](https://github.com/ericmey/musubi) |
+| Telemetry | Any OTLP/HTTP backend or collector | `OPENCLAW_OTLP_*`, [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) |
+| macOS supervisor | launchd runs the Python agents | `config/launchd/`, `make deploy`, `make cycle` |
+
+See [docs/BRING-YOUR-OWN-STACK.md](docs/BRING-YOUR-OWN-STACK.md) for the
+replacement map and external project pointers.
+
+## Config And Secrets
+
+The repo commits example configs only. Real runtime files are local-only
+and gitignored:
+
+| Local file | Starts from | Purpose |
+|------------|-------------|---------|
+| `secrets/livekit-agents.env` | `config/secrets.env.example` | Provider keys, OpenClaw/Musubi/OTLP endpoints, launchd env |
+| `config/livekit.yaml` | `config/livekit.yaml.example` | LiveKit server API keys and runtime config |
+| `config/livekit-sip.yaml` | `config/livekit-sip.yaml.example` | LiveKit SIP bridge config |
+| `config/livekit-egress.yaml` | `config/livekit-egress.yaml.example` | Optional audio recording/egress config |
+| `config/sip-*.json` | `config/sip-*.json.example` | SIP trunk and dispatch rules |
+
+`make bootstrap` creates the missing local files from examples where it
+can. After editing configs/secrets, use `make up`, `make register-sip`,
+and `make deploy` to apply the stack.
+
 ## Quickstart
 
 ```bash
@@ -70,6 +110,7 @@ make health                 # verify everything is green
 
 - **[AGENTS.md](AGENTS.md)** — generic agent runbook (Python monorepo conventions, deploy/test flow)
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — how the pieces fit
+- **[docs/BRING-YOUR-OWN-STACK.md](docs/BRING-YOUR-OWN-STACK.md)** — replacement map for external stacks
 - **[docs/OPERATIONS.md](docs/OPERATIONS.md)** — deploy / cycle / debug runbook
 - **[docs/DISPATCH-RULE-GOTCHAS.md](docs/DISPATCH-RULE-GOTCHAS.md)** — the `numbers` vs `inbound_numbers` trap
 - **[tools/README.md](tools/README.md)** — tool catalog

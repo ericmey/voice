@@ -3,6 +3,10 @@
 Reference for common operational tasks. Every verb here has a `make`
 wrapper; the bare `scripts/` invocations are shown for completeness.
 
+If you are adapting this repo to a different agent, memory, SIP, or
+telemetry stack, start with
+[BRING-YOUR-OWN-STACK.md](BRING-YOUR-OWN-STACK.md).
+
 ## Day-to-day
 
 ### Deploy new code to all agents
