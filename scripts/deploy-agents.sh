@@ -65,7 +65,7 @@ mkdir -p "${VOICE_LOGS}" "${LAUNCH_AGENTS_DIR}"
 : "${MUSUBI_V2_TOKEN_NYLA:?MUSUBI_V2_TOKEN_NYLA missing from ${SECRETS}}"
 : "${MUSUBI_V2_TOKEN_AOI:?MUSUBI_V2_TOKEN_AOI missing from ${SECRETS}}"
 case "${OPENCLAW_OTEL_ENABLED:-true}" in
-  1|true|TRUE|yes|YES)
+  1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss])
     : "${OPENCLAW_OTLP_ENDPOINT:?OPENCLAW_OTLP_ENDPOINT missing from ${SECRETS} while OPENCLAW_OTEL_ENABLED is true}"
     ;;
 esac
