@@ -39,6 +39,10 @@ default_openclaw_bin() {
   printf "/opt/homebrew/bin/openclaw\n"
 }
 
+default_service_version() {
+  git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || printf "dev\n"
+}
+
 # ---- preflight -------------------------------------------------------
 [[ -r "${TEMPLATE}" ]] || die "template not found: ${TEMPLATE}"
 [[ -r "${SECRETS}"  ]] || die "secrets file not found: ${SECRETS} (copy config/secrets.env.example and fill in)"
@@ -49,6 +53,7 @@ set -a; . "${SECRETS}"; set +a
 
 VOICE_LOGS="$(abs_path "${LIVEKIT_VOICE_LOGS:-${REPO_ROOT}/logs/voice}")"
 OPENCLAW_BIN="${OPENCLAW_BIN:-$(default_openclaw_bin)}"
+OPENCLAW_SERVICE_VERSION="${OPENCLAW_SERVICE_VERSION:-$(default_service_version)}"
 LIVEKIT_EGRESS_HOST_RECORDINGS_DIR="$(
   abs_path "${LIVEKIT_EGRESS_HOST_RECORDINGS_DIR:-${VOICE_LOGS}/recordings}"
 )"
@@ -164,7 +169,7 @@ render_plist() {
     -e "s|{{OPENCLAW_OTEL_VERBOSE}}|${OPENCLAW_OTEL_VERBOSE:-false}|g" \
     -e "s|{{OPENCLAW_OTEL_HTTP_INSTRUMENTATION}}|${OPENCLAW_OTEL_HTTP_INSTRUMENTATION:-true}|g" \
     -e "s|{{OPENCLAW_DEPLOYMENT_ENVIRONMENT}}|${OPENCLAW_DEPLOYMENT_ENVIRONMENT:-local}|g" \
-    -e "s|{{OPENCLAW_SERVICE_VERSION}}|${OPENCLAW_SERVICE_VERSION:-dev}|g" \
+    -e "s|{{OPENCLAW_SERVICE_VERSION}}|${OPENCLAW_SERVICE_VERSION}|g" \
     -e "s|{{OPENCLAW_OTLP_ENDPOINT}}|${OPENCLAW_OTLP_ENDPOINT:-}|g" \
     -e "s|{{OPENCLAW_OTLP_HEADERS}}|${OPENCLAW_OTLP_HEADERS:-}|g" \
     -e "s|{{OPENCLAW_OTEL_LOGS_ENABLED}}|${OPENCLAW_OTEL_LOGS_ENABLED:-true}|g" \

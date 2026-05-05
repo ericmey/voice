@@ -188,6 +188,20 @@ Keep subprocess command verbs allowlisted and arguments bounded.
 injection, a bad binary path or unbounded argv payload can turn a normal
 tool call into an unsafe process boundary.
 
+## 2026-05-05 — Keep OTel resource labels semantically true
+
+**Trigger:** Grafana/Loki showed `service.version=signoz-primary` and
+then `grafana-stack` after an observability migration, even though
+`service.version` should identify the running app build.
+
+**Lesson:** Use `service.name` for the component, `service.version` for
+the code/release/git SHA, and `deployment.environment` for the runtime
+environment. Do not encode backend names or migration phases in resource
+identity.
+
+**Why:** Misusing resource labels makes debugging feel haunted: filters
+look like services or dependencies that no longer exist.
+
 ## 2026-05-04 — Public examples must stay generic
 
 **Trigger:** A public-readiness sweep found docs and examples that still

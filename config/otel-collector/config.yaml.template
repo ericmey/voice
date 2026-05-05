@@ -6,7 +6,7 @@
 #   metrics/docker     docker_stats receiver     service.name=<container.name> (per container)
 #   metrics/httpcheck  httpcheck receiver        service.name=httpcheck
 #   logs/openclaw      filelog receiver          service.name=openclaw-gateway
-#   logs/agents        filelog receiver          service.name=openclaw-livekit-<agent>
+#   logs/agents        filelog receiver          service.name=openclaw-livekit-filelogs
 #
 # Exports OTLP/HTTP to an upstream collector. Override by editing this
 # template before running `make host-collector-install`.
@@ -161,14 +161,13 @@ processors:
         value: file
         action: insert
 
-  # Tag the agent file-log pipeline. service.name is set per-file via the
-  # filename (one filelog instance covers all 3 agents); we let the body
-  # parser pick that up if needed, but otherwise default to a generic
-  # tag and rely on the OTLP-pushed logs for the per-agent breakdown.
+  # Tag the agent file-log fallback pipeline separately from the native
+  # per-agent OTLP logs. This avoids a phantom "host" service in Grafana
+  # while still making file-scraped records easy to identify.
   resource/agent_logs:
     attributes:
       - key: service.name
-        value: openclaw-livekit-host
+        value: openclaw-livekit-filelogs
         action: upsert
       - key: openclaw.log.source
         value: file

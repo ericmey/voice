@@ -15,7 +15,7 @@ OPENCLAW_OTEL_ENABLED=true
 OPENCLAW_OTLP_ENDPOINT=http://localhost:4318/v1/traces
 OPENCLAW_OTEL_LOGS_ENABLED=true
 OPENCLAW_DEPLOYMENT_ENVIRONMENT=local
-OPENCLAW_SERVICE_VERSION=dev
+OPENCLAW_SERVICE_VERSION=dev  # use a release, image tag, or git SHA in deploys
 ```
 
 Then redeploy the launchd agents:
@@ -78,7 +78,7 @@ The rendered collector config can scrape:
 | container names | `metrics/docker` | Docker CPU, memory, network, block IO |
 | `httpcheck` | `metrics/httpcheck` | Unauthenticated dependency reachability checks |
 | `openclaw-gateway` | `logs/openclaw` | Gateway file logs, if present |
-| `openclaw-livekit-host` | `logs/agents` | Agent log files as a fallback path |
+| `openclaw-livekit-filelogs` | `logs/agents` | Agent log files as a fallback path |
 
 Before installing, edit
 [config/otel-collector/config.yaml.template](../config/otel-collector/config.yaml.template)
@@ -92,7 +92,7 @@ if your upstream collector is not `http://localhost:4318`.
 | --- | --- |
 | `service.name` | `openclaw-livekit-<agent>` |
 | `service.namespace` | `openclaw` |
-| `service.version` | `$OPENCLAW_SERVICE_VERSION` |
+| `service.version` | `$OPENCLAW_SERVICE_VERSION` or deploy-time git SHA |
 | `service.instance.id` | unique per process |
 | `deployment.environment` | `$OPENCLAW_DEPLOYMENT_ENVIRONMENT` |
 | `host.name` | hostname |
