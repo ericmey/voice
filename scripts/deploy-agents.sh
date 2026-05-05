@@ -27,6 +27,18 @@ abs_path() {
   esac
 }
 
+default_openclaw_bin() {
+  if [[ -x "${HOME}/.openclaw/bin/openclaw" ]]; then
+    printf "%s/.openclaw/bin/openclaw\n" "${HOME}"
+    return
+  fi
+  if command -v openclaw >/dev/null 2>&1; then
+    command -v openclaw
+    return
+  fi
+  printf "/opt/homebrew/bin/openclaw\n"
+}
+
 # ---- preflight -------------------------------------------------------
 [[ -r "${TEMPLATE}" ]] || die "template not found: ${TEMPLATE}"
 [[ -r "${SECRETS}"  ]] || die "secrets file not found: ${SECRETS} (copy config/secrets.env.example and fill in)"
@@ -36,7 +48,7 @@ abs_path() {
 set -a; . "${SECRETS}"; set +a
 
 VOICE_LOGS="$(abs_path "${LIVEKIT_VOICE_LOGS:-${REPO_ROOT}/logs/voice}")"
-OPENCLAW_BIN="${OPENCLAW_BIN:-/opt/homebrew/bin/openclaw}"
+OPENCLAW_BIN="${OPENCLAW_BIN:-$(default_openclaw_bin)}"
 LIVEKIT_EGRESS_HOST_RECORDINGS_DIR="$(
   abs_path "${LIVEKIT_EGRESS_HOST_RECORDINGS_DIR:-${VOICE_LOGS}/recordings}"
 )"
@@ -52,6 +64,11 @@ mkdir -p "${VOICE_LOGS}" "${LAUNCH_AGENTS_DIR}"
 : "${MUSUBI_V2_BASE_URL:?MUSUBI_V2_BASE_URL missing from ${SECRETS}}"
 : "${MUSUBI_V2_TOKEN_NYLA:?MUSUBI_V2_TOKEN_NYLA missing from ${SECRETS}}"
 : "${MUSUBI_V2_TOKEN_AOI:?MUSUBI_V2_TOKEN_AOI missing from ${SECRETS}}"
+case "${OPENCLAW_OTEL_ENABLED:-true}" in
+  1|true|TRUE|yes|YES)
+    : "${OPENCLAW_OTLP_ENDPOINT:?OPENCLAW_OTLP_ENDPOINT missing from ${SECRETS} while OPENCLAW_OTEL_ENABLED is true}"
+    ;;
+esac
 
 # Agents to deploy (default: all three). Build the array from positional
 # args, or fall back to all three if none were given — the explicit $#
@@ -147,7 +164,7 @@ render_plist() {
     -e "s|{{OPENCLAW_OTEL_HTTP_INSTRUMENTATION}}|${OPENCLAW_OTEL_HTTP_INSTRUMENTATION:-true}|g" \
     -e "s|{{OPENCLAW_DEPLOYMENT_ENVIRONMENT}}|${OPENCLAW_DEPLOYMENT_ENVIRONMENT:-local}|g" \
     -e "s|{{OPENCLAW_SERVICE_VERSION}}|${OPENCLAW_SERVICE_VERSION:-dev}|g" \
-    -e "s|{{OPENCLAW_OTLP_ENDPOINT}}|${OPENCLAW_OTLP_ENDPOINT:-http://localhost:4318/v1/traces}|g" \
+    -e "s|{{OPENCLAW_OTLP_ENDPOINT}}|${OPENCLAW_OTLP_ENDPOINT:-}|g" \
     -e "s|{{OPENCLAW_OTLP_HEADERS}}|${OPENCLAW_OTLP_HEADERS:-}|g" \
     -e "s|{{OPENCLAW_OTEL_LOGS_ENABLED}}|${OPENCLAW_OTEL_LOGS_ENABLED:-true}|g" \
     -e "s|{{OPENCLAW_OTLP_LOGS_ENDPOINT}}|${OPENCLAW_OTLP_LOGS_ENDPOINT:-}|g" \

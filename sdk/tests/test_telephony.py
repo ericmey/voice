@@ -27,8 +27,10 @@ def _sip_participant(
     call_id: str = "abc123@sip",
     caller_from: str = "+14155551234",
     dialed: str = "+14155559999",
+    identity: str = "sip_+14155551234",
 ) -> SimpleNamespace:
     return SimpleNamespace(
+        identity=identity,
         kind=rtc.ParticipantKind.PARTICIPANT_KIND_SIP,
         attributes={
             "sip.callID": call_id,
@@ -59,6 +61,30 @@ async def test_resolve_caller_returns_sip_info_when_participant_present() -> Non
         dialed_number="+14155559999",
         source="sip",
     )
+
+
+@pytest.mark.asyncio
+async def test_resolve_caller_falls_back_to_sip_identity_for_caller_from() -> None:
+    participant = _sip_participant(caller_from="", identity="sip_+13179957066")
+    participant.attributes.pop("sip.from")
+    ctx = _make_ctx(metadata=None, participants={"p1": participant})
+
+    info = await resolve_caller(ctx, sip_wait_seconds=0.5)
+
+    assert info.source == "sip"
+    assert info.caller_from == "+13179957066"
+
+
+@pytest.mark.asyncio
+async def test_resolve_caller_ignores_non_number_sip_identity() -> None:
+    participant = _sip_participant(caller_from="", identity="sip_test-call")
+    participant.attributes.pop("sip.from")
+    ctx = _make_ctx(metadata=None, participants={"p1": participant})
+
+    info = await resolve_caller(ctx, sip_wait_seconds=0.5)
+
+    assert info.source == "sip"
+    assert info.caller_from is None
 
 
 @pytest.mark.asyncio

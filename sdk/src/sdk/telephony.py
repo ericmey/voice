@@ -1,9 +1,11 @@
 """Caller info resolver for SIP-trunked voice calls.
 
 ``livekit-sip`` creates the room and the caller joins as a ``SIP`` kind
-participant before the agent's entrypoint runs. Caller identity lives
-on ``participant.attributes`` keyed by ``sip.from``, ``sip.callID``,
-``sip.trunkPhoneNumber``.
+participant before the agent's entrypoint runs. Caller identity normally
+lives on ``participant.attributes`` keyed by ``sip.from``, ``sip.callID``,
+``sip.trunkPhoneNumber``. Some deployments omit ``sip.from`` while still
+using the caller number in the participant identity, for example
+``sip_+14155551234``.
 
 ``resolve_caller()`` reads those attributes and returns a
 ``CallerInfo`` for the agent's entrypoint to use. Call it AFTER
@@ -87,10 +89,20 @@ def _caller_info_from_sip_participant(
     attrs = participant.attributes or {}
     return CallerInfo(
         call_id=attrs.get("sip.callID"),
-        caller_from=attrs.get("sip.from"),
+        caller_from=attrs.get("sip.from") or _caller_from_identity(participant.identity),
         dialed_number=attrs.get("sip.trunkPhoneNumber"),
         source="sip",
     )
+
+
+def _caller_from_identity(identity: str | None) -> str | None:
+    """Extract a caller number from LiveKit SIP participant identity."""
+    if not identity or not identity.startswith("sip_"):
+        return None
+    caller = identity.removeprefix("sip_").strip()
+    if caller.startswith("+") and caller[1:].isdigit():
+        return caller
+    return None
 
 
 async def resolve_caller(

@@ -54,9 +54,10 @@
       <string>{{LIVEKIT_VOICE_LOGS}}</string>
       <key>OPENCLAW_AGENT_NAME</key>
       <string>{{AGENT_NAME}}</string>
-      <!-- OPENCLAW_BIN: rendered from env at deploy time. Falls back to
-           /opt/homebrew/bin/openclaw (ARM Homebrew default). Intel Macs
-           or custom install paths should set OPENCLAW_BIN before deploy. -->
+      <!-- OPENCLAW_BIN: rendered from env at deploy time. The deploy
+           script prefers ~/.openclaw/bin/openclaw, then PATH, then the
+           ARM Homebrew path. Custom install paths should set
+           OPENCLAW_BIN before deploy. -->
       <key>OPENCLAW_BIN</key>
       <string>{{OPENCLAW_BIN}}</string>
       <key>LIVEKIT_URL</key>

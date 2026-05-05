@@ -159,6 +159,21 @@ Search snippets are not enough.
 or partial tables. A well-intentioned "fix" can downgrade or break a
 working agent.
 
+## 2026-05-05 — LiveKit SIP identity can carry caller number
+
+**Trigger:** A real inbound SIP call resolved `source=sip` but
+`caller_from=None` because the SIP participant attributes omitted
+`sip.from`, while the participant identity was still
+`sip_+13179957066`.
+
+**Lesson:** Treat SIP participant attributes as authoritative when
+present, but fall back to the `sip_<E.164>` participant identity for
+caller number enrichment.
+
+**Why:** Missing caller numbers make traces, post-call review, memory,
+and callback tooling harder to trust even when the call itself was
+correctly routed.
+
 ## 2026-05-04 — Public examples must stay generic
 
 **Trigger:** A public-readiness sweep found docs and examples that still
