@@ -60,6 +60,32 @@ Live mode expects OpenClaw Gateway hooks to be enabled and constrained with
 `hooks.allowedAgentIds`. The harness waits only for Gateway acceptance; the
 target OpenClaw agent completes the work through its normal channels.
 
+## Loki Validation
+
+After every live hook smoke, query Loki for the same time window. Gateway
+acceptance only proves the request entered OpenClaw; Loki catches hidden
+background failures such as stuck hook sessions, provider timeouts, hook
+rejections, and OTLP export errors.
+
+```bash
+GRAFANA_URL=http://localhost:3000 \
+GRAFANA_TOKEN=... \
+uv run python sdk/scripts/loki_smoke_check.py --since 5m
+```
+
+For a remote Grafana instance, set `GRAFANA_URL` to that Grafana base URL.
+`GRAFANA_LOKI_UID` defaults to `loki`, which matches the usual datasource
+UID. The check exits non-zero if any matching failure/stall records are found.
+
+When validating a known test window, prefer an explicit Unix start time so
+old deploy or restart noise does not contaminate the result:
+
+```bash
+GRAFANA_URL=http://grafana.example.test:3000 \
+GRAFANA_TOKEN=... \
+uv run python sdk/scripts/loki_smoke_check.py --start "$(date +%s)"
+```
+
 ## What This Does Not Test
 
 This harness does not test SIP routing, LiveKit room dispatch, audio, VAD,

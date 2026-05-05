@@ -8,7 +8,7 @@ SHELL := /usr/bin/env bash
 .PHONY: help bootstrap up down logs health test \
         deploy teardown cycle \
         register-sip tail truncate-logs \
-        voice-harness \
+        voice-harness loki-smoke \
         sync-venvs lint typecheck verify \
         host-collector-install host-collector-restart host-collector-status \
         host-collector-logs host-collector-uninstall
@@ -71,6 +71,9 @@ truncate-logs: ## Zero out all agent logs (clean baseline for testing)
 
 voice-harness: ## Exercise voice OpenClaw delegation tools without a live phone call
 	uv run python sdk/scripts/voice_tool_harness.py
+
+loki-smoke: ## Query Grafana/Loki for post-smoke-test failures (requires GRAFANA_TOKEN)
+	uv run python sdk/scripts/loki_smoke_check.py
 
 # ---- Observability backend ----------------------------------------
 #
