@@ -1,5 +1,6 @@
 """Tests for SessionsToolsMixin — OpenClaw delegation and callback guardrails."""
 
+import pytest
 from sdk.config import AgentConfig
 from sdk.constants import (
     ERIC_DISCORD_DM,
@@ -37,6 +38,27 @@ def test_delivery_target_resolves_room_to_agent_config(agent):
     assert agent._delivery_target("room") == NYLA_DISCORD_ROOM
     assert agent._delivery_target("dm") == ERIC_DISCORD_DM
     assert agent._delivery_target("garbage") is None
+
+
+@pytest.mark.asyncio
+async def test_openclaw_delegate_lets_openclaw_use_default_delivery(monkeypatch, agent):
+    calls = []
+
+    async def fake_post_agent_hook(**kwargs):
+        from sdk.openclaw_hooks import OpenClawHookAccepted
+
+        calls.append(kwargs)
+        return OpenClawHookAccepted(run_id="run-1")
+
+    monkeypatch.setattr("tools.sessions.post_agent_hook", fake_post_agent_hook)
+
+    result = await agent._delegate_to_openclaw("yumi", "Research this")
+
+    assert "accepted by OpenClaw" in result
+    assert calls[0]["agent_id"] == "yumi"
+    assert calls[0]["deliver"] is True
+    assert "channel" not in calls[0]
+    assert "to" not in calls[0]
 
 
 def test_delivery_target_follows_overridden_config():

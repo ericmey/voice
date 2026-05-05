@@ -200,8 +200,8 @@ def _print_human(report: dict[str, Any]) -> None:
             print(
                 "     hook="
                 f"agentId={hook.get('agent_id')} "
-                f"channel={hook.get('channel')} "
-                f"to={hook.get('to')} "
+                f"channel={hook.get('channel', '<default>')} "
+                f"to={hook.get('to', '<default>')} "
                 f"timeout={hook.get('timeout_seconds')}"
             )
     if report["mode"] == "mock":

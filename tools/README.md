@@ -54,7 +54,9 @@ Delegation does not talk to Discord, Mizuki, or OpenClaw agent internals
 directly. `openclaw_delegate` posts to the Gateway `/hooks/agent` endpoint
 via [`sdk.openclaw_hooks`](../sdk/src/sdk/openclaw_hooks.py), then returns
 once OpenClaw accepts the request. The target OpenClaw agent owns the work
-and normal delivery behavior.
+and normal delivery behavior. The phone stack intentionally does not force
+a channel/target in the hook payload; `deliver_to="dm"` is carried as a
+plain-language preference in the delegated task.
 
 Configure `OPENCLAW_HOOK_TOKEN` with a dedicated Gateway hook token.
 `OPENCLAW_GATEWAY_HTTP_URL` defaults to `http://127.0.0.1:$GATEWAY_PORT`
@@ -87,7 +89,8 @@ concrete agent class) for per-agent behavior:
 
 - `config.agent_name` — "nyla" | "aoi" | "party" — used for self-reference
   in prompts and as the `--agent` slot in CLI spawns.
-- `config.discord_room` — default target for `deliver_to="room"`.
+- `config.discord_room` — legacy/default room metadata retained for older
+  helper paths; hook delegation lets OpenClaw choose its own delivery route.
 - `config.allowed_delegation_targets` — optional allowlist for
   `openclaw_delegate` (None = no restriction).
 - `config.memory_agent_tag` — tag used when storing memories so recall

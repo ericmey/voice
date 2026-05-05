@@ -39,7 +39,8 @@ async def test_harness_mock_mode_uses_real_agent_tool_shape():
     assert report["tool_visibility"]["academy_selfie"] == "absent"
     assert report["results"][0]["status"] == "accepted"
     assert report["captured_hook_requests"][0]["agent_id"] == "yumi"
-    assert report["captured_hook_requests"][0]["channel"] == "discord"
+    assert "channel" not in report["captured_hook_requests"][0]
+    assert "to" not in report["captured_hook_requests"][0]
 
 
 @pytest.mark.asyncio

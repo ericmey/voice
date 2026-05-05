@@ -94,14 +94,16 @@ class SessionsToolsMixin(Agent):
             return reject
 
         target_key = (deliver_to or "room").strip().lower()
-        reply_target = self._delivery_target(target_key)
-        if reply_target is None:
+        if target_key not in {"room", "dm"}:
             return f"I can't delegate that — deliver_to must be 'room' or 'dm', got '{deliver_to}'."
 
+        private_note = (
+            " Eric explicitly asked for a private/direct result." if target_key == "dm" else ""
+        )
         request_message = (
             f"Eric asked over a phone call with {self.config.agent_name}: {task_value}\n\n"
             "Handle this using your normal OpenClaw tools, skills, memory, and delivery behavior. "
-            "Do not assume the request needs special voice-agent routing."
+            f"Do not assume the request needs special voice-agent routing.{private_note}"
         )
 
         try:
@@ -110,8 +112,6 @@ class SessionsToolsMixin(Agent):
                 message=request_message,
                 name=f"Voice delegation from {self.config.agent_name}",
                 deliver=True,
-                channel="discord",
-                to=reply_target,
                 timeout_seconds=600,
             )
         except OpenClawHookConfigError as err:
@@ -123,13 +123,16 @@ class SessionsToolsMixin(Agent):
             logger.error("[voice-tools] openclaw_delegate failed: %s", err)
             return f"I couldn't hand that to {agent_value} — OpenClaw didn't accept the request ({err})."
         logger.info(
-            "[voice-tools] openclaw_delegate → %s run_id=%s (deliver: %s)",
+            "[voice-tools] openclaw_delegate → %s run_id=%s",
             agent_value,
             accepted.run_id,
-            reply_target,
         )
-        human_target = "my room" if target_key == "room" else "your DMs"
-        return f"Task accepted by OpenClaw for {agent_value}. Results will land in {human_target}."
+        if target_key == "dm":
+            return (
+                f"Task accepted by OpenClaw for {agent_value}. I included that you want the "
+                "result privately."
+            )
+        return f"Task accepted by OpenClaw for {agent_value}. Results will land through OpenClaw's normal route."
 
     @function_tool
     async def openclaw_delegate(self, agent_id: str, task: str, deliver_to: str = "room") -> str:
