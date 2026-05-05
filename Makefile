@@ -72,8 +72,8 @@ truncate-logs: ## Zero out all agent logs (clean baseline for testing)
 voice-harness: ## Exercise voice OpenClaw delegation tools without a live phone call
 	uv run python sdk/scripts/voice_tool_harness.py
 
-loki-smoke: ## Query Grafana/Loki for post-smoke-test failures (requires GRAFANA_TOKEN)
-	uv run python sdk/scripts/loki_smoke_check.py
+loki-smoke: ## Query Grafana/Loki for post-smoke-test failures (requires GRAFANA_TOKEN; pass LOKI_ARGS="--since 5m")
+	uv run python sdk/scripts/loki_smoke_check.py $${LOKI_ARGS:-}
 
 # ---- Observability backend ----------------------------------------
 #

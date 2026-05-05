@@ -86,6 +86,15 @@ GRAFANA_TOKEN=... \
 uv run python sdk/scripts/loki_smoke_check.py --start "$(date +%s)"
 ```
 
+The Makefile wrapper accepts the same script flags through `LOKI_ARGS`:
+
+```bash
+GRAFANA_URL=http://grafana.example.test:3000 \
+GRAFANA_TOKEN=... \
+LOKI_ARGS="--start 1778001096" \
+make loki-smoke
+```
+
 ## What This Does Not Test
 
 This harness does not test SIP routing, LiveKit room dispatch, audio, VAD,
