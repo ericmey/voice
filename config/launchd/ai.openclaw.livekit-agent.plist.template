@@ -70,6 +70,17 @@
       <string>{{GOOGLE_API_KEY}}</string>
       <key>GATEWAY_AUTH_TOKEN</key>
       <string>{{GATEWAY_AUTH_TOKEN}}</string>
+      <key>GATEWAY_PORT</key>
+      <string>{{GATEWAY_PORT}}</string>
+      <!-- Dedicated Gateway hooks auth for OpenClaw delegation. This is
+           intentionally separate from GATEWAY_AUTH_TOKEN; see
+           docs/OPERATIONS.md. -->
+      <key>OPENCLAW_HOOK_TOKEN</key>
+      <string>{{OPENCLAW_HOOK_TOKEN}}</string>
+      <key>OPENCLAW_GATEWAY_HTTP_URL</key>
+      <string>{{OPENCLAW_GATEWAY_HTTP_URL}}</string>
+      <key>OPENCLAW_HOOKS_PATH</key>
+      <string>{{OPENCLAW_HOOKS_PATH}}</string>
       <key>DISCORD_BOT_TOKEN</key>
       <string>{{DISCORD_BOT_TOKEN}}</string>
       <!-- Canonical Musubi (v0.6.0+) — base URL shared by every agent,

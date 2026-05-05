@@ -110,7 +110,7 @@ agent_label() {
 
 agent_discord_token() {
   # Per-agent Discord bot identity. Nyla is the orchestrator; Party
-  # reuses Nyla's token so academy tools route through the same bot.
+  # reuses Nyla's token.
   # If Party ever gets her own bot identity, add DISCORD_TOKEN_PARTY
   # to the preflight checks below and map it here.
   case "$1" in
@@ -158,6 +158,10 @@ render_plist() {
     -e "s|{{LIVEKIT_API_SECRET}}|${LIVEKIT_API_SECRET}|g" \
     -e "s|{{GOOGLE_API_KEY}}|${GOOGLE_API_KEY}|g" \
     -e "s|{{GATEWAY_AUTH_TOKEN}}|${GATEWAY_AUTH_TOKEN}|g" \
+    -e "s|{{GATEWAY_PORT}}|${GATEWAY_PORT:-18789}|g" \
+    -e "s|{{OPENCLAW_HOOK_TOKEN}}|${OPENCLAW_HOOK_TOKEN:-}|g" \
+    -e "s|{{OPENCLAW_GATEWAY_HTTP_URL}}|${OPENCLAW_GATEWAY_HTTP_URL:-http://127.0.0.1:${GATEWAY_PORT:-18789}}|g" \
+    -e "s|{{OPENCLAW_HOOKS_PATH}}|${OPENCLAW_HOOKS_PATH:-/hooks}|g" \
     -e "s|{{DISCORD_BOT_TOKEN}}|${discord_token}|g" \
     -e "s|{{MUSUBI_V2_BASE_URL}}|${MUSUBI_V2_BASE_URL}|g" \
     -e "s|{{MUSUBI_V2_TOKEN}}|${musubi_token}|g" \

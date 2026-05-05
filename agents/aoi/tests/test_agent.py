@@ -48,11 +48,6 @@ class TestAgentClass:
 
         assert issubclass(agent_module.AoiAgent, SessionsToolsMixin)
 
-    def test_inherits_academy_tools(self, agent_module):
-        from tools.academy import AcademyToolsMixin
-
-        assert issubclass(agent_module.AoiAgent, AcademyToolsMixin)
-
     def test_construction_with_defaults(self, agent_module):
         agent = agent_module.AoiAgent(instructions="test")
         assert agent._caller_from is None
@@ -83,10 +78,7 @@ class TestAgentClass:
             "get_weather",
             "musubi_recent",
             "musubi_remember",
-            "sessions_send",
-            "sessions_spawn",
-            "academy_selfie",
-            "academy_send",
+            "openclaw_delegate",
             "household_status",
         ]
         for tool in expected:
@@ -180,11 +172,6 @@ class TestSDKImports:
         from tools.sessions import SessionsToolsMixin
 
         assert SessionsToolsMixin is not None
-
-    def test_import_academy_tools(self):
-        from tools.academy import AcademyToolsMixin
-
-        assert AcademyToolsMixin is not None
 
 
 class TestProviderImports:

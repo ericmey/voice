@@ -1,14 +1,11 @@
-"""Tests for mixin composition — verifying all 9 tools on a composed agent."""
+"""Tests for mixin composition — verifying active tools on a composed agent."""
 
 EXPECTED_TOOLS = [
     "get_current_time",
     "get_weather",
     "musubi_recent",
     "musubi_remember",
-    "sessions_send",
-    "sessions_spawn",
-    "academy_selfie",
-    "academy_send",
+    "openclaw_delegate",
 ]
 
 # schedule_callback is deliberately disabled — the @function_tool decorator
@@ -30,7 +27,9 @@ def test_exactly_eight_active_tools(agent):
         attr = getattr(agent, name, None)
         if attr is not None and callable(attr):
             found.append(name)
-    assert len(found) == 8, f"Expected 8 tools, found {len(found)}: {found}"
+    assert len(found) == len(EXPECTED_TOOLS), (
+        f"Expected {len(EXPECTED_TOOLS)} tools, found {len(found)}: {found}"
+    )
 
 
 def test_openclaw_request_absent(agent):
@@ -40,8 +39,7 @@ def test_openclaw_request_absent(agent):
 
 
 def test_mro_includes_all_mixins(agent):
-    """MRO includes all four mixin classes."""
-    from tools.academy import AcademyToolsMixin
+    """MRO includes the shared tool mixins."""
     from tools.core import CoreToolsMixin
     from tools.memory import MemoryToolsMixin
     from tools.sessions import SessionsToolsMixin
@@ -50,4 +48,3 @@ def test_mro_includes_all_mixins(agent):
     assert CoreToolsMixin in mro
     assert MemoryToolsMixin in mro
     assert SessionsToolsMixin in mro
-    assert AcademyToolsMixin in mro

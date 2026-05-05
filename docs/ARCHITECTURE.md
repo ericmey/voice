@@ -46,15 +46,16 @@ Shared Python package imported by the three agents. Contains:
 - **`config.py`** — `AgentConfig` dataclass (agent_name, memory_agent_tag,
   discord_room, allowed_delegation_targets). Per-agent operational identity;
   the mixin stack reads `self.config.*` instead of hardcoded constants.
-- **`tools/`** — Core, Memory, Sessions, Academy mixins that each agent
+- **`tools/`** — Core, Memory, and OpenClaw delegation mixins that each agent
   inherits. Function-tool decorated methods expose capabilities to the
   voice model.
 - **`telephony.py`** — `resolve_caller()` reads the SIP participant's
   attributes from a connected room. One hop behind the agent entrypoint.
-- **`cli_spawner.py`** — detached subprocess spawners for actuator tools
-  that shell out to the `openclaw` CLI. Voice tools use the async wrapper
-  so CLI fork/exec does not block the realtime event loop. Gated by
-  `OPENCLAW_VOICE_TOOLS_DRY_RUN=1` for tests and debugging.
+- **`openclaw_hooks.py`** — async Gateway `/hooks/agent` client used by
+  voice tools to hand work to the real OpenClaw agents without shelling
+  out or owning downstream channel routing.
+- **`cli_spawner.py`** — legacy detached subprocess helper retained for
+  disabled callback code while that path is redesigned.
 - **`musubi_v2_client.py`** — async HTTP client for the canonical Musubi API.
 - **`trace.py`**, **`transcript.py`**, **`env.py`** — ancillary.
 
@@ -93,9 +94,9 @@ Shared LiveKit `@function_tool` mixins composed by the agents. See
 6. Agent starts its session (`AgentSession.start`) and the model begins
    replying in audio.
 7. Function-tool calls during the session are regular Python async
-   methods; any actuator-shaped tool (delegation, memory, images) goes
-   through `cli_spawner.fire_and_forget_async` to the configured
-   `openclaw` CLI.
+   methods. Delegation posts to OpenClaw Gateway `/hooks/agent` and
+   returns once the Gateway accepts the request; the target OpenClaw
+   agent owns downstream tools, skills, and channel delivery.
 
 ## Why agents aren't in docker-compose
 

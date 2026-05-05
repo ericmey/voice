@@ -169,7 +169,7 @@ class TestMemoryTools:
 
 
 class TestDelegationTools:
-    """Test delegation: sessions_send, academy_selfie, academy_send."""
+    """Test default delegation through OpenClaw."""
 
     @pytest.mark.asyncio
     async def test_delegate_and_images(self, agent):
@@ -183,19 +183,19 @@ class TestDelegationTools:
                 user_input="Have Yumi research what's new with LiveKit agents this week."
             )
             await r
-            r.expect.contains_function_call(name="sessions_send")
+            r.expect.contains_function_call(name="openclaw_delegate")
             await asyncio.sleep(TURN_GAP)
 
             r = await session.run(user_input="Send me a selfie.")
             await r
-            r.expect.contains_function_call(name="academy_selfie")
+            r.expect.contains_function_call(name="openclaw_delegate")
             await asyncio.sleep(TURN_GAP)
 
             r = await session.run(
                 user_input="Get Mizuki to draw Hana in a summer dress at the park."
             )
             await r
-            r.expect.contains_function_call(name="academy_send")
+            r.expect.contains_function_call(name="openclaw_delegate")
 
 
 class TestCallbackTool:

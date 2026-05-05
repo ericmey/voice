@@ -216,3 +216,17 @@ operator runbook history in local secrets or private notes.
 **Why:** Example values get copied into real deployments. Private labels
 also make a public repo harder to evaluate and can expose internal
 topology without adding useful context.
+
+## 2026-05-05 — Voice agents should delegate, not reroute
+
+**Trigger:** The phone agents had dedicated `academy_*` and session tools
+that knew about Mizuki, Discord targets, and the local `openclaw` CLI.
+
+**Lesson:** Treat the voice agents as live conversation front doors into
+OpenClaw, not separate implementations of OpenClaw personas. Default to a
+single fire-and-forget Gateway hook delegation path; only add blocking
+ask-style behavior when a real async completion channel exists.
+
+**Why:** Duplicating OpenClaw routing in the voice stack makes calls more
+fragile, slower, and harder to debug. The real OpenClaw agent should own
+skills, tools, delivery, and channel-specific behavior.

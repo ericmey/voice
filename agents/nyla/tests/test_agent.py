@@ -48,11 +48,6 @@ class TestAgentClass:
 
         assert issubclass(agent_module.NylaAgent, SessionsToolsMixin)
 
-    def test_inherits_academy_tools(self, agent_module):
-        from tools.academy import AcademyToolsMixin
-
-        assert issubclass(agent_module.NylaAgent, AcademyToolsMixin)
-
     def test_construction_with_defaults(self, agent_module):
         agent = agent_module.NylaAgent(instructions="test")
         assert agent._caller_from is None
@@ -83,10 +78,7 @@ class TestAgentClass:
             "get_weather",
             "musubi_recent",
             "musubi_remember",
-            "sessions_send",
-            "sessions_spawn",
-            "academy_selfie",
-            "academy_send",
+            "openclaw_delegate",
             "household_status",
         ]
         for tool in expected:
@@ -98,13 +90,13 @@ class TestAgentClass:
         must NOT be @function_tool-decorated so the voice model can't
         discover or fire it.
 
-        Compare against sessions_send — that one IS decorated and
+        Compare against openclaw_delegate — that one IS decorated and
         becomes a FunctionTool instance; schedule_callback stays a
         plain coroutine function so LiveKit's tool scanner skips it.
         """
         import inspect
 
-        send = agent_module.NylaAgent.sessions_send
+        send = agent_module.NylaAgent.openclaw_delegate
         callback = agent_module.NylaAgent.schedule_callback
         # The enabled tool is a FunctionTool wrapper.
         assert type(send).__name__ == "FunctionTool"
@@ -187,11 +179,6 @@ class TestSDKImports:
         from tools.sessions import SessionsToolsMixin
 
         assert SessionsToolsMixin is not None
-
-    def test_import_academy_tools(self):
-        from tools.academy import AcademyToolsMixin
-
-        assert AcademyToolsMixin is not None
 
     def test_import_env(self):
         from sdk.env import load_env

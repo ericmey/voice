@@ -31,8 +31,8 @@ class AgentConfig:
             delegates with ``deliver_to="room"``. Typically the agent's
             own Discord channel.
         allowed_delegation_targets: Optional whitelist of agent ids this
-            voice agent may delegate to via ``sessions_send`` /
-            ``sessions_spawn``. ``None`` means no restriction (household
+            voice agent may delegate to via ``openclaw_delegate``.
+            ``None`` means no restriction (household
             router behavior — Nyla's default). A frozenset means any
             ``agent_id`` outside the set is rejected with an error
             message rather than firing.

@@ -48,11 +48,6 @@ class TestAgentClass:
 
         assert issubclass(agent_module.PartyAgent, SessionsToolsMixin)
 
-    def test_inherits_academy_tools(self, agent_module):
-        from tools.academy import AcademyToolsMixin
-
-        assert issubclass(agent_module.PartyAgent, AcademyToolsMixin)
-
     def test_config_is_nyla_identity(self, agent_module):
         """Harem World line uses Nyla's operational identity — same person,
         different voice engine."""
@@ -87,10 +82,7 @@ class TestAgentClass:
             "get_weather",
             "musubi_recent",
             "musubi_remember",
-            "sessions_send",
-            "sessions_spawn",
-            "academy_selfie",
-            "academy_send",
+            "openclaw_delegate",
         ]
         for tool in expected:
             assert hasattr(agent, tool), f"Missing tool: {tool}"

@@ -1,4 +1,4 @@
-"""Tests for SessionsToolsMixin — sessions_send, sessions_spawn, schedule_callback."""
+"""Tests for SessionsToolsMixin — OpenClaw delegation and callback guardrails."""
 
 from sdk.config import AgentConfig
 from sdk.constants import (
@@ -8,14 +8,9 @@ from sdk.constants import (
 from tools.sessions import SessionsToolsMixin
 
 
-def test_sessions_mixin_has_sessions_send():
-    assert hasattr(SessionsToolsMixin, "sessions_send")
-    assert callable(SessionsToolsMixin.sessions_send)
-
-
-def test_sessions_mixin_has_sessions_spawn():
-    assert hasattr(SessionsToolsMixin, "sessions_spawn")
-    assert callable(SessionsToolsMixin.sessions_spawn)
+def test_sessions_mixin_has_openclaw_delegate():
+    assert hasattr(SessionsToolsMixin, "openclaw_delegate")
+    assert callable(SessionsToolsMixin.openclaw_delegate)
 
 
 def test_sessions_mixin_has_schedule_callback():
@@ -25,6 +20,7 @@ def test_sessions_mixin_has_schedule_callback():
 
 def test_composed_agent_has_sessions_tools(agent):
     """Session tools are discoverable on a composed agent instance."""
+    assert hasattr(agent, "openclaw_delegate")
     assert hasattr(agent, "sessions_send")
     assert hasattr(agent, "sessions_spawn")
     assert hasattr(agent, "schedule_callback")

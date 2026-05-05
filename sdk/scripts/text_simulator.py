@@ -81,10 +81,10 @@ CONVERSATION: list[tuple[str, str]] = [
         "Ha, that's right. You know, sometimes I wonder if we spend too much time on technical stuff and not enough just hanging out.",
         "conversational — should respond naturally, NO tool call expected",
     ),
-    # 6. Delegate to another agent — fire-and-forget via sessions_send
+    # 6. Delegate to another agent — fire-and-forget via openclaw_delegate
     (
         "Speaking of the other girls, can you ping Hana and ask her how the livekit migration is going? I want to make sure she's in the loop.",
-        "TOOL: sessions_send — should fire-and-forget a message to Hana",
+        "TOOL: openclaw_delegate — should fire-and-forget a message to Hana",
     ),
     # 7. Casual wind-down
     (

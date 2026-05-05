@@ -17,7 +17,6 @@ from livekit.plugins.google.tools import GoogleSearch
 from sdk.config import NYLA_DEFAULT_CONFIG, AgentConfig
 from sdk.env import load_env
 
-from tools.academy import AcademyToolsMixin
 from tools.core import CoreToolsMixin
 from tools.memory import MusubiToolsMixin
 from tools.sessions import SessionsToolsMixin
@@ -54,7 +53,6 @@ class BaseRealtimeAgent(
     CoreToolsMixin,
     MusubiToolsMixin,
     SessionsToolsMixin,
-    AcademyToolsMixin,
     Agent,
 ):
     """Base class for realtime Gemini-native-audio voice agents.

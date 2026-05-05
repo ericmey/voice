@@ -5,8 +5,7 @@ Each tool lives in a **mixin class**; agents compose the mixins they want
 in their `__mro__`:
 
 ```python
-class NylaAgent(CoreToolsMixin, MusubiToolsMixin, SessionsToolsMixin,
-                AcademyToolsMixin, Agent):
+class NylaAgent(CoreToolsMixin, MusubiToolsMixin, SessionsToolsMixin, Agent):
     ...
 ```
 
@@ -23,10 +22,7 @@ exposes them to the voice model as callable tools.
 | `musubi_search` | [memory.py](src/tools/memory.py) | `MusubiToolsMixin` | Cross-channel hybrid retrieve (`<tenant>/*/episodic`, deep mode, includes provisional) | `query`, `limit=5` |
 | `musubi_remember` | [memory.py](src/tools/memory.py) | `MusubiToolsMixin` | Persist a memory for future recall (canonical Musubi episodic) | `content`, `topics=[]`, `importance=7` |
 | `musubi_think` | [memory.py](src/tools/memory.py) | `MusubiToolsMixin` | Presence-to-presence thought delivery (canonical API) | `to_presence`, `content`, `channel="default"` |
-| `sessions_send` | [sessions.py](src/tools/sessions.py) | `SessionsToolsMixin` | Send a task/message to another AI agent | `agent_id`, `message`, `deliver_to="room"` |
-| `sessions_spawn` | [sessions.py](src/tools/sessions.py) | `SessionsToolsMixin` | Spawn a new agent session to handle a task | `agent_id`, `task`, `deliver_to="room"` |
-| `academy_selfie` | [academy.py](src/tools/academy.py) | `AcademyToolsMixin` | Request a selfie of the speaking agent from Mizuki | `mood`, `nsfw=False` |
-| `academy_send` | [academy.py](src/tools/academy.py) | `AcademyToolsMixin` | Request an image of any character from Mizuki | `character`, `prompt`, `rating="general"` |
+| `openclaw_delegate` | [sessions.py](src/tools/sessions.py) | `SessionsToolsMixin` | Fire-and-forget work to an OpenClaw agent via Gateway hooks | `agent_id`, `task`, `deliver_to="room"` |
 
 ### Disabled but preserved
 
@@ -42,7 +38,6 @@ exposes them to the voice model as callable tools.
 | `MusubiToolsMixin` | nyla, aoi, party |
 | `MemoryToolsMixin` | Back-compat alias for `MusubiToolsMixin` |
 | `SessionsToolsMixin` | nyla, aoi, party |
-| `AcademyToolsMixin` | nyla, aoi, party |
 
 ## Musubi Canonical API
 
@@ -55,15 +50,18 @@ recall and write to their own `<agent>/<channel>/episodic` namespace.
 
 ## How tools reach side effects
 
-Actuator-shaped tools (Discord messaging, image generation, delegation)
-don't talk to Discord / ComfyUI / cron directly. They spawn the OpenClaw
-CLI via [`sdk.cli_spawner.fire_and_forget_async`](../sdk/src/sdk/cli_spawner.py)
-from voice-tool coroutines, with an explicit argv — safe, testable, no
-shell-injection surface and no synchronous fork on the voice event loop.
+Delegation does not talk to Discord, Mizuki, or OpenClaw agent internals
+directly. `openclaw_delegate` posts to the Gateway `/hooks/agent` endpoint
+via [`sdk.openclaw_hooks`](../sdk/src/sdk/openclaw_hooks.py), then returns
+once OpenClaw accepts the request. The target OpenClaw agent owns the work
+and normal delivery behavior.
 
-The `OPENCLAW_VOICE_TOOLS_DRY_RUN=1` env var short-circuits every spawn
-to a logged no-op — lets tests exercise the full tool path without firing
-real Discord messages or kicking off real agent sessions.
+Configure `OPENCLAW_HOOK_TOKEN` with a dedicated Gateway hook token.
+`OPENCLAW_GATEWAY_HTTP_URL` defaults to `http://127.0.0.1:$GATEWAY_PORT`
+when unset, and `OPENCLAW_HOOKS_PATH` defaults to `/hooks`.
+
+The remaining CLI spawner is preserved only for disabled callback code
+while the callback redesign is pending.
 
 ## Adding a new tool
 
@@ -84,7 +82,7 @@ concrete agent class) for per-agent behavior:
   in prompts and as the `--agent` slot in CLI spawns.
 - `config.discord_room` — default target for `deliver_to="room"`.
 - `config.allowed_delegation_targets` — optional allowlist for
-  `sessions_send` / `sessions_spawn` (None = no restriction).
+  `openclaw_delegate` (None = no restriction).
 - `config.memory_agent_tag` — tag used when storing memories so recall
   can filter per-agent.
 

@@ -6,8 +6,8 @@ Registers as "phone-party" with LiveKit. Uses separate components:
   - LLM: Gemini 3.1 Flash-Lite Preview (text model, not multimodal)
   - TTS: ElevenLabs Flash v2.5
 
-Inherits the full OpenClaw platform tool set (Core, Memory, Sessions,
-Academy). memory_agent_tag defaults to ``"nyla-voice"`` because the
+Inherits the OpenClaw voice tool set (Core, Memory, Delegation).
+memory_agent_tag defaults to ``"nyla-voice"`` because the
 Harem World line is Nyla-on-chained-pipeline — same person, different
 voice engine. Override when/if Party gets its own identity.
 
@@ -43,7 +43,6 @@ from sdk.telephony import resolve_caller
 from sdk.trace import trace
 from sdk.tracing import attach_current_span_metadata, wire_otel_shutdown_flush
 from sdk.transcript import wire_transcript_logging
-from tools.academy import AcademyToolsMixin
 from tools.core import CoreToolsMixin
 from tools.memory import MusubiToolsMixin
 from tools.sessions import SessionsToolsMixin
@@ -97,7 +96,6 @@ class PartyAgent(
     CoreToolsMixin,
     MusubiToolsMixin,
     SessionsToolsMixin,
-    AcademyToolsMixin,
     Agent,
 ):
     """Harem World agent with full OpenClaw platform tool set.

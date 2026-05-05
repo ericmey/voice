@@ -1,4 +1,4 @@
-"""SessionsToolsMixin — sessions_send, sessions_spawn, schedule_callback."""
+"""SessionsToolsMixin — hook-backed delegation plus callback guardrails."""
 
 from __future__ import annotations
 
@@ -21,13 +21,14 @@ from sdk.constants import (
     parse_delay_seconds,
     sanitize,
 )
+from sdk.openclaw_hooks import OpenClawHookConfigError, OpenClawHookError, post_agent_hook
 from sdk.trace import trace
 
 logger = logging.getLogger("openclaw-livekit.agent")
 
 
 class SessionsToolsMixin(Agent):
-    """Provides sessions_send, sessions_spawn, and schedule_callback tools.
+    """Provides OpenClaw delegation and the disabled callback implementation.
 
     Reads per-agent routing from ``self.config``:
       - ``config.discord_room`` — target for ``deliver_to="room"``.
@@ -73,103 +74,20 @@ class SessionsToolsMixin(Agent):
             )
         return None
 
-    @function_tool
-    async def sessions_send(self, agent_id: str, message: str, deliver_to: str = "room") -> str:
-        """Send a task or message to another AI agent.
-
-        Invocation Condition: Invoke this tool whenever the user asks you
-        to have another agent do something, delegate a task, tell an agent
-        something, or check with an agent. Examples: "Have Yumi research X",
-        "Tell Aoi to check Y", "Ask Rin about Z". You MUST call this tool
-        to send the task. Describing the action without calling this tool
-        means the agent never receives the message.
-
-        Args:
-            agent_id: The agent name (e.g. 'hana', 'momo', 'aoi', 'rin',
-                'sumi', 'tama', 'yumi').
-            message: The task or message to send to the agent.
-            deliver_to: Where the result should land. Defaults to "room"
-                (your own default Discord room — the right place for ambient
-                background work). Use "dm" ONLY when the user explicitly
-                asks you to DM them, message them directly, or send the
-                result to them privately. Never guess "dm" — default
-                "room" unless the caller said otherwise.
-        """
+    async def _delegate_to_openclaw(
+        self, agent_id: str, task: str, deliver_to: str = "room"
+    ) -> str:
+        """Submit a fire-and-forget OpenClaw agent hook."""
         trace(
-            f"tool=sessions_send agent_id={agent_id!r} deliver_to={deliver_to!r} "
-            f"msg={(message or '')[:60]!r}"
-        )
-        agent_value = (agent_id or "").strip()
-        message_value = (message or "").strip()
-        if not agent_value:
-            return "I can't send that — no agent_id was given."
-        if not message_value:
-            return "I can't send that — the message is empty."
-
-        reject = self._reject_delegation_target(agent_value)
-        if reject is not None:
-            return reject
-
-        target_key = (deliver_to or "room").strip().lower()
-        reply_target = self._delivery_target(target_key)
-        if reply_target is None:
-            return f"I can't send that — deliver_to must be 'room' or 'dm', got '{deliver_to}'."
-
-        try:
-            await fire_and_forget_async(
-                [
-                    "agent",
-                    "--agent",
-                    agent_value,
-                    "--message",
-                    message_value,
-                    "--deliver",
-                    "--reply-channel",
-                    "discord",
-                    "--reply-to",
-                    reply_target,
-                    "--json",
-                ]
-            )
-        except Exception as err:
-            logger.error("[voice-tools] sessions_send spawn failed: %s", err)
-            return f"I couldn't reach {agent_value} — the OpenClaw CLI didn't start ({err})."
-        logger.info(
-            "[voice-tools] sessions_send → %s (deliver: %s)",
-            agent_value,
-            reply_target,
-        )
-        human_target = "my room" if target_key == "room" else "your DMs"
-        return f"Task sent to {agent_value}. Results will post in {human_target} on Discord."
-
-    @function_tool
-    async def sessions_spawn(self, agent_id: str, task: str, deliver_to: str = "room") -> str:
-        """Spawn a new agent session to handle a task.
-
-        Invocation Condition: Invoke this tool when the user requests a
-        fresh agent session for focused work. The agent runs in the
-        background and results appear in their workspace/Discord channel.
-
-        Args:
-            agent_id: The agent to spawn (e.g. 'hana', 'aoi', 'momo').
-            task: The task description for the spawned agent.
-            deliver_to: Where the result should land. Defaults to "room"
-                (your own default Discord room — the right place for ambient
-                background work). Use "dm" ONLY when the user explicitly
-                asks you to DM them, message them directly, or send the
-                result to them privately. Never guess "dm" — default
-                "room" unless the caller said otherwise.
-        """
-        trace(
-            f"tool=sessions_spawn agent_id={agent_id!r} deliver_to={deliver_to!r} "
+            f"tool=openclaw_delegate agent_id={agent_id!r} deliver_to={deliver_to!r} "
             f"task={(task or '')[:60]!r}"
         )
         agent_value = (agent_id or "").strip()
         task_value = (task or "").strip()
         if not agent_value:
-            return "I can't spawn that — no agent_id was given."
+            return "I can't delegate that — no agent_id was given."
         if not task_value:
-            return "I can't spawn that — the task description is empty."
+            return "I can't delegate that — the task is empty."
 
         reject = self._reject_delegation_target(agent_value)
         if reject is not None:
@@ -178,33 +96,79 @@ class SessionsToolsMixin(Agent):
         target_key = (deliver_to or "room").strip().lower()
         reply_target = self._delivery_target(target_key)
         if reply_target is None:
-            return f"I can't spawn that — deliver_to must be 'room' or 'dm', got '{deliver_to}'."
+            return f"I can't delegate that — deliver_to must be 'room' or 'dm', got '{deliver_to}'."
+
+        request_message = (
+            f"Eric asked over a phone call with {self.config.agent_name}: {task_value}\n\n"
+            "Handle this using your normal OpenClaw tools, skills, memory, and delivery behavior. "
+            "Do not assume the request needs special voice-agent routing."
+        )
 
         try:
-            await fire_and_forget_async(
-                [
-                    "agent",
-                    "--agent",
-                    agent_value,
-                    "--message",
-                    task_value,
-                    "--deliver",
-                    "--reply-channel",
-                    "discord",
-                    "--reply-to",
-                    reply_target,
-                    "--json",
-                ]
+            accepted = await post_agent_hook(
+                agent_id=agent_value,
+                message=request_message,
+                name=f"Voice delegation from {self.config.agent_name}",
+                deliver=True,
+                channel="discord",
+                to=reply_target,
+                timeout_seconds=600,
             )
-        except Exception as err:
-            logger.error("[voice-tools] sessions_spawn spawn failed: %s", err)
-            return f"I couldn't spawn {agent_value} — the OpenClaw CLI didn't start ({err})."
+        except OpenClawHookConfigError as err:
+            logger.error("[voice-tools] openclaw_delegate not configured: %s", err)
+            return (
+                f"I couldn't hand that to {agent_value} — OpenClaw hooks aren't configured ({err})."
+            )
+        except OpenClawHookError as err:
+            logger.error("[voice-tools] openclaw_delegate failed: %s", err)
+            return f"I couldn't hand that to {agent_value} — OpenClaw didn't accept the request ({err})."
         logger.info(
-            "[voice-tools] sessions_spawn → %s (deliver: %s)",
+            "[voice-tools] openclaw_delegate → %s run_id=%s (deliver: %s)",
             agent_value,
+            accepted.run_id,
             reply_target,
         )
-        return f"Spawned {agent_value} to handle the task."
+        human_target = "my room" if target_key == "room" else "your DMs"
+        return f"Task accepted by OpenClaw for {agent_value}. Results will land in {human_target}."
+
+    @function_tool
+    async def openclaw_delegate(self, agent_id: str, task: str, deliver_to: str = "room") -> str:
+        """Hand work to an OpenClaw agent and return once accepted.
+
+        Invocation Condition: This is the default OpenClaw handoff tool.
+        Invoke it whenever the user asks you to have an OpenClaw agent do
+        work, get a selfie/image, research, check something, tell another
+        agent something, or do any task that can finish outside the live
+        phone conversation. Do not wait for the result unless the user
+        explicitly asks for a blocking answer during this call.
+
+        Args:
+            agent_id: The OpenClaw agent name (e.g. 'nyla', 'aoi', 'rin',
+                'yumi', 'mizuki').
+            task: The task/request in the user's words. Include enough
+                context for the OpenClaw agent to act using its normal
+                tools and delivery channels.
+            deliver_to: Where the result should land. Defaults to "room"
+                (the speaking agent's normal Discord room). Use "dm" only
+                when the user explicitly asks for a private/direct result.
+        """
+        return await self._delegate_to_openclaw(agent_id=agent_id, task=task, deliver_to=deliver_to)
+
+    # Backward-compatible, non-tool helper aliases for tests and old
+    # in-process callers. The voice model sees only `openclaw_delegate`.
+    async def sessions_send(self, agent_id: str, message: str, deliver_to: str = "room") -> str:
+        return await self._delegate_to_openclaw(
+            agent_id=agent_id,
+            task=message,
+            deliver_to=deliver_to,
+        )
+
+    async def sessions_spawn(self, agent_id: str, task: str, deliver_to: str = "room") -> str:
+        return await self._delegate_to_openclaw(
+            agent_id=agent_id,
+            task=task,
+            deliver_to=deliver_to,
+        )
 
     # TOOL DISABLED — see TODO.md "Re-enable schedule_callback".
     #

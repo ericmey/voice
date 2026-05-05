@@ -4,14 +4,12 @@ from sdk.constants import (
     DELAY_RE,
     E164_RE,
     ERIC_DISCORD_DM,
-    MIZUKI_DISCORD_CHANNEL,
     NYLA_DISCORD_ROOM,
     sanitize,
 )
 
 
 def test_discord_channels_are_numeric_strings():
-    assert MIZUKI_DISCORD_CHANNEL.isdigit()
     assert NYLA_DISCORD_ROOM.startswith("channel:")
     assert ERIC_DISCORD_DM.startswith("user:")
 

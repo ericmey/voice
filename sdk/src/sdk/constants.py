@@ -6,10 +6,6 @@ import re
 import shlex
 from zoneinfo import ZoneInfo
 
-# Mizuki's Discord channel — shared by academy_send and academy_selfie
-# across all voice agents (Mizuki is the orchestrator, not a voice).
-MIZUKI_DISCORD_CHANNEL = "1486181468311916674"
-
 # Household Discord targets. Individual agents point at their own room
 # via ``AgentConfig.discord_room``; for now every agent uses Nyla's
 # channel until per-agent rooms exist. Eric's DM is agent-independent.

@@ -14,7 +14,6 @@ via MRO walk. Agents compose the mixins they need::
 compiling; new code uses ``MusubiToolsMixin``.
 """
 
-from .academy import AcademyToolsMixin
 from .base_agent import (
     BaseRealtimeAgent,
     build_common_tools,
@@ -28,7 +27,6 @@ from .memory import MemoryToolsMixin, MusubiToolsMixin
 from .sessions import SessionsToolsMixin
 
 __all__ = [
-    "AcademyToolsMixin",
     "BaseRealtimeAgent",
     "CoreToolsMixin",
     "HouseholdToolsMixin",

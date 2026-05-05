@@ -3,7 +3,6 @@
 
 def test_import_tools_package():
     from tools import (
-        AcademyToolsMixin,
         CoreToolsMixin,
         MemoryToolsMixin,
         SessionsToolsMixin,
