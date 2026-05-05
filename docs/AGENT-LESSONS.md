@@ -174,6 +174,20 @@ caller number enrichment.
 and callback tooling harder to trust even when the call itself was
 correctly routed.
 
+## 2026-05-05 — Treat voice subprocess boundaries as security boundaries
+
+**Trigger:** A live post-call hook failed because launchd rendered
+`OPENCLAW_BIN` to a stale path, and a review of voice tool subprocesses
+showed the agent runtime trusted that path before launching `openclaw`.
+
+**Lesson:** Validate external executables at both deploy time and runtime:
+absolute path, executable, expected basename, and not world-writable.
+Keep subprocess command verbs allowlisted and arguments bounded.
+
+**Why:** Voice tools are actuators. Even when `shell=False` prevents shell
+injection, a bad binary path or unbounded argv payload can turn a normal
+tool call into an unsafe process boundary.
+
 ## 2026-05-04 — Public examples must stay generic
 
 **Trigger:** A public-readiness sweep found docs and examples that still

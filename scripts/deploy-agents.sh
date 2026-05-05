@@ -64,6 +64,7 @@ mkdir -p "${VOICE_LOGS}" "${LAUNCH_AGENTS_DIR}"
 : "${MUSUBI_V2_BASE_URL:?MUSUBI_V2_BASE_URL missing from ${SECRETS}}"
 : "${MUSUBI_V2_TOKEN_NYLA:?MUSUBI_V2_TOKEN_NYLA missing from ${SECRETS}}"
 : "${MUSUBI_V2_TOKEN_AOI:?MUSUBI_V2_TOKEN_AOI missing from ${SECRETS}}"
+[[ -x "${OPENCLAW_BIN}" ]] || die "OPENCLAW_BIN is not executable: ${OPENCLAW_BIN}"
 case "${OPENCLAW_OTEL_ENABLED:-true}" in
   1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss])
     : "${OPENCLAW_OTLP_ENDPOINT:?OPENCLAW_OTLP_ENDPOINT missing from ${SECRETS} while OPENCLAW_OTEL_ENABLED is true}"

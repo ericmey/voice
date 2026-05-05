@@ -21,8 +21,10 @@ import logging
 import os
 import shutil
 import signal
+import stat
 import subprocess
 import types
+from pathlib import Path
 
 logger = logging.getLogger("openclaw-livekit.agent")
 
@@ -73,23 +75,53 @@ _install_sigchld_handler()
 DRY_RUN_ENV = "OPENCLAW_VOICE_TOOLS_DRY_RUN"
 
 _openclaw_bin_cache: str | None = None
+_ALLOWED_COMMANDS = {"agent", "cron", "message"}
+_MAX_ARG_LENGTH = 16_384
+
+
+def _validate_openclaw_bin(path: str) -> str:
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        raise ValueError(f"OPENCLAW_BIN must be an absolute path, got {path!r}")
+
+    resolved = candidate.resolve(strict=True)
+    if resolved.name != "openclaw":
+        raise ValueError(f"OPENCLAW_BIN must point to an openclaw executable, got {resolved}")
+    if not os.access(resolved, os.X_OK):
+        raise PermissionError(f"OPENCLAW_BIN is not executable: {resolved}")
+
+    mode = resolved.stat().st_mode
+    if mode & stat.S_IWOTH:
+        raise PermissionError(f"OPENCLAW_BIN is world-writable: {resolved}")
+    return str(resolved)
+
+
+def _validate_args(args: list[str]) -> None:
+    if not args:
+        raise ValueError("openclaw arguments must not be empty")
+    if args[0] not in _ALLOWED_COMMANDS:
+        raise ValueError(f"openclaw command {args[0]!r} is not allowed")
+    for arg in args:
+        if "\x00" in arg:
+            raise ValueError("openclaw arguments must not contain NUL bytes")
+        if len(arg) > _MAX_ARG_LENGTH:
+            raise ValueError("openclaw argument is too long")
 
 
 def _resolve_openclaw_bin() -> str:
-    """Locate the ``openclaw`` CLI. Env var wins, then PATH, then bare name."""
+    """Locate and validate the ``openclaw`` CLI. Env var wins, then PATH."""
     global _openclaw_bin_cache
     if _openclaw_bin_cache is not None:
         return _openclaw_bin_cache
     env_path = os.environ.get("OPENCLAW_BIN")
     if env_path:
-        _openclaw_bin_cache = env_path
-        return env_path
+        _openclaw_bin_cache = _validate_openclaw_bin(env_path)
+        return _openclaw_bin_cache
     which = shutil.which("openclaw")
     if which:
-        _openclaw_bin_cache = which
-        return which
-    _openclaw_bin_cache = "openclaw"
-    return _openclaw_bin_cache
+        _openclaw_bin_cache = _validate_openclaw_bin(which)
+        return _openclaw_bin_cache
+    raise FileNotFoundError("openclaw executable not found; set OPENCLAW_BIN")
 
 
 def is_dry_run() -> bool:
@@ -120,6 +152,7 @@ def fire_and_forget(args: list[str]) -> None:
         )
         return
 
+    _validate_args(args)
     bin_path = _resolve_openclaw_bin()
     subprocess.Popen(
         [bin_path, *args],
