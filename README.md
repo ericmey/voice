@@ -43,7 +43,7 @@ make bootstrap
 brew services stop redis    # compose ships redis; one-time cleanup
 make up                     # docker compose up -d
 make register-sip           # register trunk + dispatch rules from config
-make deploy                 # render plists, install, kickstart agents
+make deploy                 # render plists, install, gracefully restart agents
 make verify                 # lint + typecheck + test — green before human testing
 make health                 # verify everything is green
 ```
@@ -55,9 +55,9 @@ make health                 # verify everything is green
 | `make help` | List all verbs |
 | `make verify` | Lint + typecheck + test (run before a real phone call) |
 | `make up` / `make down` | Bring the docker-compose stack up/down |
-| `make deploy` | Render launchd plists + install + kickstart agents |
+| `make deploy` | Render launchd plists + install/restart agents with LiveKit drain |
 | `make teardown` | Bootout agents, remove plists (source stays put) |
-| `make cycle` | Kickstart all three agents in place |
+| `make cycle` | Gracefully restart all three agents in place |
 | `make register-sip` | Idempotent SIP trunk + dispatch rule refresh |
 | `make health` | Exit-nonzero if any component is unhealthy |
 | `make tail` | Follow all three agent logs with color prefix |

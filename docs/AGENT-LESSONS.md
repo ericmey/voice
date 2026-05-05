@@ -239,9 +239,9 @@ running` during redeploy windows.
 
 **Lesson:** LiveKit agents drain active jobs on `SIGTERM`/`SIGINT`.
 Operations scripts should send TERM, wait for the old PID to exit, and
-reserve forced `kickstart -k` for explicit timeout escape hatches. The
-launchd plist also needs an `ExitTimeOut` at least as long as the
-LiveKit drain window.
+reserve forced `kickstart -k` for explicit timeout escape hatches. Do not
+depend on launchd stop behavior alone; scripts should control the
+TERM-and-wait sequence directly.
 
 **Why:** Forced restarts can interrupt active phone calls and create
 scary-but-avoidable ERROR logs. Letting LiveKit drain keeps redeploys

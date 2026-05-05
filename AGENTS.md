@@ -62,8 +62,8 @@ make up / make down       # livekit-server + livekit-sip + redis
 make logs                 # docker compose logs -f
 
 # agent tier (launchd)
-make deploy               # render launchd plists, install, kickstart agents
-make cycle                # kickstart all three agents (picks up code changes)
+make deploy               # render launchd plists, install/restart with LiveKit drain
+make cycle                # gracefully restart all three agents (picks up code changes)
 make teardown             # bootout agents, remove plists
 
 # SIP routing
@@ -159,7 +159,9 @@ The deploy script writes these into each agent's launchd plist from
 | `GATEWAY_AUTH_TOKEN`, `GATEWAY_PORT` | all | Access to the OpenClaw gateway (memory, sessions) |
 | `DISCORD_BOT_TOKEN` | all | Per-agent Discord identity (deploy script maps `DISCORD_TOKEN_<AGENT>` → this) |
 | `LIVEKIT_VOICE_LOGS` | all | Directory for voice logs / telemetry / transcripts |
-| `OPENCLAW_BIN` | all | Absolute path to the `openclaw` CLI binary (for tool fire-and-forget) |
+| `OPENCLAW_HOOK_TOKEN`, `OPENCLAW_GATEWAY_HTTP_URL`, `OPENCLAW_HOOKS_PATH` | all | OpenClaw Gateway hook delegation config |
+| `OPENCLAW_BIN` | all | Absolute path to the `openclaw` CLI binary for legacy disabled callback code |
+| `LIVEKIT_AGENT_DRAIN_WAIT_SECONDS`, `LIVEKIT_AGENT_EXIT_TIMEOUT` | deploy scripts | Graceful launchd restart wait/timeout knobs |
 | `OPENCLAW_OTEL_ENABLED` | all | Enables OTel export |
 | `OPENCLAW_OTLP_ENDPOINT`, `OPENCLAW_OTLP_HEADERS` | all | OTLP traces endpoint + optional auth headers |
 | `OPENCLAW_OTEL_LOGS_ENABLED`, `OPENCLAW_OTLP_LOGS_ENDPOINT`, `OPENCLAW_OTLP_LOGS_HEADERS` | all | Optional OTLP logs overrides |

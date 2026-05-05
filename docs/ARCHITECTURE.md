@@ -33,8 +33,8 @@
                       │  (nyla, aoi, party)           │  host-native venvs
                       │                               │
                       │  Each exposes @function_tool  │
-                      │  methods for memory / deleg.  │
-                      │  / images / time / weather    │
+                      │  methods for memory, OpenClaw │
+                      │  delegation, time, weather    │
                       └───────────────────────────────┘
 ```
 
@@ -124,6 +124,7 @@ Current state is "infrastructure as code for the SIP layer" (config in
   the config examples.
 - **Secrets rotation** — `secrets/livekit-agents.env` is the single
   file. A rotation workflow could update it + re-run
-  `scripts/deploy-agents.sh` (which re-renders and kickstarts).
+  `scripts/deploy-agents.sh` (which re-renders plists and gracefully
+  restarts agents).
 - **Alerting** — `scripts/health-check.sh --json` is already cron-runnable;
   wire to a Discord webhook on `failed > 0`.

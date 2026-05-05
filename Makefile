@@ -52,7 +52,7 @@ register-sip: ## Register/refresh SIP trunk + dispatch rules from ./config/ (or 
 
 # ---- agents --------------------------------------------------------
 
-deploy: ## Render plists, install, kickstart (all three agents)
+deploy: ## Render plists, install/restart agents with LiveKit drain
 	scripts/deploy-agents.sh
 
 teardown: ## Bootout and remove all agent plists
