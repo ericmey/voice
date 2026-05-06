@@ -55,7 +55,7 @@ class AgentConfig:
             ``eric/<agent_name>`` at call time when ``None``.
         household_presences: Presences this agent may survey via
             ``household_status`` (``HouseholdToolsMixin``). Each entry
-            is a 2-segment presence like ``eric/nyla``. Empty tuple
+            is a 2-segment presence like ``nyla/voice``. Empty tuple
             means the agent has no household-wide visibility — the
             mixin should not be mixed in for that agent. Nyla, Aoi, and Yua
             get the full household list; party/voice personas that

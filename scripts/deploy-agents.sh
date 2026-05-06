@@ -62,18 +62,40 @@ LIVEKIT_EGRESS_HOST_RECORDINGS_DIR="$(
 )"
 mkdir -p "${VOICE_LOGS}" "${LAUNCH_AGENTS_DIR}"
 
+# Agents to deploy (default: all). Build the array from positional
+# args, or fall back to all agents if none were given — the explicit $#
+# check is `set -u`-safe while `"${@}"` with zero args is not.
+if [[ $# -eq 0 ]]; then
+  agents=(nyla aoi yua party)
+else
+  agents=("$@")
+fi
+
+validate_agent() {
+  case "$1" in
+    nyla|aoi|yua|party) ;;
+    *) die "unknown agent: $1 (valid: nyla, aoi, yua, party)" ;;
+  esac
+}
+
+require_env() {
+  local name="$1"
+  local why="${2:-}"
+  local value="${!name:-}"
+  if [[ -z "${value}" ]]; then
+    if [[ -n "${why}" ]]; then
+      die "${name} missing from ${SECRETS} (${why})"
+    fi
+    die "${name} missing from ${SECRETS}"
+  fi
+}
+
 : "${LIVEKIT_URL:?LIVEKIT_URL missing from ${SECRETS}}"
 : "${LIVEKIT_API_KEY:?LIVEKIT_API_KEY missing from ${SECRETS}}"
 : "${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET missing from ${SECRETS}}"
 : "${GOOGLE_API_KEY:?GOOGLE_API_KEY missing from ${SECRETS}}"
 : "${GATEWAY_AUTH_TOKEN:?GATEWAY_AUTH_TOKEN missing from ${SECRETS}}"
-: "${DISCORD_TOKEN_NYLA:?DISCORD_TOKEN_NYLA missing from ${SECRETS}}"
-: "${DISCORD_TOKEN_AOI:?DISCORD_TOKEN_AOI missing from ${SECRETS}}"
-: "${DISCORD_TOKEN_YUA:?DISCORD_TOKEN_YUA missing from ${SECRETS}}"
 : "${MUSUBI_V2_BASE_URL:?MUSUBI_V2_BASE_URL missing from ${SECRETS}}"
-: "${MUSUBI_V2_TOKEN_NYLA:?MUSUBI_V2_TOKEN_NYLA missing from ${SECRETS}}"
-: "${MUSUBI_V2_TOKEN_AOI:?MUSUBI_V2_TOKEN_AOI missing from ${SECRETS}}"
-: "${MUSUBI_V2_TOKEN_YUA:?MUSUBI_V2_TOKEN_YUA missing from ${SECRETS}}"
 [[ -x "${OPENCLAW_BIN}" ]] || die "OPENCLAW_BIN is not executable: ${OPENCLAW_BIN}"
 case "${LIVEKIT_AGENT_DRAIN_WAIT_SECONDS}" in
   ''|*[!0-9]*) die "LIVEKIT_AGENT_DRAIN_WAIT_SECONDS must be an integer" ;;
@@ -87,24 +109,30 @@ case "${OPENCLAW_OTEL_ENABLED:-true}" in
     ;;
 esac
 
-# Agents to deploy (default: all). Build the array from positional
-# args, or fall back to all agents if none were given — the explicit $#
-# check is `set -u`-safe while `"${@}"` with zero args is not.
-if [[ $# -eq 0 ]]; then
-  agents=(nyla aoi yua party)
-else
-  agents=("$@")
-fi
-
 needs_party_keys=false
 for agent in "${agents[@]}"; do
+  validate_agent "${agent}"
+  case "${agent}" in
+    nyla|party)
+      require_env "DISCORD_TOKEN_NYLA"
+      require_env "MUSUBI_V2_TOKEN_NYLA"
+      ;;
+    aoi)
+      require_env "DISCORD_TOKEN_AOI"
+      require_env "MUSUBI_V2_TOKEN_AOI"
+      ;;
+    yua)
+      require_env "DISCORD_TOKEN_YUA"
+      require_env "MUSUBI_V2_TOKEN_YUA"
+      ;;
+  esac
   if [[ "${agent}" == "party" ]]; then
     needs_party_keys=true
   fi
 done
 if [[ "${needs_party_keys}" == "true" ]]; then
-  : "${OPENAI_API_KEY:?OPENAI_API_KEY missing from ${SECRETS} (Party uses Whisper STT)}"
-  : "${ELEVENLABS_API_KEY:?ELEVENLABS_API_KEY missing from ${SECRETS} (Party uses ElevenLabs TTS)}"
+  require_env "OPENAI_API_KEY" "Party uses Whisper STT"
+  require_env "ELEVENLABS_API_KEY" "Party uses ElevenLabs TTS"
 fi
 
 agent_label() {

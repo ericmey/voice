@@ -45,6 +45,12 @@ record() {
   [[ "$status" == "ok" ]] || failed=$((failed + 1))
 }
 
+launchd_pid() {
+  local agent="$1"
+  launchctl list 2>/dev/null \
+    | awk -v lbl="ai.openclaw.livekit-agent-${agent}" '$3 == lbl {print $1; exit}'
+}
+
 # ---- redis ---------------------------------------------------------
 if command -v redis-cli >/dev/null 2>&1 \
   && redis-cli -h 127.0.0.1 -p 6379 ping 2>/dev/null | grep -q PONG; then
@@ -85,7 +91,7 @@ fi
 # Accept multiple log signatures so the check survives log-format drift.
 _agent_ok_patterns='registered worker|worker started|connected to server|session started'
 for a in nyla aoi yua party; do
-  pid_line="$(launchctl list 2>/dev/null | awk -v lbl="ai.openclaw.livekit-agent-${a}" '$3 == lbl {print $1}')"
+  pid_line="$(launchd_pid "$a")"
   if [[ -n "${pid_line}" && "${pid_line}" != "-" ]]; then
     log_file="${LOG_DIR}/agent-${a}.log"
     if [[ -f "${log_file}" ]]; then
@@ -108,17 +114,21 @@ done
 # ---- SIP routing --------------------------------------------------
 if command -v lk >/dev/null 2>&1; then
   trunk_count="$(lk sip inbound list --json 2>/dev/null | jq '.items | length' 2>/dev/null || echo 0)"
-  rule_count="$(lk sip dispatch list --json 2>/dev/null | jq '.items | length' 2>/dev/null || echo 0)"
+  dispatch_json="$(lk sip dispatch list --json 2>/dev/null || printf '{"items":[]}')"
   if [[ "${trunk_count}" -ge 1 ]]; then
     record "sip-trunk"  ok "${trunk_count} inbound trunk(s)"
   else
     record "sip-trunk"  fail "no inbound trunks registered"
   fi
-  if [[ "${rule_count}" -ge 4 ]]; then
-    record "sip-rules"  ok "${rule_count} dispatch rule(s)"
-  else
-    record "sip-rules"  fail "only ${rule_count} dispatch rule(s); expected >=4"
-  fi
+  for a in nyla aoi yua party; do
+    rule_name="twilio-to-phone-${a}"
+    if printf '%s\n' "${dispatch_json}" \
+      | jq -e --arg name "${rule_name}" '.items[]? | select(.name == $name)' >/dev/null 2>&1; then
+      record "sip-rule-${a}" ok "${rule_name} registered"
+    else
+      record "sip-rule-${a}" fail "${rule_name} not registered"
+    fi
+  done
 else
   record "sip-routing" fail "lk (livekit-cli) not found"
 fi
