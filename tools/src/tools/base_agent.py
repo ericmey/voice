@@ -134,6 +134,8 @@ def build_realtime_model(voice: str = "Leda") -> google_plugin.realtime.Realtime
     return google_plugin.realtime.RealtimeModel(
         model=GEMINI_NATIVE_AUDIO_MODEL,
         voice=voice,
+        enable_affective_dialog=True,
+        proactivity=True,
         realtime_input_config=genai_types.RealtimeInputConfig(
             automatic_activity_detection=genai_types.AutomaticActivityDetection(
                 start_of_speech_sensitivity=genai_types.StartSensitivity.START_SENSITIVITY_HIGH,
@@ -146,7 +148,7 @@ def build_realtime_model(voice: str = "Leda") -> google_plugin.realtime.Realtime
 
 
 def build_common_tools() -> list:
-    """Tool set — EndCall + GoogleSearch."""
+    """Tool set — EndCall + GoogleSearch grounding."""
     return [
         EndCallTool(
             delete_room=True,

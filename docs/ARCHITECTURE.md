@@ -60,7 +60,7 @@ Shared Python package imported by the agents. Contains:
 - **`trace.py`**, **`transcript.py`**, **`env.py`** — ancillary.
 
 ### `agents/nyla/`
-Realtime voice persona. Gemini 2.5 Flash Native Audio, Leda voice. Registers
+Realtime voice persona. Gemini 2.5 Flash Native Audio, Aoede voice. Registers
 as `phone-nyla`. Household router — no delegation restrictions.
 
 ### `agents/aoi/`
@@ -69,7 +69,7 @@ Tighter delegation allowlist (`{yumi, rin, aoi, nyla}`) — technical
 partner, not household router.
 
 ### `agents/yua/`
-Realtime voice persona. Same model family as Nyla and Aoi, Yua-specific
+Realtime voice persona. Same model family as Nyla and Aoi, Leda voice, Yua-specific
 prompt and memory namespace. Bounded delegation allowlist
 (`{yumi, rin, aoi, yua, nyla}`) — coding and QA partner, second set of
 eyes, and Aoi's development partner.

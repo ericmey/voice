@@ -32,7 +32,7 @@ __all__ = [
 ]
 
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
-YUA_VOICE = "Aoede"
+YUA_VOICE = "Leda"
 
 #: Yua's operational identity. Shares Nyla's Discord room for now
 #: until Eric carves out a dedicated room. Memory goes to the yua-voice

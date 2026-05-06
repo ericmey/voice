@@ -118,6 +118,11 @@ class TestAgentClass:
         # Nyla is the household router — she may delegate to anyone.
         assert cfg.allowed_delegation_targets is None
 
+    def test_voice_is_aoede(self):
+        from _shared import NYLA_VOICE
+
+        assert NYLA_VOICE == "Aoede"
+
 
 class TestPersona:
     """Verify persona loading from prompts/system.md."""
@@ -228,3 +233,13 @@ class TestProviderImports:
         from livekit.agents.worker import AgentServer
 
         assert AgentServer is not None
+
+    def test_realtime_model_enables_affective_and_proactive_audio(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "test")
+
+        from _shared import build_model
+
+        model = build_model()
+        assert model._opts.voice == "Aoede"
+        assert model._opts.enable_affective_dialog is True
+        assert model._opts.proactivity is True

@@ -26,6 +26,7 @@ from tools.household import HouseholdToolsMixin
 
 __all__ = [
     "NYLA_CONFIG",
+    "NYLA_VOICE",
     "NylaAgent",
     "build_model",
     "build_tools",
@@ -34,6 +35,7 @@ __all__ = [
 ]
 
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
+NYLA_VOICE = "Aoede"
 
 #: Nyla's operational identity. Household router — no delegation
 #: restrictions, delegated work posts to her own Discord room.
@@ -82,8 +84,8 @@ class NylaAgent(HouseholdToolsMixin, BaseRealtimeAgent):
 
 
 def build_model():
-    """Gemini 2.5 Flash Native Audio, Leda voice."""
-    return build_realtime_model(voice="Leda")
+    """Gemini 2.5 Flash Native Audio with Nyla's selected voice."""
+    return build_realtime_model(voice=NYLA_VOICE)
 
 
 build_tools = build_common_tools

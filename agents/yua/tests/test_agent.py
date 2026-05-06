@@ -111,6 +111,11 @@ class TestAgentClass:
         assert cfg.musubi_v2_namespace == "yua/voice"
         assert cfg.musubi_v2_presence == "yua/voice"
 
+    def test_voice_is_leda(self):
+        from _shared import YUA_VOICE
+
+        assert YUA_VOICE == "Leda"
+
 
 class TestPersona:
     """Verify persona loading from prompts/system.md."""
@@ -201,3 +206,13 @@ class TestProviderImports:
         from livekit.agents.beta import EndCallTool
 
         assert EndCallTool is not None
+
+    def test_realtime_model_enables_affective_and_proactive_audio(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "test")
+
+        from _shared import build_model
+
+        model = build_model()
+        assert model._opts.voice == "Leda"
+        assert model._opts.enable_affective_dialog is True
+        assert model._opts.proactivity is True

@@ -31,7 +31,7 @@ openclaw-livekit/
 ├── tools/                           @function_tool mixins (workspace member)
 │   └── src/tools/                   core, memory, sessions, academy
 └── agents/                          voice personas (workspace members)
-    ├── nyla/                        realtime — Gemini 2.5 Native Audio, voice "Leda"
+    ├── nyla/                        realtime — Gemini 2.5 Native Audio, voice "Aoede"
     ├── aoi/                         realtime — Gemini 2.5 Native Audio, technical partner
     ├── yua/                         realtime — Gemini 2.5 Native Audio, coding and QA partner
     └── party/                       chained STT/LLM/TTS — Whisper + Silero + Gemini + ElevenLabs
