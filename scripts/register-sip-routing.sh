@@ -58,8 +58,11 @@ declare -a TMP_FILES=()
 cleanup() {
   local f
   for f in "${TMP_FILES[@]:-}"; do
-    [[ -n "$f" ]] && rm -f "$f"
+    if [[ -n "$f" ]]; then
+      rm -f "$f"
+    fi
   done
+  return 0
 }
 trap cleanup EXIT
 
