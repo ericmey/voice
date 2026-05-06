@@ -58,12 +58,12 @@ deploy: ## Render plists, install/restart agents with LiveKit drain
 teardown: ## Bootout and remove all agent plists
 	scripts/teardown-agents.sh
 
-cycle: ## Restart all three agents in place (picks up code changes)
+cycle: ## Restart all voice agents in place (picks up code changes)
 	scripts/cycle-agents.sh
 
 # ---- observability -------------------------------------------------
 
-tail: ## Follow all three agent logs with color-coded prefix
+tail: ## Follow all voice agent logs with color-coded prefix
 	scripts/tail-logs.sh
 
 truncate-logs: ## Zero out all agent logs (clean baseline for testing)
@@ -115,8 +115,8 @@ langsmith-provision-legacy:
 
 # ---- tests ---------------------------------------------------------
 
-test: ## Run pytest across all workspace members (sdk + tools + three agents)
-	@for d in sdk tools agents/nyla agents/aoi agents/party; do \
+test: ## Run pytest across all workspace members (sdk + tools + agents)
+	@for d in sdk tools agents/nyla agents/aoi agents/yua agents/party; do \
 	  echo ">> $$d"; \
 	  (cd $$d && uv run pytest -q) || { code=$$?; [[ $$code == 5 ]] && echo "  (no tests)" || exit $$code; }; \
 	done

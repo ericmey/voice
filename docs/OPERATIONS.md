@@ -16,7 +16,7 @@ telemetry stack, start with
 make cycle
 
 # For an agent-specific persona/prompt change — cycle also works.
-make cycle                      # cycles all three
+make cycle                      # cycles all agents
 scripts/cycle-agents.sh nyla    # cycle one
 ```
 
@@ -110,11 +110,11 @@ make health
 
 ### Agent workers all disconnect
 
-Symptom: `make health` shows all three agents missing `registered worker`
+Symptom: `make health` shows all agents missing `registered worker`
 lines, or the SIP container 486s every call with `reason: no-rule`.
 
 ```bash
-# Cycle all three
+# Cycle all agents
 make cycle
 
 # Still broken? Full teardown and redeploy.

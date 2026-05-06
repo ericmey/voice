@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Follow all three agent logs with a color-coded prefix. Ctrl-C to stop.
+# Follow all agent logs with a color-coded prefix. Ctrl-C to stop.
 #
 # Usage:
-#   scripts/tail-logs.sh                  # all three
+#   scripts/tail-logs.sh                  # all agents
 #   scripts/tail-logs.sh nyla aoi         # subset
 #   scripts/tail-logs.sh --grep tool=     # filter to lines matching pattern
 
@@ -17,12 +17,12 @@ agents=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --grep) FILTER="$2"; shift 2 ;;
-    nyla|aoi|party) agents+=("$1"); shift ;;
+    nyla|aoi|yua|party) agents+=("$1"); shift ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
   esac
 done
 if [[ ${#agents[@]} -eq 0 ]]; then
-  agents=(nyla aoi party)
+  agents=(nyla aoi yua party)
 fi
 
 agent_color() {
@@ -31,6 +31,7 @@ agent_color() {
   case "$1" in
     nyla)  printf '\033[1;35m' ;;  # magenta
     aoi)   printf '\033[1;36m' ;;  # cyan
+    yua)   printf '\033[1;32m' ;;  # green
     party) printf '\033[1;33m' ;;  # yellow
     *)     printf '\033[0m'    ;;
   esac

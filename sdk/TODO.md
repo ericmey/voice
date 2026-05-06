@@ -64,7 +64,7 @@ by CLI-ownership concerns.
 3. Smoke test end-to-end: schedule a callback during a live call,
    verify the cron fires, verify the dial actually happens.
 4. Re-add `schedule_callback` to the prompts' user-language → tool
-   example blocks (Nyla, Aoi, Party).
+   example blocks (Nyla, Aoi, Yua, Party).
 5. Update the `test_all_eight_tools_present` assertion in each
    concrete agent test back to the previous `_nine_` form.
 

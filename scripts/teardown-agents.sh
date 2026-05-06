@@ -5,7 +5,7 @@
 # and the rendered ~/Library/LaunchAgents/*.plist files are removed.
 #
 # Usage:
-#   scripts/teardown-agents.sh                  # all three
+#   scripts/teardown-agents.sh                  # all agents
 #   scripts/teardown-agents.sh nyla             # one
 
 set -euo pipefail
@@ -15,7 +15,7 @@ LAUNCH_AGENTS_DIR="${HOME}/Library/LaunchAgents"
 log()  { printf "\033[1;34m[teardown]\033[0m %s\n" "$*"; }
 
 if [[ $# -eq 0 ]]; then
-  agents=(nyla aoi party)
+  agents=(nyla aoi yua party)
 else
   agents=("$@")
 fi

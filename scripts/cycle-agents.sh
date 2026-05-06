@@ -5,7 +5,7 @@
 # on restart without a full deploy.
 #
 # Usage:
-#   scripts/cycle-agents.sh                  # all three
+#   scripts/cycle-agents.sh                  # all agents
 #   scripts/cycle-agents.sh nyla aoi         # subset
 #
 # LiveKit drains active jobs on SIGTERM/SIGINT. Do not use
@@ -74,7 +74,7 @@ wait_for_running_pid() {
 }
 
 if [[ $# -eq 0 ]]; then
-  agents=(nyla aoi party)
+  agents=(nyla aoi yua party)
 else
   agents=("$@")
 fi
@@ -84,8 +84,8 @@ for agent in "${agents[@]}"; do
   target="gui/$(id -u)/${label}"
 
   case "${agent}" in
-    nyla|aoi|party) ;;
-    *) die "unknown agent: ${agent} (valid: nyla, aoi, party)" ;;
+    nyla|aoi|yua|party) ;;
+    *) die "unknown agent: ${agent} (valid: nyla, aoi, yua, party)" ;;
   esac
 
   if ! launchctl print "${target}" >/dev/null 2>&1; then

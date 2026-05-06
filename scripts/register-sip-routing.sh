@@ -6,6 +6,7 @@
 #   sip-inbound-trunk.json
 #   sip-dispatch-nyla.json
 #   sip-dispatch-aoi.json
+#   sip-dispatch-yua.json
 #   sip-dispatch-party.json
 #
 # For each record:

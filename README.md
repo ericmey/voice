@@ -21,6 +21,7 @@ openclaw-livekit/
 └── agents/                        voice personas
     ├── nyla/                      realtime persona (Gemini 2.5 native audio)
     ├── aoi/                       realtime persona, technical partner
+    ├── yua/                       realtime persona, coding and QA partner
     └── party/                     chained STT/LLM/TTS variant
 ```
 
@@ -30,7 +31,7 @@ Every Python package is a uv workspace member declared in the root
 ## Bring Your Own Stack
 
 This repo is a working reference for one personal voice stack, not a
-drop-in product. The included agents (`nyla`, `aoi`, `party`) and tools
+drop-in product. The included agents (`nyla`, `aoi`, `yua`, `party`) and tools
 are samples you can replace with your own personas, model choices, and
 tool mixins.
 
@@ -97,10 +98,10 @@ make health                 # verify everything is green
 | `make up` / `make down` | Bring the docker-compose stack up/down |
 | `make deploy` | Render launchd plists + install/restart agents with LiveKit drain |
 | `make teardown` | Bootout agents, remove plists (source stays put) |
-| `make cycle` | Gracefully restart all three agents in place |
+| `make cycle` | Gracefully restart all agents in place |
 | `make register-sip` | Idempotent SIP trunk + dispatch rule refresh |
 | `make health` | Exit-nonzero if any component is unhealthy |
-| `make tail` | Follow all three agent logs with color prefix |
+| `make tail` | Follow all agent logs with color prefix |
 | `make truncate-logs` | Clean baseline for a test session |
 | `make test` | pytest across all workspace members |
 | `make lint` | ruff check + format check |

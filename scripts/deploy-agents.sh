@@ -6,9 +6,9 @@
 # replacement, so deploys do not intentionally interrupt active calls.
 #
 # Usage:
-#   scripts/deploy-agents.sh                  # all three agents
+#   scripts/deploy-agents.sh                  # all agents
 #   scripts/deploy-agents.sh nyla             # one agent
-#   scripts/deploy-agents.sh nyla aoi party   # subset
+#   scripts/deploy-agents.sh nyla aoi yua     # subset
 
 set -euo pipefail
 
@@ -69,9 +69,11 @@ mkdir -p "${VOICE_LOGS}" "${LAUNCH_AGENTS_DIR}"
 : "${GATEWAY_AUTH_TOKEN:?GATEWAY_AUTH_TOKEN missing from ${SECRETS}}"
 : "${DISCORD_TOKEN_NYLA:?DISCORD_TOKEN_NYLA missing from ${SECRETS}}"
 : "${DISCORD_TOKEN_AOI:?DISCORD_TOKEN_AOI missing from ${SECRETS}}"
+: "${DISCORD_TOKEN_YUA:?DISCORD_TOKEN_YUA missing from ${SECRETS}}"
 : "${MUSUBI_V2_BASE_URL:?MUSUBI_V2_BASE_URL missing from ${SECRETS}}"
 : "${MUSUBI_V2_TOKEN_NYLA:?MUSUBI_V2_TOKEN_NYLA missing from ${SECRETS}}"
 : "${MUSUBI_V2_TOKEN_AOI:?MUSUBI_V2_TOKEN_AOI missing from ${SECRETS}}"
+: "${MUSUBI_V2_TOKEN_YUA:?MUSUBI_V2_TOKEN_YUA missing from ${SECRETS}}"
 [[ -x "${OPENCLAW_BIN}" ]] || die "OPENCLAW_BIN is not executable: ${OPENCLAW_BIN}"
 case "${LIVEKIT_AGENT_DRAIN_WAIT_SECONDS}" in
   ''|*[!0-9]*) die "LIVEKIT_AGENT_DRAIN_WAIT_SECONDS must be an integer" ;;
@@ -85,11 +87,11 @@ case "${OPENCLAW_OTEL_ENABLED:-true}" in
     ;;
 esac
 
-# Agents to deploy (default: all three). Build the array from positional
-# args, or fall back to all three if none were given — the explicit $#
+# Agents to deploy (default: all). Build the array from positional
+# args, or fall back to all agents if none were given — the explicit $#
 # check is `set -u`-safe while `"${@}"` with zero args is not.
 if [[ $# -eq 0 ]]; then
-  agents=(nyla aoi party)
+  agents=(nyla aoi yua party)
 else
   agents=("$@")
 fi
@@ -112,6 +114,7 @@ agent_label() {
   case "$1" in
     nyla)  echo "phone-nyla (Gemini 2.5 Flash Native Audio)" ;;
     aoi)   echo "phone-aoi (Gemini 2.5 Flash Native Audio)" ;;
+    yua)   echo "phone-yua (Gemini 2.5 Flash Native Audio)" ;;
     party) echo "phone-party (chained STT/LLM/TTS)" ;;
     *)     die "unknown agent: $1" ;;
   esac
@@ -125,6 +128,7 @@ agent_discord_token() {
   case "$1" in
     nyla|party) echo "${DISCORD_TOKEN_NYLA}" ;;
     aoi)        echo "${DISCORD_TOKEN_AOI}"  ;;
+    yua)        echo "${DISCORD_TOKEN_YUA}"  ;;
     *)          die "no discord token mapping for: $1" ;;
   esac
 }
@@ -138,6 +142,7 @@ agent_musubi_token() {
   case "$1" in
     nyla|party) echo "${MUSUBI_V2_TOKEN_NYLA}" ;;
     aoi)        echo "${MUSUBI_V2_TOKEN_AOI}"  ;;
+    yua)        echo "${MUSUBI_V2_TOKEN_YUA}"  ;;
     *)          die "no musubi token mapping for: $1" ;;
   esac
 }
@@ -294,8 +299,8 @@ reload_plist() {
 ensure_venv_ready
 for agent in "${agents[@]}"; do
   case "$agent" in
-    nyla|aoi|party) ;;
-    *) die "unknown agent: $agent (valid: nyla, aoi, party)" ;;
+    nyla|aoi|yua|party) ;;
+    *) die "unknown agent: $agent (valid: nyla, aoi, yua, party)" ;;
   esac
   render_plist "$agent"
   reload_plist  "$agent"

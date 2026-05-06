@@ -60,12 +60,15 @@ typeCheckingMode = "basic"
 # `python agents/<name>/src/agent.py`), so `from _shared import ...`
 # works. Tell pyright the same per-agent via executionEnvironments so
 # `_shared` resolves to that agent's module — not the global extraPaths
-# collision where all three _shared.py files would clash.
+# collision where the per-agent _shared.py files would clash.
 [[tool.pyright.executionEnvironments]]
 root = "agents/nyla/src"
 
 [[tool.pyright.executionEnvironments]]
 root = "agents/aoi/src"
+
+[[tool.pyright.executionEnvironments]]
+root = "agents/yua/src"
 
 [[tool.pyright.executionEnvironments]]
 root = "agents/party/src"
@@ -79,6 +82,10 @@ extraPaths = ["agents/nyla/src"]
 [[tool.pyright.executionEnvironments]]
 root = "agents/aoi/tests"
 extraPaths = ["agents/aoi/src"]
+
+[[tool.pyright.executionEnvironments]]
+root = "agents/yua/tests"
+extraPaths = ["agents/yua/src"]
 
 [[tool.pyright.executionEnvironments]]
 root = "agents/party/tests"

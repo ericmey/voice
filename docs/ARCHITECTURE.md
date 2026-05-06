@@ -30,7 +30,7 @@
                                 ▼
                       ┌───────────────────────────────┐
                       │  Python voice agents          │  launchd managed
-                      │  (nyla, aoi, party)           │  host-native venvs
+                      │  (nyla, aoi, yua, party)      │  host-native venvs
                       │                               │
                       │  Each exposes @function_tool  │
                       │  methods for memory, OpenClaw │
@@ -41,7 +41,7 @@
 ## Workspace Packages
 
 ### `sdk/`
-Shared Python package imported by the three agents. Contains:
+Shared Python package imported by the agents. Contains:
 
 - **`config.py`** — `AgentConfig` dataclass (agent_name, memory_agent_tag,
   discord_room, allowed_delegation_targets). Per-agent operational identity;
@@ -67,6 +67,12 @@ as `phone-nyla`. Household router — no delegation restrictions.
 Realtime voice persona. Same model as Nyla, Kore voice, distinct prompt.
 Tighter delegation allowlist (`{yumi, rin, aoi, nyla}`) — technical
 partner, not household router.
+
+### `agents/yua/`
+Realtime voice persona. Same model family as Nyla and Aoi, Yua-specific
+prompt and memory namespace. Bounded delegation allowlist
+(`{yumi, rin, aoi, yua, nyla}`) — coding and QA partner, second set of
+eyes, and Aoi's development partner.
 
 ### `agents/party/`
 Chained STT/LLM/TTS variant. Whisper → Silero VAD → Gemini text LLM →

@@ -3,7 +3,7 @@
   Template for ai.openclaw.livekit-agent-<name>.plist.
 
   Substitutions (handled by scripts/deploy-agents.sh):
-    {{AGENT_NAME}}            nyla | aoi | party
+    {{AGENT_NAME}}            nyla | aoi | yua | party
     {{AGENT_LABEL}}           human-readable description
     {{MONOREPO_ROOT}}         absolute path to the openclaw-livekit checkout
     {{LIVEKIT_VOICE_LOGS}}    directory for voice-stack logs (default <repo>/logs/voice)

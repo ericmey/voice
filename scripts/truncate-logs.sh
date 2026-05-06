@@ -15,7 +15,7 @@ LOG_DIR="${LIVEKIT_VOICE_LOGS:-${REPO_ROOT}/logs/voice}"
 log() { printf "\033[1;34m[truncate]\033[0m %s\n" "$*"; }
 
 count=0
-for a in nyla aoi party; do
+for a in nyla aoi yua party; do
   for suffix in ".log" ".err.log"; do
     path="${LOG_DIR}/agent-${a}${suffix}"
     if [[ -f "$path" ]]; then

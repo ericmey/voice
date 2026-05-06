@@ -8,8 +8,8 @@
 #   2. livekit-server — container up + /rtc/validate responds
 #   3. livekit-sip    — container up + listening on 5060
 #   4. livekit-egress — container up for local audio recordings
-#   5. three agents   — PID live, registered-worker line in log
-#   6. SIP routing    — trunk and three dispatch rules present
+#   5. agents — PID live, registered-worker line in log
+#   6. SIP routing — trunk and dispatch rules present
 #
 # Exits 0 if all green, 1 if any check failed. Writes a summary line per
 # check so you can eyeball output or pipe to alertmanager.
@@ -84,7 +84,7 @@ fi
 # ---- agents -------------------------------------------------------
 # Accept multiple log signatures so the check survives log-format drift.
 _agent_ok_patterns='registered worker|worker started|connected to server|session started'
-for a in nyla aoi party; do
+for a in nyla aoi yua party; do
   pid_line="$(launchctl list 2>/dev/null | awk -v lbl="ai.openclaw.livekit-agent-${a}" '$3 == lbl {print $1}')"
   if [[ -n "${pid_line}" && "${pid_line}" != "-" ]]; then
     log_file="${LOG_DIR}/agent-${a}.log"
@@ -114,10 +114,10 @@ if command -v lk >/dev/null 2>&1; then
   else
     record "sip-trunk"  fail "no inbound trunks registered"
   fi
-  if [[ "${rule_count}" -ge 3 ]]; then
+  if [[ "${rule_count}" -ge 4 ]]; then
     record "sip-rules"  ok "${rule_count} dispatch rule(s)"
   else
-    record "sip-rules"  fail "only ${rule_count} dispatch rule(s); expected >=3"
+    record "sip-rules"  fail "only ${rule_count} dispatch rule(s); expected >=4"
   fi
 else
   record "sip-routing" fail "lk (livekit-cli) not found"
