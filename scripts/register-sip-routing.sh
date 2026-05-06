@@ -191,3 +191,4 @@ log "done."
 if ! $DRY_RUN; then
   log "verify: lk sip inbound list ; lk sip dispatch list"
 fi
+exit 0
