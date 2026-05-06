@@ -54,6 +54,26 @@ die()  { printf "\033[1;31m[fatal]\033[0m       %s\n" "$*" >&2; exit 1; }
 command -v lk >/dev/null 2>&1 || die "lk (livekit-cli) not found — brew install livekit-cli"
 command -v jq >/dev/null 2>&1 || die "jq not found — brew install jq"
 
+declare -a TMP_FILES=()
+cleanup() {
+  local f
+  for f in "${TMP_FILES[@]:-}"; do
+    [[ -n "$f" ]] && rm -f "$f"
+  done
+}
+trap cleanup EXIT
+
+wire_json() {
+  # The repo's config examples allow a top-level `_comment` field for
+  # operator notes. Strip it before handing JSON to LiveKit's proto parser.
+  local file="$1"
+  local tmp
+  tmp="$(mktemp)"
+  TMP_FILES+=("$tmp")
+  jq 'del(._comment)' "$file" >"$tmp"
+  printf '%s\n' "$tmp"
+}
+
 # --- trunk helpers ---------------------------------------------------
 
 trunk_id_by_name() {
@@ -105,7 +125,7 @@ register_trunk() {
     return 0
   fi
   log "creating trunk from $file"
-  lk sip inbound create "$file" | tail -2
+  lk sip inbound create "$(wire_json "$file")" | tail -2
 }
 
 # --- dispatch-rule helpers ------------------------------------------
@@ -145,7 +165,7 @@ register_rule() {
     return 0
   fi
   log "creating rule from $file (trunk=$trunk_id)"
-  lk sip dispatch create --trunks "$trunk_id" "$file" | tail -2
+  lk sip dispatch create --trunks "$trunk_id" "$(wire_json "$file")" | tail -2
 }
 
 # --- execute ---------------------------------------------------------
