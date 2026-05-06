@@ -1,4 +1,4 @@
-"""Tests for the Nyla voice agent (Gemini 3.1 Flash Live)."""
+"""Tests for the Yua voice agent (Gemini 2.5 Flash Live)."""
 
 import importlib
 from pathlib import Path
@@ -22,7 +22,7 @@ class TestModuleExports:
         assert callable(agent_module.entrypoint)
 
     def test_agent_class_exists(self, agent_module):
-        assert hasattr(agent_module, "NylaAgent")
+        assert hasattr(agent_module, "YuaAgent")
 
     def test_server_is_agent_server(self, agent_module):
         from livekit.agents.worker import AgentServer
@@ -31,29 +31,29 @@ class TestModuleExports:
 
 
 class TestAgentClass:
-    """Verify the NylaAgent class is properly composed."""
+    """Verify the YuaAgent class is properly composed."""
 
     def test_inherits_core_tools(self, agent_module):
         from tools.core import CoreToolsMixin
 
-        assert issubclass(agent_module.NylaAgent, CoreToolsMixin)
+        assert issubclass(agent_module.YuaAgent, CoreToolsMixin)
 
     def test_inherits_memory_tools(self, agent_module):
         from tools.memory import MemoryToolsMixin
 
-        assert issubclass(agent_module.NylaAgent, MemoryToolsMixin)
+        assert issubclass(agent_module.YuaAgent, MemoryToolsMixin)
 
     def test_inherits_sessions_tools(self, agent_module):
         from tools.sessions import SessionsToolsMixin
 
-        assert issubclass(agent_module.NylaAgent, SessionsToolsMixin)
+        assert issubclass(agent_module.YuaAgent, SessionsToolsMixin)
 
     def test_construction_with_defaults(self, agent_module):
-        agent = agent_module.NylaAgent(instructions="test")
+        agent = agent_module.YuaAgent(instructions="test")
         assert agent._caller_from is None
 
     def test_construction_with_caller(self, agent_module):
-        agent = agent_module.NylaAgent(
+        agent = agent_module.YuaAgent(
             instructions="test",
             caller_from="+13175551234",
         )
@@ -62,17 +62,17 @@ class TestAgentClass:
     def test_inherits_household_tools(self, agent_module):
         from tools.household import HouseholdToolsMixin
 
-        assert issubclass(agent_module.NylaAgent, HouseholdToolsMixin)
+        assert issubclass(agent_module.YuaAgent, HouseholdToolsMixin)
 
     def test_household_status_tool_present(self, agent_module):
-        agent = agent_module.NylaAgent(instructions="test")
+        agent = agent_module.YuaAgent(instructions="test")
         assert hasattr(agent, "household_status")
 
     def test_active_tools_present(self, agent_module):
         """Tools currently exposed to the voice model. schedule_callback
         is deliberately OFF this list — the cron path isn't wired; see
         SDK TODO.md for the re-enable plan."""
-        agent = agent_module.NylaAgent(instructions="test")
+        agent = agent_module.YuaAgent(instructions="test")
         expected = [
             "get_current_time",
             "get_weather",
@@ -84,44 +84,37 @@ class TestAgentClass:
         for tool in expected:
             assert hasattr(agent, tool), f"Missing tool: {tool}"
 
-    def test_schedule_callback_is_not_a_tool(self, agent_module):
-        """Disabled while the cron payload redesign is open. The method
-        body still exists for guardrail tests to call directly, but it
-        must NOT be @function_tool-decorated so the voice model can't
-        discover or fire it.
-
-        Compare against openclaw_delegate — that one IS decorated and
-        becomes a FunctionTool instance; schedule_callback stays a
-        plain coroutine function so LiveKit's tool scanner skips it.
-        """
-        import inspect
-
-        send = agent_module.NylaAgent.openclaw_delegate
-        callback = agent_module.NylaAgent.schedule_callback
-        # The enabled tool is a FunctionTool wrapper.
-        assert type(send).__name__ == "FunctionTool"
-        # The disabled method is a plain coroutine function.
-        assert inspect.iscoroutinefunction(callback)
-        assert type(callback).__name__ == "function"
-
     def test_openclaw_request_absent(self, agent_module):
-        agent = agent_module.NylaAgent(instructions="test")
+        agent = agent_module.YuaAgent(instructions="test")
         attr = getattr(agent, "openclaw_request", None)
         assert not callable(attr), "openclaw_request was deleted in SDK cleanup"
 
-    def test_config_is_nyla_identity(self, agent_module):
-        """Nyla's config tags memories as nyla-voice and sets her name/room."""
-        cfg = agent_module.NylaAgent.config
-        assert cfg.agent_name == "nyla"
-        assert cfg.memory_agent_tag == "nyla-voice"
+    def test_config_is_yua_identity(self, agent_module):
+        """Yua's config must tag memories to yua-voice and set her own agent name."""
+        cfg = agent_module.YuaAgent.config
+        assert cfg.agent_name == "yua"
+        assert cfg.memory_agent_tag == "yua-voice"
         assert cfg.discord_room.startswith("channel:")
-        # Nyla is the household router — she may delegate to anyone.
-        assert cfg.allowed_delegation_targets is None
 
-    def test_voice_is_aoede(self):
-        from _shared import NYLA_VOICE
+    def test_config_delegation_allowlist_matches_persona(self, agent_module):
+        """Yua's prompt commits to bounded routing for voice calls."""
+        cfg = agent_module.YuaAgent.config
+        allowed = cfg.allowed_delegation_targets
+        assert allowed is not None, "Yua should have a bounded delegation set"
+        assert {"yumi", "rin", "aoi", "yua", "nyla"} <= allowed
+        assert "momo" not in allowed
+        assert "hana" not in allowed
+        assert "tama" not in allowed
 
-        assert NYLA_VOICE == "Aoede"
+    def test_config_uses_yua_musubi_namespace(self, agent_module):
+        cfg = agent_module.YuaAgent.config
+        assert cfg.musubi_v2_namespace == "yua/voice"
+        assert cfg.musubi_v2_presence == "yua/voice"
+
+    def test_voice_is_leda(self):
+        from _shared import YUA_VOICE
+
+        assert YUA_VOICE == "Leda"
 
 
 class TestPersona:
@@ -136,10 +129,11 @@ class TestPersona:
         content = prompt_path.read_text(encoding="utf-8").strip()
         assert len(content) > 100, "Persona file seems too short"
 
-    def test_prompt_contains_nyla_identity(self):
+    def test_prompt_contains_yua_identity(self):
+        """Yua's prompt must establish her own identity."""
         prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "system.md"
         content = prompt_path.read_text(encoding="utf-8")
-        assert "Nyla" in content, "Persona must mention Nyla"
+        assert "You are Yua" in content, "Persona must establish Yua's identity"
 
     def test_prompt_routes_household_to_household_status(self):
         prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "system.md"
@@ -164,7 +158,6 @@ class TestPersona:
         persona = load_persona()
         assert isinstance(persona, str)
         assert len(persona) > 100
-        assert "Nyla" in persona
 
 
 class TestSDKImports:
@@ -184,21 +177,6 @@ class TestSDKImports:
         from tools.sessions import SessionsToolsMixin
 
         assert SessionsToolsMixin is not None
-
-    def test_import_env(self):
-        from sdk.env import load_env
-
-        assert callable(load_env)
-
-    def test_import_trace(self):
-        from sdk.trace import trace
-
-        assert callable(trace)
-
-    def test_import_transcript(self):
-        from sdk.transcript import wire_transcript_logging
-
-        assert callable(wire_transcript_logging)
 
 
 class TestProviderImports:
@@ -229,17 +207,12 @@ class TestProviderImports:
 
         assert EndCallTool is not None
 
-    def test_import_agent_server(self):
-        from livekit.agents.worker import AgentServer
-
-        assert AgentServer is not None
-
     def test_realtime_model_enables_affective_and_proactive_audio(self, monkeypatch):
         monkeypatch.setenv("GOOGLE_API_KEY", "test")
 
         from _shared import build_model
 
         model = build_model()
-        assert model._opts.voice == "Aoede"
+        assert model._opts.voice == "Leda"
         assert model._opts.enable_affective_dialog is True
         assert model._opts.proactivity is True

@@ -246,3 +246,18 @@ TERM-and-wait sequence directly.
 **Why:** Forced restarts can interrupt active phone calls and create
 scary-but-avoidable ERROR logs. Letting LiveKit drain keeps redeploys
 aligned with the worker lifecycle.
+
+## 2026-05-05 — Four voice agents are the steady state
+
+**Trigger:** PR review questioned whether health and deploy should preserve
+pre-Yua subset workflows that intentionally leave one of the four phone agents
+undeployed.
+
+**Lesson:** Treat Nyla, Aoi, Yua, and Party as the supported steady-state
+voice stack. It is still fine for deploy scripts to accept a subset for
+targeted repair, but `make health` should fail when any steady-state agent or
+its SIP rule is missing.
+
+**Why:** Health checks are the operator's trust signal. If the intended system
+has four phone agents, a missing Yua worker should be visible immediately
+instead of hidden as a "partial deploy" success.

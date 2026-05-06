@@ -36,7 +36,7 @@ than copying the whole stack.
 
 The checked-in agents are samples:
 
-- `nyla` and `aoi` use Gemini native audio through LiveKit Agents.
+- `nyla`, `aoi`, and `yua` use Gemini native audio through LiveKit Agents.
 - `party` uses a chained STT/LLM/TTS pipeline.
 
 To add your own:
@@ -48,7 +48,7 @@ To add your own:
    needs different tokens or environment.
 5. Add a SIP dispatch JSON example if it should receive phone calls.
 
-For a fully generic template, replace the `nyla`, `aoi`, and `party`
+For a fully generic template, replace the `nyla`, `aoi`, `yua`, and `party`
 names across `agents/`, `config/sip-dispatch-*.json.example`, and the
 deploy script mappings.
 
@@ -139,4 +139,3 @@ official docs:
 For any provider, confirm SIP signaling reachability, RTP port exposure,
 codec compatibility, and dispatch-rule matching before moving production
 numbers.
-

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-yua"
+version = "0.1.0"
+description = "Yua voice agent — Gemini 2.5 Flash Native Audio, coding and QA partner persona"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "sdk",
+    "tools",
+    "livekit-agents[google]~=1.5",
+]
+
+[tool.uv.sources]
+sdk = { workspace = true }
+tools = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=1",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+
+[tool.setuptools.packages.find]
+where = ["src"]

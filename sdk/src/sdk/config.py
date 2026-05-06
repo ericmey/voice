@@ -4,8 +4,8 @@ One source of truth for the behavioral/infra fields that multiple tools
 and telemetry paths need. Concrete agents build an AgentConfig and
 assign it to ``self.config``; the mixin stack reads from ``self.config``
 instead of module-level constants. Centralizing this here is what keeps
-Aoi's memories from being attributed to Nyla and keeps Aoi's delegated
-work from landing in Nyla's Discord room.
+specialist memories from being attributed to Nyla and keeps delegated
+work from landing in the wrong Discord room.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ class AgentConfig:
     """Per-agent behavioral/infra identity.
 
     Attributes:
-        agent_name: Short canonical id ("nyla", "aoi", "party"). Used in
+        agent_name: Short canonical id ("nyla", "aoi", "yua", "party"). Used in
             telemetry, the cron callback ``--agent`` slot, and in the
             agent's own self-reference (e.g. "selfie of Nyla").
         memory_agent_tag: Value written into stored Musubi memories'
@@ -55,9 +55,9 @@ class AgentConfig:
             ``eric/<agent_name>`` at call time when ``None``.
         household_presences: Presences this agent may survey via
             ``household_status`` (``HouseholdToolsMixin``). Each entry
-            is a 2-segment presence like ``eric/nyla``. Empty tuple
+            is a 2-segment presence like ``nyla/voice``. Empty tuple
             means the agent has no household-wide visibility — the
-            mixin should not be mixed in for that agent. Nyla and Aoi
+            mixin should not be mixed in for that agent. Nyla, Aoi, and Yua
             get the full household list; party/voice personas that
             mirror another agent get an empty tuple by default.
     """

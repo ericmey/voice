@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "Dispatch rule for the phone-yua agent. See sip-dispatch-nyla.json.example",
+    "for the full field explanation and the numbers/inbound_numbers warning."
+  ],
+
+  "dispatch_rule": {
+    "name": "twilio-to-phone-yua",
+
+    "numbers": [
+      "+15550000004"
+    ],
+
+    "rule": {
+      "dispatchRuleIndividual": {
+        "roomPrefix": "phone"
+      }
+    },
+
+    "room_config": {
+      "agents": [
+        {
+          "agentName": "phone-yua",
+          "metadata": "{\"route\":\"yua\",\"source\":\"sip\"}"
+        }
+      ]
+    }
+  }
+}

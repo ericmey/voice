@@ -1,7 +1,7 @@
 # Voice Tool Harness
 
 Use the voice tool harness to test phone-agent OpenClaw delegation without
-placing a live call. It instantiates the real Nyla, Aoi, or Party agent
+placing a live call. It instantiates the real Nyla, Aoi, Yua, or Party agent
 class and runs the real delegation method.
 
 ## Safe Mock Mode
@@ -13,6 +13,7 @@ no OpenClaw request is sent.
 make voice-harness
 uv run python sdk/scripts/voice_tool_harness.py --agent nyla
 uv run python sdk/scripts/voice_tool_harness.py --agent aoi --case ops-check
+uv run python sdk/scripts/voice_tool_harness.py --agent yua --case technical-handoff
 uv run python sdk/scripts/voice_tool_harness.py --agent party --case selfie
 ```
 

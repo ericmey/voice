@@ -59,7 +59,7 @@ copy_if_missing "${REPO_ROOT}/config/livekit.yaml.example"           "${REPO_ROO
 copy_if_missing "${REPO_ROOT}/config/livekit-sip.yaml.example"       "${REPO_ROOT}/config/livekit-sip.yaml"
 copy_if_missing "${REPO_ROOT}/config/livekit-egress.yaml.example"    "${REPO_ROOT}/config/livekit-egress.yaml"
 copy_if_missing "${REPO_ROOT}/config/sip-inbound-trunk.json.example" "${REPO_ROOT}/config/sip-inbound-trunk.json"
-for a in nyla aoi party; do
+for a in nyla aoi yua party; do
   copy_if_missing "${REPO_ROOT}/config/sip-dispatch-${a}.json.example" "${REPO_ROOT}/config/sip-dispatch-${a}.json"
 done
 copy_if_missing "${REPO_ROOT}/config/secrets.env.example"            "${REPO_ROOT}/secrets/livekit-agents.env"
@@ -82,7 +82,7 @@ Next steps:
 
   1. Edit ${REPO_ROOT}/secrets/livekit-agents.env
      (GOOGLE_API_KEY, GATEWAY_AUTH_TOKEN, LIVEKIT_API_SECRET,
-      DISCORD_TOKEN_NYLA, DISCORD_TOKEN_AOI)
+      DISCORD_TOKEN_NYLA, DISCORD_TOKEN_AOI, DISCORD_TOKEN_YUA)
 
   2. Edit ${REPO_ROOT}/config/livekit.yaml
      (keys section: set a real api_secret)
@@ -93,7 +93,7 @@ Next steps:
   4. Edit ${REPO_ROOT}/config/sip-inbound-trunk.json
      (numbers: your Twilio DIDs; allowed_numbers: caller allowlist)
 
-  5. Edit ${REPO_ROOT}/config/sip-dispatch-{nyla,aoi,party}.json
+  5. Edit ${REPO_ROOT}/config/sip-dispatch-{nyla,aoi,yua,party}.json
      (numbers: the DID each agent owns)
 
   6. brew services stop redis      # compose ships redis on :6379

@@ -74,6 +74,12 @@ def _agent_class(agent_name: str) -> type:
             REPO_ROOT / "agents" / "aoi" / "src" / "_shared.py",
         )
         return module.AoiAgent
+    if agent_name == "yua":
+        module = _load_agent_module(
+            "voice_harness_yua_shared",
+            REPO_ROOT / "agents" / "yua" / "src" / "_shared.py",
+        )
+        return module.YuaAgent
     if agent_name == "party":
         module_path = REPO_ROOT / "agents" / "party" / "src"
         sys.path.insert(0, str(module_path))
@@ -210,7 +216,7 @@ def _print_human(report: dict[str, Any]) -> None:
 
 async def _main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--agent", choices=["nyla", "aoi", "party"], default="nyla")
+    parser.add_argument("--agent", choices=["nyla", "aoi", "yua", "party"], default="nyla")
     parser.add_argument(
         "--case",
         default="all",

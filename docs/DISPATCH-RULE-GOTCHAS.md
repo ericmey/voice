@@ -105,8 +105,10 @@ the positional form.
 
 ### The `_comment` field in JSON examples
 
-LiveKit's proto doesn't define `_comment`, but the CLI ignores it.
-Useful for embedding docs inline without breaking the wire format.
+LiveKit's proto doesn't define `_comment`, and recent CLI paths reject
+unknown top-level fields while parsing request JSON. The repo's examples
+can still use `_comment` for operator notes because
+`scripts/register-sip-routing.sh` strips it before passing JSON to `lk`.
 
 ## References
 

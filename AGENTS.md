@@ -31,8 +31,9 @@ openclaw-livekit/
 ├── tools/                           @function_tool mixins (workspace member)
 │   └── src/tools/                   core, memory, sessions, academy
 └── agents/                          voice personas (workspace members)
-    ├── nyla/                        realtime — Gemini 2.5 Native Audio, voice "Leda"
+    ├── nyla/                        realtime — Gemini 2.5 Native Audio, voice "Aoede"
     ├── aoi/                         realtime — Gemini 2.5 Native Audio, technical partner
+    ├── yua/                         realtime — Gemini 2.5 Native Audio, coding and QA partner
     └── party/                       chained STT/LLM/TTS — Whisper + Silero + Gemini + ElevenLabs
 ```
 
@@ -63,7 +64,7 @@ make logs                 # docker compose logs -f
 
 # agent tier (launchd)
 make deploy               # render launchd plists, install/restart with LiveKit drain
-make cycle                # gracefully restart all three agents (picks up code changes)
+make cycle                # gracefully restart all agents (picks up code changes)
 make teardown             # bootout agents, remove plists
 
 # SIP routing
@@ -71,7 +72,7 @@ make register-sip         # idempotent trunk + dispatch rule refresh
 
 # observability
 make health               # exit non-zero if any component is unhealthy
-make tail                 # follow all three agent logs (color-coded)
+make tail                 # follow all agent logs (color-coded)
 make truncate-logs        # zero out agent logs for a clean test baseline
 
 # static checks (pre-release gate)
@@ -93,7 +94,7 @@ members into a single `.venv/` at the root. No per-subproject venvs.
 After a code change that launchd agents are running, cycle them:
 
 ```bash
-make cycle                         # all three
+make cycle                         # all agents
 scripts/cycle-agents.sh <name>     # one
 ```
 
@@ -153,7 +154,7 @@ The deploy script writes these into each agent's launchd plist from
 |---|---|---|
 | `LIVEKIT_URL` | all | WebSocket URL of the LiveKit server |
 | `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | all | Must match `config/livekit.yaml` keys |
-| `GOOGLE_API_KEY` | nyla, aoi, party | Gemini API access |
+| `GOOGLE_API_KEY` | nyla, aoi, yua, party | Gemini API access |
 | `OPENAI_API_KEY` | party | Whisper STT |
 | `ELEVEN_API_KEY` (alias `ELEVENLABS_API_KEY`) | party | ElevenLabs TTS |
 | `GATEWAY_AUTH_TOKEN`, `GATEWAY_PORT` | all | Access to the OpenClaw gateway (memory, sessions) |

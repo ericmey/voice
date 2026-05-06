@@ -7,6 +7,7 @@ members = [
     "agent-aoi",
     "agent-nyla",
     "agent-party",
+    "agent-yua",
     "sdk",
     "tools",
 ]
@@ -98,6 +99,35 @@ dev = [
 requires-dist = [
     { name = "livekit-agents", extras = ["openai", "google", "silero"], specifier = "~=1.5" },
     { name = "livekit-plugins-elevenlabs", specifier = "~=1.5" },
+    { name = "sdk", editable = "sdk" },
+    { name = "tools", editable = "tools" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-asyncio", specifier = ">=1" },
+]
+
+[[package]]
+name = "agent-yua"
+version = "0.1.0"
+source = { editable = "agents/yua" }
+dependencies = [
+    { name = "livekit-agents", extra = ["google"] },
+    { name = "sdk" },
+    { name = "tools" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "livekit-agents", extras = ["google"], specifier = "~=1.5" },
     { name = "sdk", editable = "sdk" },
     { name = "tools", editable = "tools" },
 ]

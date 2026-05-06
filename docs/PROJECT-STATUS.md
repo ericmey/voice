@@ -11,7 +11,7 @@ operator-specific infrastructure.
 - Docker Compose runs the infrastructure tier: `livekit-server`,
   `livekit-sip`, `livekit-egress`, and Redis.
 - `launchd` runs the Python agent tier on macOS: `phone-nyla`,
-  `phone-aoi`, and `phone-party`.
+  `phone-aoi`, `phone-yua`, and `phone-party`.
 - SIP routing is represented as JSON examples in `config/`; real
   routing files are local-only and gitignored.
 - Agent logs, transcripts, per-call JSON telemetry, post-call reviews,

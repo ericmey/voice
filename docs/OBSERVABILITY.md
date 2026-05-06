@@ -50,7 +50,7 @@ LiveKit agents (Python)
   │                        └─ BatchSpanProcessor → OTLP/HTTP → traces backend
   ├─ OTel LoggerProvider ──── BatchLogRecordProcessor → OTLP/HTTP → logs backend
   └─ OTel MeterProvider ───── PeriodicExportingMetricReader → OTLP/HTTP → metrics backend
-                                  service.name=openclaw-livekit-{nyla,aoi,party}
+                                  service.name=openclaw-livekit-{nyla,aoi,yua,party}
 
 Optional OpenClaw gateway
   └─ diagnostics-otel plugin or equivalent → same collector

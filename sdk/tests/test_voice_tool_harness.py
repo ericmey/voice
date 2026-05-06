@@ -54,3 +54,16 @@ async def test_harness_respects_agent_delegation_allowlist():
     assert report["results"][0]["status"] == "rejected"
     assert report["captured_hook_requests"] == []
     assert "don't route to hana" in report["results"][0]["result"]
+
+
+@pytest.mark.asyncio
+async def test_harness_loads_yua_agent():
+    report = await _run_cases(
+        agent_name="yua",
+        cases=[HarnessCase(name="custom", agent_id="aoi", task="Review this branch")],
+        live_hooks=False,
+    )
+
+    assert report["tool_visibility"]["openclaw_delegate"] == "model-visible"
+    assert report["results"][0]["status"] == "accepted"
+    assert report["captured_hook_requests"][0]["agent_id"] == "aoi"
