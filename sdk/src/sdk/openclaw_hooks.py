@@ -7,6 +7,7 @@ once the Gateway accepts the job.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -110,16 +111,28 @@ async def post_agent_hook(
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(cfg.agent_url, json=payload, headers=headers) as response:
-                body = await response.json(content_type=None)
+                status = response.status
+                reason = response.reason
+                text = await response.text()
     except TimeoutError as err:
         raise OpenClawHookError("OpenClaw hook request timed out") from err
     except aiohttp.ClientError as err:
         raise OpenClawHookError(f"OpenClaw hook request failed: {err}") from err
 
+    if not 200 <= status < 300:
+        snippet = text.strip()[:200]
+        detail = snippet or reason or "no body"
+        raise OpenClawHookError(f"OpenClaw hook returned status {status}: {detail}")
+    if not text.strip():
+        raise OpenClawHookError("OpenClaw hook returned empty response body")
+    try:
+        body = json.loads(text)
+    except ValueError as err:
+        raise OpenClawHookError(f"OpenClaw hook returned invalid JSON: {err}") from err
     if not isinstance(body, dict):
         raise OpenClawHookError("OpenClaw hook returned a non-object response")
-    if response.status < 200 or response.status >= 300 or body.get("ok") is not True:
-        error = body.get("error") if isinstance(body.get("error"), str) else response.reason
+    if body.get("ok") is not True:
+        error = body.get("error") if isinstance(body.get("error"), str) else reason
         raise OpenClawHookError(f"OpenClaw hook rejected the request: {error}")
 
     run_id = body.get("runId")

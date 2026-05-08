@@ -105,3 +105,62 @@ async def test_post_agent_hook_surfaces_rejection(monkeypatch):
             await post_agent_hook(agent_id="yumi", message="Do it", name="Voice")
     finally:
         await runner.cleanup()
+
+
+async def _serve(handler):
+    app = web.Application()
+    app.router.add_post("/hooks/agent", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = _free_port()
+    site = web.TCPSite(runner, "127.0.0.1", port)
+    await site.start()
+    return runner, port
+
+
+@pytest.mark.asyncio
+async def test_post_agent_hook_rejects_empty_success_body(monkeypatch):
+    async def handler(_request: web.Request) -> web.Response:
+        return web.Response(status=200, body=b"")
+
+    runner, port = await _serve(handler)
+    monkeypatch.setenv("OPENCLAW_HOOK_TOKEN", "secret")
+    monkeypatch.setenv("OPENCLAW_GATEWAY_HTTP_URL", f"http://127.0.0.1:{port}")
+
+    try:
+        with pytest.raises(OpenClawHookError, match="empty response body"):
+            await post_agent_hook(agent_id="yumi", message="Do it", name="Voice")
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_post_agent_hook_rejects_invalid_json_success_body(monkeypatch):
+    async def handler(_request: web.Request) -> web.Response:
+        return web.Response(status=200, body=b"not json", content_type="application/json")
+
+    runner, port = await _serve(handler)
+    monkeypatch.setenv("OPENCLAW_HOOK_TOKEN", "secret")
+    monkeypatch.setenv("OPENCLAW_GATEWAY_HTTP_URL", f"http://127.0.0.1:{port}")
+
+    try:
+        with pytest.raises(OpenClawHookError, match="invalid JSON"):
+            await post_agent_hook(agent_id="yumi", message="Do it", name="Voice")
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_post_agent_hook_surfaces_5xx_with_empty_body(monkeypatch):
+    async def handler(_request: web.Request) -> web.Response:
+        return web.Response(status=503, body=b"")
+
+    runner, port = await _serve(handler)
+    monkeypatch.setenv("OPENCLAW_HOOK_TOKEN", "secret")
+    monkeypatch.setenv("OPENCLAW_GATEWAY_HTTP_URL", f"http://127.0.0.1:{port}")
+
+    try:
+        with pytest.raises(OpenClawHookError, match="status 503"):
+            await post_agent_hook(agent_id="yumi", message="Do it", name="Voice")
+    finally:
+        await runner.cleanup()
