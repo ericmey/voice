@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import socket
-
 import pytest
 from aiohttp import web
 from sdk.openclaw_hooks import (
@@ -14,10 +12,16 @@ from sdk.openclaw_hooks import (
 )
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+async def _serve(handler):
+    """Start an aiohttp test server on an OS-assigned port and return (runner, port)."""
+    app = web.Application()
+    app.router.add_post("/hooks/agent", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]
+    return runner, port
 
 
 def test_hook_config_requires_dedicated_token(monkeypatch):
@@ -48,14 +52,7 @@ async def test_post_agent_hook_sends_expected_payload(monkeypatch):
         seen["body"] = await request.json()
         return web.json_response({"ok": True, "runId": "run-123"})
 
-    app = web.Application()
-    app.router.add_post("/hooks/agent", handler)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = _free_port()
-    site = web.TCPSite(runner, "127.0.0.1", port)
-    await site.start()
-
+    runner, port = await _serve(handler)
     monkeypatch.setenv("OPENCLAW_HOOK_TOKEN", "secret")
     monkeypatch.setenv("OPENCLAW_GATEWAY_HTTP_URL", f"http://127.0.0.1:{port}")
 
@@ -86,17 +83,10 @@ async def test_post_agent_hook_sends_expected_payload(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_post_agent_hook_surfaces_rejection(monkeypatch):
-    async def handler(request: web.Request) -> web.Response:
+    async def handler(_request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "denied"}, status=400)
 
-    app = web.Application()
-    app.router.add_post("/hooks/agent", handler)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = _free_port()
-    site = web.TCPSite(runner, "127.0.0.1", port)
-    await site.start()
-
+    runner, port = await _serve(handler)
     monkeypatch.setenv("OPENCLAW_HOOK_TOKEN", "secret")
     monkeypatch.setenv("OPENCLAW_GATEWAY_HTTP_URL", f"http://127.0.0.1:{port}")
 
@@ -105,17 +95,6 @@ async def test_post_agent_hook_surfaces_rejection(monkeypatch):
             await post_agent_hook(agent_id="yumi", message="Do it", name="Voice")
     finally:
         await runner.cleanup()
-
-
-async def _serve(handler):
-    app = web.Application()
-    app.router.add_post("/hooks/agent", handler)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = _free_port()
-    site = web.TCPSite(runner, "127.0.0.1", port)
-    await site.start()
-    return runner, port
 
 
 @pytest.mark.asyncio
@@ -161,6 +140,24 @@ async def test_post_agent_hook_surfaces_5xx_with_empty_body(monkeypatch):
 
     try:
         with pytest.raises(OpenClawHookError, match="status 503"):
+            await post_agent_hook(agent_id="yumi", message="Do it", name="Voice")
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_post_agent_hook_handles_undecodable_body(monkeypatch):
+    """A 5xx with bytes that aren't valid UTF-8 must surface as OpenClawHookError, not UnicodeDecodeError."""
+
+    async def handler(_request: web.Request) -> web.Response:
+        return web.Response(status=500, body=b"\xff\xfe\xfd garbage \x80\x81")
+
+    runner, port = await _serve(handler)
+    monkeypatch.setenv("OPENCLAW_HOOK_TOKEN", "secret")
+    monkeypatch.setenv("OPENCLAW_GATEWAY_HTTP_URL", f"http://127.0.0.1:{port}")
+
+    try:
+        with pytest.raises(OpenClawHookError, match="status 500"):
             await post_agent_hook(agent_id="yumi", message="Do it", name="Voice")
     finally:
         await runner.cleanup()

@@ -113,7 +113,7 @@ async def post_agent_hook(
             async with session.post(cfg.agent_url, json=payload, headers=headers) as response:
                 status = response.status
                 reason = response.reason
-                text = await response.text()
+                text = await response.text(errors="replace")
     except TimeoutError as err:
         raise OpenClawHookError("OpenClaw hook request timed out") from err
     except aiohttp.ClientError as err:
