@@ -109,35 +109,41 @@ async def test_extract_memories_happy_path(monkeypatch: pytest.MonkeyPatch) -> N
     mock_client.models = mock_models
 
     with patch("sdk.postcall_memory.genai.Client", return_value=mock_client):
-        memories = await postcall_memory._extract_memories("transcript content here")
+        result = await postcall_memory._extract_memories("transcript content here")
 
-    assert len(memories) == 2
-    assert memories[0].content == "Eric mentioned he wants to look at Vespa"
-    assert memories[0].category == "idea"
-    assert memories[1].category == "household"
+    assert result.status == "extracted"
+    assert len(result.memories) == 2
+    assert result.memories[0].content == "Eric mentioned he wants to look at Vespa"
+    assert result.memories[0].category == "idea"
+    assert result.memories[1].category == "household"
 
 
 @pytest.mark.asyncio
-async def test_extract_memories_no_api_key_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_extract_memories_no_api_key_returns_typed_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
-    memories = await postcall_memory._extract_memories("some transcript")
-    assert memories == []
+    result = await postcall_memory._extract_memories("some transcript")
+    assert result.memories == []
+    assert result.status == "no_api_key"
 
 
 @pytest.mark.asyncio
-async def test_extract_memories_empty_transcript_returns_empty(
+async def test_extract_memories_empty_transcript_returns_typed_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
-    memories = await postcall_memory._extract_memories("")
-    assert memories == []
-    memories = await postcall_memory._extract_memories("    \n  \n")
-    assert memories == []
+    result = await postcall_memory._extract_memories("")
+    assert result.memories == []
+    assert result.status == "no_transcript_text"
+    result = await postcall_memory._extract_memories("    \n  \n")
+    assert result.memories == []
+    assert result.status == "no_transcript_text"
 
 
 @pytest.mark.asyncio
-async def test_extract_memories_malformed_json_returns_empty(
+async def test_extract_memories_malformed_json_returns_parse_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
@@ -150,12 +156,13 @@ async def test_extract_memories_malformed_json_returns_empty(
     mock_client.models = mock_models
 
     with patch("sdk.postcall_memory.genai.Client", return_value=mock_client):
-        memories = await postcall_memory._extract_memories("transcript")
-    assert memories == []
+        result = await postcall_memory._extract_memories("transcript")
+    assert result.memories == []
+    assert result.status == "parse_failed"
 
 
 @pytest.mark.asyncio
-async def test_extract_memories_gemini_raises_returns_empty(
+async def test_extract_memories_gemini_raises_transport_returns_transport_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
@@ -166,8 +173,50 @@ async def test_extract_memories_gemini_raises_returns_empty(
     mock_client.models = mock_models
 
     with patch("sdk.postcall_memory.genai.Client", return_value=mock_client):
-        memories = await postcall_memory._extract_memories("transcript")
-    assert memories == []
+        result = await postcall_memory._extract_memories("transcript")
+    assert result.memories == []
+    assert result.status == "transport_failed"
+
+
+@pytest.mark.asyncio
+async def test_extract_memories_gemini_401_returns_auth_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 2026-05-15 voice-path silent-loss case: stale Gemini key returns 401.
+
+    Pre-fix: this surfaced as `status=empty_extraction`, indistinguishable
+    from a genuinely uneventful call. Three days of voice memories were
+    lost before the operator noticed.
+    """
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+
+    mock_models = MagicMock()
+    mock_models.generate_content.side_effect = RuntimeError(
+        "401 UNAUTHENTICATED. Request had invalid authentication credentials."
+    )
+    mock_client = MagicMock()
+    mock_client.models = mock_models
+
+    with patch("sdk.postcall_memory.genai.Client", return_value=mock_client):
+        result = await postcall_memory._extract_memories("transcript")
+    assert result.memories == []
+    assert result.status == "auth_failed"
+
+
+@pytest.mark.asyncio
+async def test_extract_memories_gemini_403_returns_auth_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    mock_models = MagicMock()
+    mock_models.generate_content.side_effect = RuntimeError(
+        "403 PERMISSION_DENIED. Quota exceeded."
+    )
+    mock_client = MagicMock()
+    mock_client.models = mock_models
+    with patch("sdk.postcall_memory.genai.Client", return_value=mock_client):
+        result = await postcall_memory._extract_memories("transcript")
+    assert result.status == "auth_failed"
 
 
 @pytest.mark.asyncio
@@ -194,14 +243,15 @@ async def test_extract_memories_drops_invalid_entries(monkeypatch: pytest.Monkey
     mock_client.models = mock_models
 
     with patch("sdk.postcall_memory.genai.Client", return_value=mock_client):
-        memories = await postcall_memory._extract_memories("transcript")
+        result = await postcall_memory._extract_memories("transcript")
 
-    assert len(memories) == 1
-    assert memories[0].content == "Real memory content"
+    assert result.status == "extracted"
+    assert len(result.memories) == 1
+    assert result.memories[0].content == "Real memory content"
 
 
 @pytest.mark.asyncio
-async def test_extract_memories_no_memories_key_returns_empty(
+async def test_extract_memories_no_memories_key_returns_parse_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
@@ -214,8 +264,45 @@ async def test_extract_memories_no_memories_key_returns_empty(
     mock_client.models = mock_models
 
     with patch("sdk.postcall_memory.genai.Client", return_value=mock_client):
-        memories = await postcall_memory._extract_memories("transcript")
-    assert memories == []
+        result = await postcall_memory._extract_memories("transcript")
+    assert result.memories == []
+    # `parse_failed` because the response is JSON but lacks the expected
+    # `memories` array — same status as malformed JSON, both are
+    # "Gemini didn't give us the shape we expected".
+    assert result.status == "parse_failed"
+
+
+@pytest.mark.asyncio
+async def test_extract_memories_zero_valid_memories_returns_empty_extraction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Distinct from `parse_failed`: Gemini gave a valid `memories` array
+    but every entry was rejected by `_validate_memory`. Treated as
+    `empty_extraction` because the conversation was reached, parsed, and
+    Gemini's response was structurally fine — just nothing extractable.
+    """
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+
+    fake_response_text = json.dumps(
+        {
+            "memories": [
+                {"content": ""},
+                {"summary": "no content key here"},
+                "not a dict",
+            ]
+        }
+    )
+    mock_response = MagicMock()
+    mock_response.text = fake_response_text
+    mock_models = MagicMock()
+    mock_models.generate_content.return_value = mock_response
+    mock_client = MagicMock()
+    mock_client.models = mock_models
+
+    with patch("sdk.postcall_memory.genai.Client", return_value=mock_client):
+        result = await postcall_memory._extract_memories("transcript")
+    assert result.memories == []
+    assert result.status == "empty_extraction"
 
 
 # --- _capture_one ----------------------------------------------------------
@@ -351,6 +438,64 @@ async def test_run_extraction_full_loop(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert call_kwargs["namespace"] == "nyla/voice/episodic"
     assert "category:project" in call_kwargs["tags"]
     assert "source:transcript" in call_kwargs["tags"]
+
+
+@pytest.mark.asyncio
+async def test_run_extraction_auth_failure_logs_distinct_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The 2026-05-15 silent-loss case, locked in as a regression test.
+
+    Stale Gemini key → 401 from Gemini → `_extract_memories` returns
+    `auth_failed` status → `run_extraction` propagates it to the
+    completion log line as `status=auth_failed`, NOT `status=empty_extraction`.
+
+    Pre-openclaw-livekit#29, this same scenario logged
+    `status=empty_extraction`, indistinguishable from a genuinely
+    uneventful call. If this assertion ever breaks, the silent-loss
+    class is back.
+    """
+    import logging
+
+    monkeypatch.setenv("LIVEKIT_VOICE_LOGS", str(tmp_path))
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+
+    transcripts = tmp_path / "phone-transcripts"
+    transcripts.mkdir(parents=True, exist_ok=True)
+    (transcripts / "test-auth.txt").write_text(
+        "[10:00:00] [USER] anything that should extract\n[10:00:02] [ASSISTANT] reply\n"
+    )
+
+    mock_models = MagicMock()
+    mock_models.generate_content.side_effect = RuntimeError(
+        "401 UNAUTHENTICATED. Request had invalid authentication credentials."
+    )
+    mock_genai_client = MagicMock()
+    mock_genai_client.models = mock_models
+
+    with (
+        caplog.at_level(logging.INFO, logger="openclaw-livekit.agent"),
+        patch("sdk.postcall_memory.genai.Client", return_value=mock_genai_client),
+    ):
+        captured = await run_extraction(
+            call_sid="test-auth",
+            namespace="nyla/voice/episodic",
+            speaker_tag="nyla-voice",
+            client=MagicMock(),  # never reached on auth failure
+        )
+
+    assert captured == 0
+    # The decisive assertion: completion log says auth_failed, not
+    # empty_extraction. This is the exact contract that hid the
+    # 2026-05-15 voice silent-loss for three days before the fix.
+    completion_logs = [
+        r.message for r in caplog.records if "postcall_memory: completed" in r.message
+    ]
+    assert any("status=auth_failed" in m for m in completion_logs), (
+        f"expected completion log with status=auth_failed; got: {completion_logs}"
+    )
 
 
 # --- _spawn_extraction_subprocess ------------------------------------------
