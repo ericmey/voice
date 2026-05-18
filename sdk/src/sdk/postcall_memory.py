@@ -177,22 +177,32 @@ def _validate_memory(raw: Any) -> ExtractedMemory | None:
     """Coerce a raw dict from Gemini into a clean :class:`ExtractedMemory`,
     or return None if the shape is bad enough to drop.
 
-    We're forgiving: missing fields fill with sensible defaults. The
-    only hard reject is missing ``content`` (the row would be empty).
+    Forgiving: missing fields fill with sensible defaults. Non-string
+    values for the string fields (``content``, ``summary``, ``category``)
+    are rejected explicitly so a payload like ``{"content": 123}``
+    drops the row cleanly instead of raising ``AttributeError`` on
+    ``.strip()`` — that crash used to propagate up through the
+    validation loop and abort the whole extraction, an unclassified
+    failure that bypassed the typed-status surface.
     """
     if not isinstance(raw, dict):
         return None
-    content = (raw.get("content") or "").strip()
+    raw_content = raw.get("content")
+    if not isinstance(raw_content, str):
+        return None
+    content = raw_content.strip()
     if not content:
         return None
-    summary = (raw.get("summary") or content[:80]).strip()
+    raw_summary = raw.get("summary")
+    summary = (raw_summary if isinstance(raw_summary, str) else content[:80]).strip()
     raw_topics = raw.get("topics") or []
     topics: list[str] = []
     if isinstance(raw_topics, list):
         for t in raw_topics[:5]:
             if isinstance(t, str) and t.strip():
                 topics.append(t.strip().lower())
-    category = (raw.get("category") or "general").strip().lower()
+    raw_category = raw.get("category")
+    category = (raw_category if isinstance(raw_category, str) else "general").strip().lower()
     if category not in CATEGORIES:
         category = "general"
     return ExtractedMemory(
@@ -218,8 +228,13 @@ def _validate_memory(raw: Any) -> ExtractedMemory | None:
 # `auth_failed` = Gemini returned 401 / 403 / UNAUTHENTICATED. The
 #   typical credential-rotation-not-propagated failure (see
 #   wiki/gotchas/openclaw-livekit-deploy-traps §1).
-# `transport_failed` = network error, timeout, connection refused.
-#   Provider was reachable but the call failed for non-auth reasons.
+# `transport_failed` = catch-all non-auth Gemini call failure (network
+#   error, timeout, connection refused, unexpected SDK-side exception).
+#   The provider may or may not have been reached — distinguishing them
+#   requires more SDK-specific exception introspection than is worth
+#   the complexity for the operator-side signal. Treat as "something
+#   went wrong outside the auth check; look at the ERROR log line above
+#   the completion line for specifics."
 # `parse_failed` = Gemini returned non-JSON or non-conformant JSON
 #   (no `memories` array, wrong shape).
 ExtractionStatus = Literal[
