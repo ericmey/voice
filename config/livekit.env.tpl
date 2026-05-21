@@ -1,0 +1,13 @@
+LIVEKIT_API_KEY=op://Harem World/nyla-livekit-api/username
+LIVEKIT_API_SECRET=op://Harem World/nyla-livekit-api/credential
+OPENAI_API_KEY=op://Harem World/openai-api/credential
+GOOGLE_API_KEY=op://Harem World/google-gemini-api/credential
+ELEVENLABS_API_KEY=op://Harem World/elevenlabs-api/credential
+DISCORD_TOKEN_AOI=op://Harem World/discord-bot-aoi/credential
+DISCORD_TOKEN_NYLA=op://Harem World/discord-bot-nyla/credential
+DISCORD_TOKEN_YUA=op://Harem World/discord-bot-yua/credential
+GATEWAY_AUTH_TOKEN=op://Harem World/nyla-livekit-gateway-auth/credential
+OPENCLAW_HOOK_TOKEN=op://Harem World/nyla-livekit-hook-token/credential
+MUSUBI_V2_TOKEN_AOI=op://Harem World/musubi-v2-aoi/credential
+MUSUBI_V2_TOKEN_NYLA=op://Harem World/musubi-v2-nyla/credential
+MUSUBI_V2_TOKEN_YUA=op://Harem World/musubi-v2-yua/credential

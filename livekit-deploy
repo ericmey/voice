@@ -1,0 +1,11 @@
+#!/usr/bin/env zsh
+# livekit-deploy — render LaunchAgent plists with secrets pulled from 1Password.
+# Rotate: edit value in 1Password (Harem World) then re-run: ./livekit-deploy <agent...>
+set -euo pipefail
+cd ~/Projects/openclaw-livekit
+SE=~/.openclaw/service-env/ai.openclaw.gateway.env
+strip(){ sed -E "s/^(export )?$1=//; s/^['\"]//; s/['\"]$//"; }
+export OP_CONNECT_HOST=$(grep -E "^(export )?OP_CONNECT_HOST=" "$SE"|head -1|strip OP_CONNECT_HOST)
+export OP_CONNECT_TOKEN=$(grep -E "^(export )?OP_CONNECT_TOKEN=" "$SE"|head -1|strip OP_CONNECT_TOKEN)
+[ -n "$OP_CONNECT_HOST" ] && [ -n "$OP_CONNECT_TOKEN" ] || { echo "livekit-deploy: missing Connect env"; exit 1; }
+exec op run --no-masking --env-file=config/livekit.env.tpl -- env OPENCLAW_SECRETS="$PWD/secrets/livekit.config.env" ./scripts/deploy-agents.sh "$@"
