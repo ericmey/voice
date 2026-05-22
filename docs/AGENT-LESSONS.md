@@ -18,6 +18,21 @@ superseded, add a new dated entry that references the older one.
 
 ---
 
+## 2026-05-22 — Ops scripts must bootstrap their credential environment
+
+**Trigger:** After a macOS update reboot, `make health` and `make register-sip`
+failed even though LiveKit was healthy because non-login shells missed
+Homebrew's `lk` path and the LiveKit CLI fell back to rejected dev credentials.
+
+**Lesson:** Any operator script that calls credentialed CLIs must load the same
+1Password-backed env template the deployed service uses, or fail with an
+explicit credential-bootstrap error. Do not rely on an interactive shell's PATH
+or pre-exported secrets.
+
+**Why:** Health checks that fail from a clean shell train operators to ignore
+them, and registration scripts that silently use dev credentials can report
+false routing failures after every reboot.
+
 ## 2026-05-01 — Native-first for third-party integrations
 
 **Trigger:** Asked to "implement OTel observability" for OTel observability, the

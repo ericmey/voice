@@ -33,6 +33,12 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_DIR="${LIVEKIT_CONFIG_DIR:-${REPO_ROOT}/config}"
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
+# shellcheck source=scripts/lib/livekit-env.sh
+source "${REPO_ROOT}/scripts/lib/livekit-env.sh"
+livekit_reexec_with_1password_if_needed "${REPO_ROOT}" "${SCRIPT_PATH}" "$@"
+
 DRY_RUN=false
 TRUNKS_ONLY=false
 RULES_ONLY=false

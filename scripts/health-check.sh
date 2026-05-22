@@ -23,6 +23,11 @@ set -u  # no -e: we want to run every check
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_DIR="${LIVEKIT_VOICE_LOGS:-${REPO_ROOT}/logs/voice}"
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
+# shellcheck source=scripts/lib/livekit-env.sh
+source "${REPO_ROOT}/scripts/lib/livekit-env.sh"
+livekit_reexec_with_1password_if_needed "${REPO_ROOT}" "${SCRIPT_PATH}" "$@"
 
 QUIET=false
 FORMAT=text
