@@ -43,10 +43,12 @@ class TestAgentClass:
 
         assert issubclass(agent_module.NylaAgent, MemoryToolsMixin)
 
-    def test_inherits_sessions_tools(self, agent_module):
-        from tools.sessions import SessionsToolsMixin
+    def test_does_not_inherit_sessions_tools(self, agent_module):
+        """Retired with the OpenClaw gateway."""
+        import pytest
 
-        assert issubclass(agent_module.NylaAgent, SessionsToolsMixin)
+        with pytest.raises(ModuleNotFoundError):
+            import tools.sessions  # noqa: F401
 
     def test_construction_with_defaults(self, agent_module):
         agent = agent_module.NylaAgent(instructions="test")
@@ -158,10 +160,11 @@ class TestSDKImports:
 
         assert MemoryToolsMixin is not None
 
-    def test_import_sessions_tools(self):
-        from tools.sessions import SessionsToolsMixin
+    def test_sessions_tools_module_is_gone(self):
+        import pytest
 
-        assert SessionsToolsMixin is not None
+        with pytest.raises(ModuleNotFoundError):
+            import tools.sessions  # noqa: F401
 
     def test_import_env(self):
         from sdk.env import load_env

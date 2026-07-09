@@ -43,10 +43,12 @@ class TestAgentClass:
 
         assert issubclass(agent_module.PartyAgent, MemoryToolsMixin)
 
-    def test_inherits_sessions_tools(self, agent_module):
-        from tools.sessions import SessionsToolsMixin
+    def test_does_not_inherit_sessions_tools(self, agent_module):
+        """Retired with the OpenClaw gateway."""
+        import pytest
 
-        assert issubclass(agent_module.PartyAgent, SessionsToolsMixin)
+        with pytest.raises(ModuleNotFoundError):
+            import tools.sessions  # noqa: F401
 
     def test_config_is_nyla_identity(self, agent_module):
         """Harem World line uses Nyla's operational identity — same person,
