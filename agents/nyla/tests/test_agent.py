@@ -78,7 +78,6 @@ class TestAgentClass:
             "get_weather",
             "musubi_recent",
             "musubi_remember",
-            "openclaw_delegate",
             "household_status",
         ]
         for tool in expected:
@@ -90,24 +89,25 @@ class TestAgentClass:
         must NOT be @function_tool-decorated so the voice model can't
         discover or fire it.
 
-        Compare against openclaw_delegate — that one IS decorated and
+        Compare against musubi_remember — that one IS decorated and
         becomes a FunctionTool instance; schedule_callback stays a
         plain coroutine function so LiveKit's tool scanner skips it.
         """
         import inspect
 
-        send = agent_module.NylaAgent.openclaw_delegate
+        enabled = agent_module.NylaAgent.musubi_remember
         callback = agent_module.NylaAgent.schedule_callback
         # The enabled tool is a FunctionTool wrapper.
-        assert type(send).__name__ == "FunctionTool"
+        assert type(enabled).__name__ == "FunctionTool"
         # The disabled method is a plain coroutine function.
         assert inspect.iscoroutinefunction(callback)
         assert type(callback).__name__ == "function"
 
-    def test_openclaw_request_absent(self, agent_module):
+    def test_openclaw_delegation_absent(self, agent_module):
+        """Standalone agents — no openclaw_request, no openclaw_delegate."""
         agent = agent_module.NylaAgent(instructions="test")
-        attr = getattr(agent, "openclaw_request", None)
-        assert not callable(attr), "openclaw_request was deleted in SDK cleanup"
+        for removed in ("openclaw_request", "openclaw_delegate"):
+            assert not callable(getattr(agent, removed, None)), f"{removed} removed"
 
     def test_config_is_nyla_identity(self, agent_module):
         """Nyla's config tags memories as nyla-voice and sets her name/room."""

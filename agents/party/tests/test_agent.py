@@ -82,7 +82,6 @@ class TestAgentClass:
             "get_weather",
             "musubi_recent",
             "musubi_remember",
-            "openclaw_delegate",
         ]
         for tool in expected:
             assert hasattr(agent, tool), f"Missing tool: {tool}"
@@ -90,8 +89,10 @@ class TestAgentClass:
     def test_chained_llm_model_is_current_gemini_lite(self, agent_module):
         assert agent_module._CHAINED_LLM_MODEL == "gemini-3.1-flash-lite-preview"
 
-    def test_openclaw_request_absent(self, agent_module):
+    def test_openclaw_delegation_absent(self, agent_module):
         agent = agent_module.PartyAgent(instructions="test")
+        for removed in ("openclaw_request", "openclaw_delegate"):
+            assert not callable(getattr(agent, removed, None)), f"{removed} removed"
         attr = getattr(agent, "openclaw_request", None)
         assert not callable(attr), "openclaw_request was deleted in SDK cleanup"
 

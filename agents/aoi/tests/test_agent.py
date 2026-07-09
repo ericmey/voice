@@ -78,16 +78,18 @@ class TestAgentClass:
             "get_weather",
             "musubi_recent",
             "musubi_remember",
-            "openclaw_delegate",
             "household_status",
         ]
         for tool in expected:
             assert hasattr(agent, tool), f"Missing tool: {tool}"
 
-    def test_openclaw_request_absent(self, agent_module):
+    def test_openclaw_delegation_absent(self, agent_module):
+        """openclaw_request and openclaw_delegate were removed — the agents
+        are standalone and no longer delegate to a legacy OpenClaw gateway."""
         agent = agent_module.AoiAgent(instructions="test")
-        attr = getattr(agent, "openclaw_request", None)
-        assert not callable(attr), "openclaw_request was deleted in SDK cleanup"
+        for removed in ("openclaw_request", "openclaw_delegate"):
+            attr = getattr(agent, removed, None)
+            assert not callable(attr), f"{removed} should have been removed"
 
     def test_config_is_aoi_identity(self, agent_module):
         """Aoi's config must tag memories to aoi-voice and set her own agent name."""

@@ -27,14 +27,14 @@ class AgentConfig:
             ``payload.agent`` field. Separates voice identities so the
             household can filter memories by speaker.
         discord_room: Discord target (``channel:<id>`` or ``user:<id>``)
-            where delegated work results should post when the voice agent
-            delegates with ``deliver_to="room"``. Typically the agent's
-            own Discord channel.
-        allowed_delegation_targets: Optional whitelist of agent ids this
-            voice agent may delegate to via ``openclaw_delegate``.
-            ``None`` means no restriction (household
-            router behavior — Nyla's default). A frozenset means any
-            ``agent_id`` outside the set is rejected with an error
+            for this agent. Typically the agent's own Discord channel.
+            (Retained for future first-class Discord tools; the OpenClaw
+            delegation path that consumed it was removed 2026-07-08.)
+        allowed_delegation_targets: Retained inert config field. The
+            ``openclaw_delegate`` tool that enforced this allowlist was
+            removed 2026-07-08 (standalone agents, no legacy gateway).
+            ``None`` means no restriction. A frozenset historically meant
+            any ``agent_id`` outside the set was rejected with an error
             message rather than firing.
         musubi_v2_namespace: Two-segment ``<agent>/<channel>`` prefix
             (Musubi ADR 0030 agent-as-tenant form) used by the canonical

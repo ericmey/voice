@@ -171,31 +171,8 @@ class TestMemoryTools:
 class TestDelegationTools:
     """Test default delegation through OpenClaw."""
 
-    @pytest.mark.asyncio
-    async def test_delegate_and_images(self, agent):
-        async with AgentSession(llm=build_model()) as session:
-            greeting = await session.start(agent, capture_run=True)
-            await greeting
-            _assert_greeting_active(greeting)
-            await asyncio.sleep(TURN_GAP)
-
-            r = await session.run(
-                user_input="Have Yumi research what's new with LiveKit agents this week."
-            )
-            await r
-            r.expect.contains_function_call(name="openclaw_delegate")
-            await asyncio.sleep(TURN_GAP)
-
-            r = await session.run(user_input="Send me a selfie.")
-            await r
-            r.expect.contains_function_call(name="openclaw_delegate")
-            await asyncio.sleep(TURN_GAP)
-
-            r = await session.run(
-                user_input="Get Mizuki to draw Hana in a summer dress at the park."
-            )
-            await r
-            r.expect.contains_function_call(name="openclaw_delegate")
+    # test_delegate_and_images removed 2026-07-08 — openclaw_delegate was
+    # deleted when the voice agents were made standalone (no legacy gateway).
 
 
 class TestCallbackTool:
