@@ -9,7 +9,7 @@ Pin the contract:
   unless ``VOICE_OTEL_VERBOSE`` is set.
 * :func:`attach_current_span_metadata` writes OTel-SemConv keys
   (``session.id``, ``enduser.id``) plus a small set of telephony-routing
-  ``openclaw.*`` keys onto the active span.
+  ``voice.*`` keys onto the active span.
 """
 
 from __future__ import annotations
@@ -124,7 +124,7 @@ def test_resource_attributes_identify_agent(monkeypatch) -> None:
     attrs = dict(resource.attributes)
 
     assert attrs["service.name"] == "voice-aoi"
-    assert attrs["service.namespace"] == "openclaw"
+    assert attrs["service.namespace"] == "voice"
     assert attrs["service.version"] == "0.4.2"
     assert attrs["deployment.environment"] == "production"
     assert "service.instance.id" in attrs
@@ -256,9 +256,9 @@ def test_attach_writes_session_and_enduser_semconv_keys() -> None:
 
     span.set_attribute.assert_any_call("session.id", "CA12345")
     span.set_attribute.assert_any_call("enduser.id", "+15551234567")
-    span.set_attribute.assert_any_call("openclaw.dialed_number", "+15559876543")
-    span.set_attribute.assert_any_call("openclaw.caller_source", "twilio")
-    span.set_attribute.assert_any_call("openclaw.lk_job_id", "job-7")
+    span.set_attribute.assert_any_call("voice.dialed_number", "+15559876543")
+    span.set_attribute.assert_any_call("voice.caller_source", "twilio")
+    span.set_attribute.assert_any_call("voice.lk_job_id", "job-7")
 
 
 def test_attach_skips_falsey_values() -> None:

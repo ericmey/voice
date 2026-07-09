@@ -90,11 +90,11 @@ def test_annotate_call_audio_recording_writes_otel_attrs(monkeypatch, tmp_path) 
     audio_recording.annotate_call_audio_recording(rec)
 
     set_attrs = {call.args[0]: call.args[1] for call in span.set_attribute.call_args_list}
-    assert set_attrs["openclaw.audio.call_sid"] == "SCL_call"
-    assert set_attrs["openclaw.audio.path"] == str(audio_file)
-    assert set_attrs["openclaw.audio.mime_type"] == "audio/ogg"
-    assert set_attrs["openclaw.audio.egress_id"] == "EG_1"
-    assert "openclaw.audio.bytes" not in set_attrs
+    assert set_attrs["voice.audio.call_sid"] == "SCL_call"
+    assert set_attrs["voice.audio.path"] == str(audio_file)
+    assert set_attrs["voice.audio.mime_type"] == "audio/ogg"
+    assert set_attrs["voice.audio.egress_id"] == "EG_1"
+    assert "voice.audio.bytes" not in set_attrs
 
 
 def test_finalize_call_audio_recording_does_not_mutate_span(monkeypatch, tmp_path) -> None:
