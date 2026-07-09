@@ -140,7 +140,7 @@ class AnnotationQueueConfig(TypedDict):
 # it spins up a judge LLM. Without them, LLM-as-judge evals fail with
 # auth errors at run time.
 #
-# Source: each entry's ``key`` is looked up in the ``~/.openclaw/.env``
+# Source: each entry's ``key`` is looked up in the ``~/.voice/.env``
 # file (override via ``VOICE_ENV_PATH``). The actual key VALUE is
 # never checked into this repo — only the NAMES we forward.
 #

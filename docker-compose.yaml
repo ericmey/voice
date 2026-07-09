@@ -4,11 +4,12 @@
 # TURN), livekit-sip (SIP trunk to Twilio, room dispatch), livekit-egress
 # (audio-only call recordings), and redis (shared state between them).
 #
-# NOT in this compose file: the Python voice agents (nyla, aoi, party).
-# Agents run as macOS launch agents via launchd, rendered from templates in
-# config/launchd/. Rationale: host-native Python venvs with hot reload + crash
-# restart are simpler on this box than wrestling with containerized Python on
-# Docker Desktop. See docs/ARCHITECTURE.md for the long version.
+# NOT in this compose file: the Python voice agents (nyla, aoi, yua, party).
+# The agents live in docker-compose.agents.yaml and run as their own
+# containers (voice-agent-<name>) from the voice-agent:latest image. Bring
+# up the full stack — infra + agents — with:
+#   docker compose -f docker-compose.yaml -f docker-compose.agents.yaml up -d
+# See docs/ARCHITECTURE.md for the long version.
 #
 # Pre-flight:
 #   1. Stop brew's redis if you had one running:

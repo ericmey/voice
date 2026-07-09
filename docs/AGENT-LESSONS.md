@@ -191,9 +191,9 @@ correctly routed.
 
 ## 2026-05-05 — Treat voice subprocess boundaries as security boundaries
 
-**Trigger:** A live post-call hook failed because launchd rendered
-`VOICE_BIN` to a stale path, and a review of voice tool subprocesses
-showed the agent runtime trusted that path before launching `openclaw`.
+**Trigger:** A live post-call hook failed because the deploy rendered a stale
+path for an external CLI binary, and a review of voice tool subprocesses showed
+the agent runtime trusted that path before launching it.
 
 **Lesson:** Validate external executables at both deploy time and runtime:
 absolute path, executable, expected basename, and not world-writable.
@@ -202,6 +202,9 @@ Keep subprocess command verbs allowlisted and arguments bounded.
 **Why:** Voice tools are actuators. Even when `shell=False` prevents shell
 injection, a bad binary path or unbounded argv payload can turn a normal
 tool call into an unsafe process boundary.
+
+*(The CLI this was written about is retired; the boundary rule is not. The
+post-call memory extractor still spawns a subprocess.)*
 
 ## 2026-05-05 — Keep OTel resource labels semantically true
 
@@ -232,19 +235,22 @@ operator runbook history in local secrets or private notes.
 also make a public repo harder to evaluate and can expose internal
 topology without adding useful context.
 
-## 2026-05-05 — Voice agents should delegate, not reroute
+## 2026-05-05 — Voice agents should delegate, not reroute — **SUPERSEDED 2026-07-09**
 
 **Trigger:** The phone agents had dedicated `academy_*` and session tools
-that knew about Mizuki, Discord targets, and the local `openclaw` CLI.
+that knew about Mizuki, Discord targets, and a local agent CLI.
 
-**Lesson:** Treat the voice agents as live conversation front doors into
-OpenClaw, not separate implementations of OpenClaw personas. Default to a
-single fire-and-forget Gateway hook delegation path; only add blocking
-ask-style behavior when a real async completion channel exists.
+**Lesson (as written):** Treat the voice agents as live conversation front
+doors into the gateway, not separate implementations of its personas. Default
+to a single fire-and-forget hook delegation path.
 
-**Why:** Duplicating OpenClaw routing in the voice stack makes calls more
-fragile, slower, and harder to debug. The real OpenClaw agent should own
-skills, tools, delivery, and channel-specific behavior.
+**Superseded:** The gateway was retired on 2026-07-09 and the delegation
+surface was deleted outright. There is now no route off the phone. The
+enduring half of this lesson is the negative: do not reimplement another
+system's routing inside the voice stack. The positive half — "delegate
+instead" — no longer has anywhere to delegate to. A prompt that promises a
+delegation tool the runtime does not register makes the model fabricate,
+which is why the prompts lost those sections too.
 
 ## 2026-05-05 — Cycle LiveKit workers with TERM, not force
 

@@ -1,6 +1,6 @@
 """Cross-modal recall dataset — same agent, different surfaces.
 
-The premise: every memory saved on one surface (Claude Code, openclaw,
+The premise: every memory saved on one surface (Claude Code, Discord,
 voice phone call) MUST be recallable on the other surfaces under the
 same agent. This dataset pins examples where Eric saves something on
 surface A and asks for it on surface B; a correct answer means the
@@ -33,15 +33,15 @@ EXAMPLES: list[dict] = [
             "agent": "nyla",
         },
         "outputs": {
-            "saved_on": "openclaw-nyla",
+            "saved_on": "discord-nyla",
             "asked_on": "voice-nyla",
             "expected_tool": "musubi_search",
             "expected_namespace_pattern": "nyla/*/episodic",
             "expected_query_contains": "favorite",
             "answer_contains_any": ["Gojira"],
             "notes": (
-                "User-profile fact saved on openclaw, asked on voice. "
-                "Tests cross-modal search hits the openclaw episodic "
+                "User-profile fact saved on Discord, asked on voice. "
+                "Tests cross-modal search hits the Discord episodic "
                 "namespace from voice."
             ),
         },
@@ -53,14 +53,14 @@ EXAMPLES: list[dict] = [
             "agent": "nyla",
         },
         "outputs": {
-            "saved_on": "openclaw-nyla",
+            "saved_on": "discord-nyla",
             "asked_on": "voice-nyla",
             "expected_tool": "musubi_search",
             "expected_namespace_pattern": "nyla/*/episodic",
             "expected_query_contains": "cocoa",
             "answer_contains_any": ["cocoa", "coffee pod", "breakroom"],
             "notes": (
-                "Specific event saved as a story on openclaw. "
+                "Specific event saved as a story on Discord. "
                 "Asking on voice forces the ``*`` machine wildcard."
             ),
         },
@@ -109,7 +109,7 @@ EXAMPLES: list[dict] = [
             "agent": "aoi",
         },
         "outputs": {
-            "saved_on": "openclaw-aoi",
+            "saved_on": "discord-aoi",
             "asked_on": "voice-aoi",
             "expected_tool": "musubi_search",
             "expected_namespace_pattern": "aoi/*/episodic",
@@ -129,7 +129,7 @@ EXAMPLES: list[dict] = [
             "agent": "nyla",
         },
         "outputs": {
-            "saved_on": "openclaw-nyla",
+            "saved_on": "discord-nyla",
             "asked_on": "voice-nyla",
             "expected_tool": "musubi_search",
             "expected_namespace_pattern": "nyla/*/episodic",

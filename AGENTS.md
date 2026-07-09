@@ -18,18 +18,20 @@ prior entries.
 ```
 voice/
 ├── pyproject.toml                   uv workspace root + ruff/pyright config
-├── docker-compose.yaml              livekit-server + livekit-sip + redis
+├── docker-compose.yaml              livekit-server + livekit-sip + livekit-egress + redis
+├── docker-compose.agents.yaml       the four voice-agent containers
+├── Dockerfile.agent                 builds voice-agent:latest (shared by all agents)
 ├── config/                          live configs (bootstrap drops .example → real here)
 ├── secrets/                         local-only secrets (gitignored)
 ├── logs/                            runtime voice logs (gitignored)
-├── scripts/                         ops verbs (deploy, cycle, health, etc.)
+├── scripts/                         ops verbs (bootstrap, health, sip, tail, etc.)
 ├── docs/                            architecture, operations, gotchas
-├── Makefile                         stable wrapper around scripts/
+├── Makefile                         stable wrapper around scripts/ + docker compose
 │
 ├── sdk/                             shared runtime (workspace member)
 │   └── src/sdk/                     telemetry, trace, transcript, post-call, config, clients
 ├── tools/                           @function_tool mixins (workspace member)
-│   └── src/tools/                   core, memory, sessions, academy
+│   └── src/tools/                   core, memory, household
 └── agents/                          voice personas (workspace members)
     ├── nyla/                        realtime — Gemini 2.5 Native Audio, voice "Aoede"
     ├── aoi/                         realtime — Gemini 2.5 Native Audio, technical partner
@@ -59,13 +61,12 @@ make bootstrap            # first-time machine setup (deps, configs, root venv)
 make sync-venvs           # re-sync root workspace venv (sdk + tools + all agents)
 
 # infrastructure tier (docker compose)
-make up / make down       # livekit-server + livekit-sip + redis
+make up / make down       # livekit-server + livekit-sip + livekit-egress + redis
 make logs                 # docker compose logs -f
 
-# agent tier (launchd)
-make deploy               # render launchd plists, install/restart with LiveKit drain
-make cycle                # gracefully restart all agents (picks up code changes)
-make teardown             # bootout agents, remove plists
+# agent tier (docker compose)
+make deploy               # build voice-agent:latest, bring up infra + the four agents
+make cycle                # rebuild the image + recreate agent containers (picks up code changes)
 
 # SIP routing
 make register-sip         # idempotent trunk + dispatch rule refresh
@@ -90,15 +91,19 @@ uv sync                   # from the repo root
 
 That installs `sdk`, `tools`, and every agent as editable workspace
 members into a single `.venv/` at the root. No per-subproject venvs.
+The root venv is for local lint/typecheck/test; the running agents use
+the `voice-agent:latest` image built from `Dockerfile.agent`.
 
-After a code change that launchd agents are running, cycle them:
+After a code change, rebuild the image and recreate the agent containers:
 
 ```bash
-make cycle                         # all agents
-scripts/cycle-agents.sh <name>     # one
+make cycle                         # rebuild image + recreate all agent containers
+# one agent: rebuild the shared image, then recreate just that service
+docker build -f Dockerfile.agent -t voice-agent:latest .
+docker compose -f docker-compose.yaml -f docker-compose.agents.yaml up -d agent-nyla
 ```
 
-Then run a real phone test — venv changes are not proven until a call
+Then run a real phone test — code changes are not proven until a call
 lands transcripts, telemetry, and a call-review in `$LIVEKIT_VOICE_LOGS`
 (default `./logs/voice/`).
 
@@ -147,22 +152,23 @@ Both tools are configured in the root `pyproject.toml`:
 
 ## Environment variables each agent reads
 
-The deploy script writes these into each agent's launchd plist from
-`secrets/livekit-agents.env`.
+Each agent container loads these from `secrets/livekit-agents.env`
+(`env_file` in `docker-compose.agents.yaml`).
+`scripts/agent-entrypoint.sh` maps the per-agent `MUSUBI_V2_TOKEN_<AGENT>`
+to the unsuffixed `MUSUBI_V2_TOKEN` the SDK reads, and exports
+`VOICE_AGENT_NAME` (which is what makes `SERVICE_NAME` per-agent).
 
 | Variable | Who needs it | What it is |
 |---|---|---|
-| `LIVEKIT_URL` | all | WebSocket URL of the LiveKit server |
+| `LIVEKIT_URL` | all | WebSocket URL of the LiveKit server (`ws://livekit-server:7880` in compose) |
 | `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | all | Must match `config/livekit.yaml` keys |
 | `GOOGLE_API_KEY` | nyla, aoi, yua, party | Gemini API access |
 | `OPENAI_API_KEY` | party | Whisper STT |
 | `ELEVEN_API_KEY` (alias `ELEVENLABS_API_KEY`) | party | ElevenLabs TTS |
-| `GATEWAY_AUTH_TOKEN`, `GATEWAY_PORT` | all | Access to the OpenClaw gateway (memory, sessions) |
-| `DISCORD_BOT_TOKEN` | all | Per-agent Discord identity (deploy script maps `DISCORD_TOKEN_<AGENT>` → this) |
+| `MUSUBI_V2_BASE_URL` | all | Canonical Musubi API base URL |
+| `MUSUBI_V2_TOKEN_<AGENT>` | all | Per-agent Musubi bearer token; entrypoint maps it to `MUSUBI_V2_TOKEN` |
+| `VOICE_AGENT_NAME` | all | Agent id; set by `agent-entrypoint.sh`, drives `SERVICE_NAME=voice-<agent>` |
 | `LIVEKIT_VOICE_LOGS` | all | Directory for voice logs / telemetry / transcripts |
-| `VOICE_HOOK_TOKEN`, `VOICE_GATEWAY_HTTP_URL`, `VOICE_HOOKS_PATH` | all | OpenClaw Gateway hook delegation config |
-| `VOICE_BIN` | all | Absolute path to the `openclaw` CLI binary for legacy disabled callback code |
-| `LIVEKIT_AGENT_DRAIN_WAIT_SECONDS`, `LIVEKIT_AGENT_EXIT_TIMEOUT` | deploy scripts | Graceful launchd restart wait/timeout knobs |
 | `VOICE_OTEL_ENABLED` | all | Enables OTel export |
 | `VOICE_OTLP_ENDPOINT`, `VOICE_OTLP_HEADERS` | all | OTLP traces endpoint + optional auth headers |
 | `VOICE_OTEL_LOGS_ENABLED`, `VOICE_OTLP_LOGS_ENDPOINT`, `VOICE_OTLP_LOGS_HEADERS` | all | Optional OTLP logs overrides |

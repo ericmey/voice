@@ -143,7 +143,7 @@ async def test_musubi_search_uses_tenant_wildcard_namespace(agent):
     """`musubi_search` must use `<tenant>/*/episodic` so cross-channel
     recall works (per Musubi ADR 0031). A regression to the agent's own
     channel breaks the multimodality contract — phone Nyla would stop
-    seeing Openclaw-Nyla's deliberate stores."""
+    seeing Discord-Nyla's deliberate stores."""
     stub = _StubClient(response={"results": []})
     agent._musubi_v2_client = lambda: stub
     # Force a known 2-segment presence so the test isn't sensitive to fixture defaults.
@@ -166,7 +166,7 @@ async def test_musubi_search_uses_tenant_wildcard_namespace(agent):
 async def test_musubi_search_passes_state_filter_for_fresh_save_recall(agent):
     """The whole point of musubi_search is recalling a deliberate
     musubi_remember BEFORE the maturation cron runs (otherwise voice-Nyla
-    can't remember what Openclaw-Nyla just saved). Asserts state_filter
+    can't remember what Discord-Nyla just saved). Asserts state_filter
     explicitly includes `provisional` so fresh stores are visible."""
     stub = _StubClient(response={"results": []})
     agent._musubi_v2_client = lambda: stub
@@ -189,7 +189,7 @@ async def test_musubi_search_passes_state_filter_for_fresh_save_recall(agent):
 @pytest.mark.asyncio
 async def test_musubi_search_returns_origin_channel_in_each_row(agent):
     """Result rows must surface their concrete stored namespace's
-    presence segment so the LLM can attribute "you told me on Openclaw"
+    presence segment so the LLM can attribute "you told me on Discord"
     vs "on the call". Without this, channel provenance is lost in
     rendering even though the API preserves it."""
     stub = _StubClient(
@@ -200,7 +200,7 @@ async def test_musubi_search_returns_origin_channel_in_each_row(agent):
                     "score": 0.9,
                     "plane": "episodic",
                     "content": "the cocoa-pods prank",
-                    "namespace": "nyla/openclaw/episodic",
+                    "namespace": "nyla/discord/episodic",
                 },
             ],
         },
@@ -215,7 +215,7 @@ async def test_musubi_search_returns_origin_channel_in_each_row(agent):
     )
 
     rendered = await _unwrap(MemoryToolsMixin.musubi_search)(agent, query="prank")
-    assert "[openclaw]" in rendered, rendered
+    assert "[discord]" in rendered, rendered
     assert "cocoa-pods prank" in rendered, rendered
 
 

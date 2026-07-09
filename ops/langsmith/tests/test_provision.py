@@ -225,7 +225,7 @@ def test_workspace_secrets_skips_missing_source_env(monkeypatch) -> None:
     we skip with a warning rather than POST an empty value (LangSmith
     would either 422 or store an empty cred — both bad)."""
     # Source env missing every WORKSPACE_SECRETS entry
-    monkeypatch.setattr(provision, "_load_openclaw_secrets", lambda: {})
+    monkeypatch.setattr(provision, "_load_operator_secrets", lambda: {})
 
     # Mock requests.get to return empty current state
     fake_resp = MagicMock()
@@ -259,7 +259,7 @@ def test_workspace_secrets_skips_already_loaded(monkeypatch) -> None:
     correctly-configured workspace."""
     monkeypatch.setattr(
         provision,
-        "_load_openclaw_secrets",
+        "_load_operator_secrets",
         lambda: {s["key"]: f"value-of-{s['key']}" for s in projects_mod.WORKSPACE_SECRETS},
     )
 
@@ -562,7 +562,7 @@ def test_workspace_secrets_dry_run_does_not_write(monkeypatch) -> None:
     `make langsmith-plan`."""
     monkeypatch.setattr(
         provision,
-        "_load_openclaw_secrets",
+        "_load_operator_secrets",
         lambda: {s["key"]: "v" for s in projects_mod.WORKSPACE_SECRETS},
     )
 

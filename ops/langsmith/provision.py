@@ -19,7 +19,7 @@ What gets applied (in order):
 3. **Annotation queues** — one per ``ANNOTATION_QUEUES`` entry. Skips
    if name already exists.
 4. **Workspace secrets** — provider API keys (OpenAI, Gemini, xAI,
-   OpenRouter) sourced from ``~/.openclaw/.env`` and POSTed to
+   OpenRouter) sourced from ``~/.voice/.env`` and POSTed to
    ``/api/v1/workspaces/current/secrets``. These power online
    LLM-as-judge evaluators. Already-present keys are not re-uploaded
    (avoids silent value rotation). Override source via
@@ -227,8 +227,8 @@ def apply_annotation_queues(
 # ---------------------------------------------------------------------------
 
 
-def _load_openclaw_secrets() -> dict[str, str]:
-    """Source the operator's ~/.openclaw/.env (or ``VOICE_ENV_PATH`` override)
+def _load_operator_secrets() -> dict[str, str]:
+    """Source the operator's ~/.voice/.env (or ``VOICE_ENV_PATH`` override)
     via bash so quoted values + multiline continuations behave like normal
     shell sourcing. Same trick as client.py uses for our own provisioning env.
 
@@ -240,11 +240,11 @@ def _load_openclaw_secrets() -> dict[str, str]:
     import subprocess
     from pathlib import Path
 
-    src = os.environ.get("VOICE_ENV_PATH") or str(Path.home() / ".openclaw" / ".env")
+    src = os.environ.get("VOICE_ENV_PATH") or str(Path.home() / ".voice" / ".env")
     src_path = Path(src)
     if not src_path.exists():
         raise FileNotFoundError(
-            f"openclaw env file not found: {src} — set VOICE_ENV_PATH "
+            f"voice env file not found: {src} — set VOICE_ENV_PATH "
             "to override, or skip the secrets phase: `make langsmith-provision "
             "--phase=feedback` etc."
         )
@@ -261,7 +261,7 @@ def _load_openclaw_secrets() -> dict[str, str]:
 def apply_workspace_secrets(
     client: Any, config: dict[str, str], counters: Counters, *, dry_run: bool
 ) -> None:
-    """Forward provider API keys from the operator's ~/.openclaw/.env into
+    """Forward provider API keys from the operator's ~/.voice/.env into
     the LangSmith workspace via POST /api/v1/workspaces/current/secrets.
 
     Idempotency: GET current secrets first (LangSmith returns keys without
@@ -272,9 +272,9 @@ def apply_workspace_secrets(
     """
     print("\n=== phase 4: workspace secrets (provider API keys) ===")
 
-    # Source values from ~/.openclaw/.env
+    # Source values from ~/.voice/.env
     try:
-        source_env = _load_openclaw_secrets()
+        source_env = _load_operator_secrets()
     except FileNotFoundError as exc:
         print(f"{ERROR} {exc}")
         counters.errored += 1

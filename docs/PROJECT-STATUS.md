@@ -37,11 +37,13 @@ guarded by explicit environment variables.
 
 ## Known Operational Boundaries
 
-- `schedule_callback` is intentionally disabled as a model-visible tool
-  until the callback path can invoke a structured CLI command directly.
-  See [sdk/TODO.md](../sdk/TODO.md).
-- The LaunchAgent deployment path targets macOS. Linux/systemd or
-  containerized agents would need a separate process manager template.
+- `schedule_callback` was deleted on 2026-07-09 along with the rest of
+  `tools/sessions.py`. It depended on an external CLI gateway that is
+  retired. There is no callback scheduling; the prompts say so plainly.
+- There is no delegation from the phone. The voice agents answer calls and
+  read/write Musubi; they cannot hand work to another agent.
+- Agents run as containers on `mizuki.mey.house` via
+  `docker-compose.agents.yaml`. The macOS LaunchAgent path is gone.
 - The LangSmith provisioning tree is archived, not part of the active
   telemetry path. See [LANGSMITH.md](LANGSMITH.md).
 

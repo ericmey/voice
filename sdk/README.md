@@ -2,7 +2,7 @@
 
 Shared Python runtime for the LiveKit voice agents. Provides the
 worker bootstrap, telemetry / trace / transcript writers, tool mixins
-(time, weather, memory, OpenClaw delegation), and the post-call review
+(time, weather, memory, household status), and the post-call review
 pipeline that feeds Rin's review queue.
 
 This is the common substrate the persona agents (Aoi, Nyla, Yua, Party) all

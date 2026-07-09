@@ -1,7 +1,7 @@
 # Bring Your Own Stack
 
 This repository is a reference implementation for one LiveKit voice
-voice deployment. The included personas, tools, and service names are
+deployment. The included personas, tools, and service names are
 examples from that stack. Treat them as working samples you can replace,
 not as a required application shape.
 
@@ -9,15 +9,13 @@ not as a required application shape.
 
 | Dependency | Used for | Reference |
 | --- | --- | --- |
-| OpenClaw | Gateway hooks and downstream agent work | <https://github.com/openclaw/openclaw> |
 | Musubi | Cross-channel episodic memory and presence delivery | <https://github.com/ericmey/musubi> |
-| OpenClaw OTel stack | Example Grafana/Loki/Tempo/Mimir support stack | <https://github.com/ericmey/openclaw-otel> |
 | LiveKit Agents | Python voice-agent runtime | <https://docs.livekit.io/agents/> |
 | LiveKit SIP | SIP bridge into LiveKit rooms | <https://docs.livekit.io/sip/> |
 
-OpenClaw and Musubi are not vendored here. If you use different agent,
-memory, or gateway systems, replace the small integration surfaces rather
-than copying the whole stack.
+Musubi is not vendored here. If you use a different memory or presence
+system, replace the small integration surface rather than copying the
+whole stack.
 
 ## Configuration Map
 
@@ -27,10 +25,9 @@ than copying the whole stack.
 | SIP trunk + dispatch rules | Yes for phone calls | `config/sip-*.json`, `docs/twilio-trunk.md` | Twilio, Telnyx, carrier SBC, or any LiveKit SIP-compatible provider |
 | Agents/personas | Yes | `agents/*/src/agent.py`, `agents/*/prompts/system.md` | Your own agent packages, names, voices, prompts, model choices |
 | Tools | Optional but useful | `tools/src/tools/`, `tools/README.md` | Your own LiveKit `@function_tool` mixins |
-| OpenClaw delegation | Optional | `VOICE_HOOK_*`, `sdk/src/sdk/openclaw_hooks.py`, `tools/src/tools/sessions.py` | Another async job API, webhook receiver, queue, or no delegation |
 | Musubi memory | Optional | `MUSUBI_V2_*`, `sdk/src/sdk/musubi_v2_client.py`, `tools/src/tools/memory.py` | Another memory API, local store, or remove memory tools |
 | Observability | Recommended | `VOICE_OTLP_*`, `docs/OBSERVABILITY.md` | Grafana, Honeycomb, Datadog, New Relic, or any OTLP/HTTP backend |
-| Agent lifecycle | Required on macOS | `config/launchd/`, `scripts/deploy-agents.sh`, `scripts/cycle-agents.sh` | systemd, containers, Nomad, Kubernetes, or another supervisor |
+| Agent lifecycle | Yes | `docker-compose.agents.yaml`, `Dockerfile.agent` | systemd, Nomad, Kubernetes, or another container/process supervisor |
 
 ## Replacing Agents
 
@@ -44,13 +41,14 @@ To add your own:
 1. Copy one `agents/<name>/` package or create a new uv workspace member.
 2. Change the prompt, `AgentConfig`, model/voice builder, and tool mixins.
 3. Add the member to the root `pyproject.toml`.
-4. Add launchd/secrets mapping in `scripts/deploy-agents.sh` if the agent
-   needs different tokens or environment.
+4. Add a service for it in `docker-compose.agents.yaml` (and a
+   `MUSUBI_V2_TOKEN_<AGENT>` in `secrets/livekit-agents.env`) if the
+   agent needs different tokens or environment.
 5. Add a SIP dispatch JSON example if it should receive phone calls.
 
 For a fully generic template, replace the `nyla`, `aoi`, `yua`, and `party`
-names across `agents/`, `config/sip-dispatch-*.json.example`, and the
-deploy script mappings.
+names across `agents/`, `config/sip-dispatch-*.json.example`, and
+`docker-compose.agents.yaml`.
 
 ## Replacing Tools
 
@@ -63,29 +61,12 @@ To add or replace tools:
 2. Export the mixin in `tools/src/tools/__init__.py`.
 3. Compose it into your agent class.
 4. Update [tools/README.md](../tools/README.md).
-5. Test with `make voice-harness` before making a live call.
+5. `make verify` before making a live call.
 
-Keep phone-call tools fast. Prefer accepted-and-returning async handoff
-patterns for long-running work, then let the downstream agent or service
-deliver results through its normal channel.
-
-## Replacing OpenClaw Delegation
-
-The default tool surface uses `openclaw_delegate`, which posts to
-OpenClaw Gateway hooks and returns after the Gateway accepts the request.
-That avoids blocking a phone conversation while the downstream agent does
-the real work.
-
-If you do not use OpenClaw:
-
-- replace `sdk/src/sdk/openclaw_hooks.py` with your webhook/queue client;
-- replace `SessionsToolsMixin.openclaw_delegate`;
-- update prompts so the model knows when to use your async handoff;
-- update `docs/VOICE-TOOL-HARNESS.md` or the harness cases.
-
-Avoid making the phone agent duplicate your backend agent's routing,
-tools, and delivery rules. The voice agent should be a conversational
-front door, not a second implementation of the same persona.
+Keep phone-call tools fast. The agent has no delegation surface — every
+tool runs to completion on the call — so long-running work does not
+belong in a tool. If you need async handoff, add it as a new integration
+surface of your own.
 
 ## Replacing Musubi Memory
 
@@ -94,7 +75,7 @@ you do not run Musubi, remove `MusubiToolsMixin` from agent inheritance or
 replace `sdk/src/sdk/musubi_v2_client.py` with your memory client.
 
 Memory tools are optional. The core phone stack can still answer calls,
-delegate work, log transcripts, and export telemetry without Musubi.
+log transcripts, and export telemetry without Musubi.
 
 ## Telemetry Requirements
 

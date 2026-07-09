@@ -10,7 +10,7 @@ it — you'll want to test with a single number first.
 - [Twilio Elastic SIP Trunking](https://www.twilio.com/docs/sip-trunking)
 - [Twilio SIP trunking IP addresses](https://www.twilio.com/docs/sip-trunking/ip-addresses)
 
-This page mirrors the flow with OpenClaw-specific notes.
+This page mirrors the flow with notes specific to this voice stack.
 
 ## Prerequisites
 
@@ -54,7 +54,7 @@ Twilio Console → **Voice** → **Manage** → **Credential Lists** → **Creat
 
 - **Friendly name:** `livekit-termination`
 - Add one credential:
-  - Username: `openclaw-sip` (pick something — you'll paste this into
+  - Username: `voice-sip` (pick something — you'll paste this into
     the livekit-sip outbound trunk config)
   - Password: generate a strong one; record it
 
@@ -62,7 +62,7 @@ Attach: Trunk → **Termination** → **Authentication** → check your new
 credential list.
 
 Record the **Termination SIP URI** from the trunk page. It looks like
-`openclaw-xxxx.pstn.twilio.com`.
+`voice-xxxx.pstn.twilio.com`.
 
 ## 4. Attach a DID
 
@@ -105,7 +105,7 @@ Once Twilio side is done, register the inbound trunk with livekit-sip:
 lk sip trunk create inbound \
   --name "twilio-primary" \
   --numbers "+1YOUR_DID_HERE" \
-  --auth-user "openclaw-sip" \
+  --auth-user "voice-sip" \
   --auth-pass "<password-from-step-3>"
 ```
 
@@ -117,9 +117,9 @@ termination SIP URI:
 ```bash
 lk sip trunk create outbound \
   --name "twilio-outbound" \
-  --address "openclaw-xxxx.pstn.twilio.com" \
+  --address "voice-xxxx.pstn.twilio.com" \
   --numbers "+1YOUR_DID_HERE" \
-  --auth-user "openclaw-sip" \
+  --auth-user "voice-sip" \
   --auth-pass "<password-from-step-3>"
 ```
 

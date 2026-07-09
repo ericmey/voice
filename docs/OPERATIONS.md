@@ -11,27 +11,25 @@ telemetry stack, start with
 
 ### Deploy new code to all agents
 
+Run on the agent host (`mizuki.mey.house`):
+
 ```bash
-# For SDK changes — cycle picks up the new shared code.
+# For SDK, persona, or prompt changes — cycle rebuilds the shared
+# voice-agent:latest image and recreates the agent containers.
 make cycle
 
-# For an agent-specific persona/prompt change — cycle also works.
-make cycle                      # cycles all agents
-scripts/cycle-agents.sh nyla    # cycle one
+# One agent: rebuild the image, then recreate just that service.
+docker build -f Dockerfile.agent -t voice-agent:latest .
+docker compose -f docker-compose.yaml -f docker-compose.agents.yaml up -d agent-nyla
 ```
 
-`make cycle` is graceful by default: it sends `SIGTERM` to each launchd
-job, waits for the old PID to exit, and lets LiveKit drain active jobs
-before the replacement worker registers. The default wait is 1860s,
-slightly longer than LiveKit's 30-minute worker drain timeout. Override
-with `LIVEKIT_AGENT_DRAIN_WAIT_SECONDS=<seconds>` if needed.
-
-For emergencies only, set `LIVEKIT_AGENT_FORCE_ON_TIMEOUT=true` to fall
-back to `launchctl kickstart -k` after the drain wait expires. Forced
-restart can interrupt an active call and may emit LiveKit process-pool
-shutdown noise in Loki.
+`make cycle` recreates the four `voice-agent-<name>` containers from the
+freshly-built image. Docker sends `SIGTERM` on container stop, which
+LiveKit agents handle by draining active jobs before exiting.
 
 ### Deploy a fresh machine
+
+Do this on the agent host (`mizuki.mey.house`):
 
 ```bash
 git clone <repo-url> voice
@@ -42,9 +40,9 @@ make bootstrap                  # installs deps, drops config templates
 # ./secrets/livekit-agents.env.
 
 brew services stop redis        # compose ships redis; avoid port clash
-make up                         # docker compose up -d
+make up                         # infra: docker compose up -d
 make register-sip               # register trunk + dispatch rules
-make deploy                     # render plists + install agents
+make deploy                     # build the image + bring up the four agents
 make health                     # confirm everything is green
 ```
 
@@ -61,37 +59,8 @@ make health                     # confirm everything is green
 ### Rotate an API key
 
 1. Edit `secrets/livekit-agents.env`.
-2. `make deploy` — re-renders plists with the new value, temporarily
-   disables launchd restart, sends `SIGTERM`, waits for LiveKit drain,
-   then bootstraps the updated plist. No other file needs to change.
-
-### Configure OpenClaw delegation
-
-Voice agents delegate outside work through OpenClaw Gateway hooks, not
-the `openclaw` CLI. Set these in `secrets/livekit-agents.env`:
-
-```bash
-VOICE_HOOK_TOKEN=<dedicated Gateway hooks token>
-VOICE_GATEWAY_HTTP_URL=http://127.0.0.1:18789
-VOICE_HOOKS_PATH=/hooks
-```
-
-Keep `VOICE_HOOK_TOKEN` distinct from `GATEWAY_AUTH_TOKEN`. On the
-OpenClaw side, enable hooks and constrain `hooks.allowedAgentIds` to the
-agents the phone stack may route to.
-
-### Test tools without a phone call
-
-Use the no-phone harness for routine regression checks:
-
-```bash
-make voice-harness
-uv run python sdk/scripts/voice_tool_harness.py --agent aoi --case ops-check
-```
-
-Mock mode is default and sends nothing to OpenClaw. Add `--live-hooks`
-only for an intentional Gateway acceptance smoke. See
-[VOICE-TOOL-HARNESS.md](VOICE-TOOL-HARNESS.md).
+2. `make cycle` — rebuilds the image and recreates the agent containers,
+   which reload the env file. No other file needs to change.
 
 ### Debug a silently-failing call
 
@@ -114,11 +83,12 @@ Symptom: `make health` shows all agents missing `registered worker`
 lines, or the SIP container 486s every call with `reason: no-rule`.
 
 ```bash
-# Cycle all agents
+# Recreate all agent containers
 make cycle
 
-# Still broken? Full teardown and redeploy.
-make teardown
+# Still broken? Stop the agents, then bring them back up.
+docker compose -f docker-compose.yaml -f docker-compose.agents.yaml \
+  stop agent-aoi agent-nyla agent-yua agent-party
 make deploy
 ```
 
@@ -158,7 +128,7 @@ git log --oneline sdk/
 
 # Restore at that commit
 git checkout <old-sha> -- sdk/
-make cycle                      # rebuild venvs if needed, restart agents
+make cycle                      # rebuild the image, recreate agents
 ```
 
 For a full-repo rollback, `git revert` the offending commit on main.

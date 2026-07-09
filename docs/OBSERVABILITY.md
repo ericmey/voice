@@ -25,10 +25,10 @@ VOICE_DEPLOYMENT_ENVIRONMENT=local
 VOICE_SERVICE_VERSION=dev  # use a release, image tag, or git SHA in deploys
 ```
 
-Then redeploy the launchd agents:
+Then recreate the agent containers so they pick up the new env:
 
 ```bash
-make deploy
+make cycle
 ```
 
 `VOICE_OTLP_ENDPOINT` is the traces endpoint. The SDK derives logs
@@ -51,9 +51,6 @@ LiveKit agents (Python)
   ├─ OTel LoggerProvider ──── BatchLogRecordProcessor → OTLP/HTTP → logs backend
   └─ OTel MeterProvider ───── PeriodicExportingMetricReader → OTLP/HTTP → metrics backend
                                   service.name=voice-{nyla,aoi,yua,party}
-
-Optional OpenClaw gateway
-  └─ diagnostics-otel plugin or equivalent → same collector
 ```
 
 The agent SDK relies on LiveKit Agents' native OTel spans and attributes.
@@ -65,31 +62,13 @@ Custom enrichment is intentionally minimal:
 - `attach_current_span_metadata()` stamps call routing identity on the
   active `agent_session` span.
 
-## Host Collector
+## Collector
 
-The repo includes a macOS launchd installer for `otelcol-contrib`:
-
-```bash
-make host-collector-install
-make host-collector-status
-make host-collector-logs
-make host-collector-restart
-make host-collector-uninstall
-```
-
-The rendered collector config can scrape:
-
-| service.name | Pipeline | What it surfaces |
-| --- | --- | --- |
-| `host-mac` | `metrics/host` | CPU, memory, disk, filesystem, network, process counts |
-| container names | `metrics/docker` | Docker CPU, memory, network, block IO |
-| `httpcheck` | `metrics/httpcheck` | Unauthenticated dependency reachability checks |
-| `openclaw-gateway` | `logs/openclaw` | Gateway file logs, if present |
-| `voice-filelogs` | `logs/agents` | Agent log files as a fallback path |
-
-Before installing, edit
-[config/otel-collector/config.yaml.template](../config/otel-collector/config.yaml.template)
-if your upstream collector is not `http://localhost:4318`.
+The agents export OTLP/HTTP directly to an external OpenTelemetry
+collector — in this deployment, `shiori.mey.house:4318`. There is no
+in-repo collector: point `VOICE_OTLP_ENDPOINT` (and the optional
+per-signal overrides) at whatever collector or hosted OTLP backend you
+run. See "Agent Wiring" above for the variables.
 
 ## Span Identity
 
@@ -98,7 +77,7 @@ if your upstream collector is not `http://localhost:4318`.
 | Key | Value |
 | --- | --- |
 | `service.name` | `voice-<agent>` |
-| `service.namespace` | `openclaw` |
+| `service.namespace` | `voice` |
 | `service.version` | `$VOICE_SERVICE_VERSION` or deploy-time git SHA |
 | `service.instance.id` | unique per process |
 | `deployment.environment` | `$VOICE_DEPLOYMENT_ENVIRONMENT` |
@@ -111,9 +90,9 @@ if your upstream collector is not `http://localhost:4318`.
 
 - `session.id` — SIP Call-ID
 - `enduser.id` — caller identifier, if available
-- `openclaw.dialed_number` — dialed DID, if available
-- `openclaw.caller_source` — `sip` or `unknown`
-- `openclaw.lk_job_id` — LiveKit job id
+- `voice.dialed_number` — dialed DID, if available
+- `voice.caller_source` — `sip` or `unknown`
+- `voice.lk_job_id` — LiveKit job id
 
 ## HTTP Instrumentation
 
@@ -124,9 +103,8 @@ auto-instruments:
 - `aiohttp-client`
 - `requests`
 
-Outbound calls to memory, gateway, weather, LLM, STT, and TTS providers
-become `http.client` spans and feed the `http.client.duration`
-histogram.
+Outbound calls to memory, weather, LLM, STT, and TTS providers become
+`http.client` spans and feed the `http.client.duration` histogram.
 
 ## Audio Recording
 
@@ -139,18 +117,17 @@ ${LIVEKIT_EGRESS_HOST_RECORDINGS_DIR}/<agent>/<call_sid>.ogg
 
 The active call span gets:
 
-- `openclaw.audio.path`
-- `openclaw.audio.mime_type`
-- `openclaw.audio.egress_id`, when available
-- `openclaw.audio.url`, when `VOICE_AUDIO_PUBLIC_BASE_URL` is set
+- `voice.audio.path`
+- `voice.audio.mime_type`
+- `voice.audio.egress_id`, when available
+- `voice.audio.url`, when `VOICE_AUDIO_PUBLIC_BASE_URL` is set
 
 ## Verifying Ingestion
 
 ```bash
 make health
 
-launchctl print "gui/$(id -u)/ai.voice.livekit-agent-nyla" \
-  | grep VOICE_OTEL
+docker exec voice-agent-nyla env | grep VOICE_OTEL
 ```
 
 Backend-specific checks depend on your stack. For a local Grafana LGTM

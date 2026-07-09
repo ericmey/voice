@@ -29,12 +29,12 @@
                                 │ agent registers over WebSocket
                                 ▼
                       ┌───────────────────────────────┐
-                      │  Python voice agents          │  launchd managed
-                      │  (nyla, aoi, yua, party)      │  host-native venvs
+                      │  Python voice agents          │  Docker containers
+                      │  (nyla, aoi, yua, party)      │  voice-agent-<name>
                       │                               │
                       │  Each exposes @function_tool  │
-                      │  methods for memory, OpenClaw │
-                      │  delegation, time, weather    │
+                      │  methods for memory, household │
+                      │  status, time, weather        │
                       └───────────────────────────────┘
 ```
 
@@ -44,35 +44,29 @@
 Shared Python package imported by the agents. Contains:
 
 - **`config.py`** — `AgentConfig` dataclass (agent_name, memory_agent_tag,
-  discord_room, allowed_delegation_targets). Per-agent operational identity;
-  the mixin stack reads `self.config.*` instead of hardcoded constants.
-- **`tools/`** — Core, Memory, and OpenClaw delegation mixins that each agent
-  inherits. Function-tool decorated methods expose capabilities to the
-  voice model.
+  discord_room, musubi_v2_namespace/presence, household_presences). Per-agent
+  operational identity; the mixin stack reads `self.config.*` instead of
+  hardcoded constants.
+- **`tools/`** (separate workspace member) — Core, Memory, and Household
+  mixins that each agent inherits. Function-tool decorated methods expose
+  capabilities to the voice model.
 - **`telephony.py`** — `resolve_caller()` reads the SIP participant's
   attributes from a connected room. One hop behind the agent entrypoint.
-- **`openclaw_hooks.py`** — async Gateway `/hooks/agent` client used by
-  voice tools to hand work to the real OpenClaw agents without shelling
-  out or owning downstream channel routing.
-- **`cli_spawner.py`** — legacy detached subprocess helper retained for
-  disabled callback code while that path is redesigned.
 - **`musubi_v2_client.py`** — async HTTP client for the canonical Musubi API.
 - **`trace.py`**, **`transcript.py`**, **`env.py`** — ancillary.
 
 ### `agents/nyla/`
 Realtime voice persona. Gemini 2.5 Flash Native Audio, Aoede voice. Registers
-as `phone-nyla`. Household router — no delegation restrictions.
+as `phone-nyla`. Surveys the household via `household_status`.
 
 ### `agents/aoi/`
 Realtime voice persona. Same model as Nyla, Kore voice, distinct prompt.
-Tighter delegation allowlist (`{yumi, rin, aoi, nyla}`) — technical
-partner, not household router.
+Technical partner; also surveys the household.
 
 ### `agents/yua/`
-Realtime voice persona. Same model family as Nyla and Aoi, Leda voice, Yua-specific
-prompt and memory namespace. Bounded delegation allowlist
-(`{yumi, rin, aoi, yua, nyla}`) — coding and QA partner, second set of
-eyes, and Aoi's development partner.
+Realtime voice persona. Same model family as Nyla and Aoi, Leda voice,
+Yua-specific prompt and memory namespace. Coding and QA partner, second
+set of eyes, and Aoi's development partner; also surveys the household.
 
 ### `agents/party/`
 Chained STT/LLM/TTS variant. Whisper → Silero VAD → Gemini text LLM →
@@ -100,23 +94,29 @@ Shared LiveKit `@function_tool` mixins composed by the agents. See
 6. Agent starts its session (`AgentSession.start`) and the model begins
    replying in audio.
 7. Function-tool calls during the session are regular Python async
-   methods. Delegation posts to OpenClaw Gateway `/hooks/agent` and
-   returns once the Gateway accepts the request; the target OpenClaw
-   agent owns downstream tools, skills, and channel delivery.
+   methods — time, weather, Musubi memory reads/writes, and (for the
+   household agents) a read-only `household_status` survey. There is no
+   delegation: the agent does all of its own work on the call.
 
-## Why agents aren't in docker-compose
+## How agents run
 
-Launchd is handling agent lifecycle today — auto-restart on crash,
-environment injection from a secrets file, log rotation to a known path
-under `./logs/voice/` (or wherever `LIVEKIT_VOICE_LOGS` points).
-Dropping Python agents into Docker on
-macOS adds networking complexity (host mode for WebSocket to livekit-server
-would work, but `uv sync` + hot reload + venv caching get friction-ful).
+The agents run as Docker containers on host `mizuki.mey.house`, defined
+in `docker-compose.agents.yaml` (services `agent-aoi`, `agent-nyla`,
+`agent-yua`, `agent-party`; containers `voice-agent-<name>`). All four
+share one image, `voice-agent:latest`, built from `Dockerfile.agent`.
+`scripts/agent-entrypoint.sh` selects the per-agent Musubi token, sets
+`VOICE_AGENT_NAME`, and execs `agents/<name>/src/agent.py`. Docker
+handles restart-on-crash (`restart: unless-stopped`); logs land under
+`./logs/voice/` (bind-mounted, `LIVEKIT_VOICE_LOGS`).
 
-Mental model: **compose is for the infrastructure tier** (stateless,
-pinned images); **launchd is for the application tier** (host-native
-Python, frequent code changes). If we ever move off Mac, agents can
-migrate to a container or systemd unit without touching the compose file.
+The compose split is deliberate: `docker-compose.yaml` is the
+**infrastructure tier** (livekit-server, livekit-sip, livekit-egress,
+redis — stateless, pinned images), and `docker-compose.agents.yaml` is
+the **application tier**. Bring the whole thing up with both files:
+
+```bash
+docker compose -f docker-compose.yaml -f docker-compose.agents.yaml up -d
+```
 
 ## Hardening direction
 
@@ -129,8 +129,7 @@ Current state is "infrastructure as code for the SIP layer" (config in
 - **CI** — pytest on PR, shellcheck for scripts, JSON schema check for
   the config examples.
 - **Secrets rotation** — `secrets/livekit-agents.env` is the single
-  file. A rotation workflow could update it + re-run
-  `scripts/deploy-agents.sh` (which re-renders plists and gracefully
-  restarts agents).
+  file. A rotation workflow could update it + re-run `make cycle`
+  (which rebuilds the image and recreates the agent containers).
 - **Alerting** — `scripts/health-check.sh --json` is already cron-runnable;
   wire to a Discord webhook on `failed > 0`.

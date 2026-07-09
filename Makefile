@@ -6,12 +6,9 @@
 SHELL := /usr/bin/env bash
 
 .PHONY: help bootstrap up down logs health test \
-        deploy teardown cycle \
-        register-sip tail truncate-logs \
-        voice-harness loki-smoke \
-        sync-venvs lint typecheck verify \
-        host-collector-install host-collector-restart host-collector-status \
-        host-collector-logs host-collector-uninstall
+        build-agent deploy cycle \
+        register-sip tail truncate-logs loki-smoke \
+        sync-venvs lint typecheck verify
 
 help: ## List the common verbs
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[1;34m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -50,16 +47,21 @@ health: ## Run the health-check script
 register-sip: ## Register/refresh SIP trunk + dispatch rules from ./config/ (or $LIVEKIT_CONFIG_DIR)
 	scripts/register-sip-routing.sh
 
-# ---- agents --------------------------------------------------------
+# ---- agents (docker compose) ---------------------------------------
+#
+# The four agents run as containers (voice-agent-<name>) from the shared
+# voice-agent:latest image. docker-compose.agents.yaml has no build
+# stanza, so build the image first, then bring the full stack up with
+# both compose files. Run these on the agent host (mizuki).
 
-deploy: ## Render plists, install/restart agents with LiveKit drain
-	scripts/deploy-agents.sh
+build-agent: ## Build the voice-agent:latest image from Dockerfile.agent
+	docker build -f Dockerfile.agent -t voice-agent:latest .
 
-teardown: ## Bootout and remove all agent plists
-	scripts/teardown-agents.sh
+deploy: build-agent ## Build the image + bring up infra and the four agents
+	docker compose -f docker-compose.yaml -f docker-compose.agents.yaml up -d
 
-cycle: ## Restart all voice agents in place (picks up code changes)
-	scripts/cycle-agents.sh
+cycle: build-agent ## Rebuild the image + recreate the agent containers (picks up code changes)
+	docker compose -f docker-compose.yaml -f docker-compose.agents.yaml up -d
 
 # ---- observability -------------------------------------------------
 
@@ -69,9 +71,6 @@ tail: ## Follow all voice agent logs with color-coded prefix
 truncate-logs: ## Zero out all agent logs (clean baseline for testing)
 	scripts/truncate-logs.sh
 
-voice-harness: ## Exercise voice OpenClaw delegation tools without a live phone call
-	uv run python sdk/scripts/voice_tool_harness.py
-
 loki-smoke: ## Query Grafana/Loki for post-smoke-test failures (requires GRAFANA_TOKEN; pass LOKI_ARGS="--since 5m")
 	uv run python sdk/scripts/loki_smoke_check.py $${LOKI_ARGS:-}
 
@@ -79,25 +78,9 @@ loki-smoke: ## Query Grafana/Loki for post-smoke-test failures (requires GRAFANA
 #
 # This project ships traces / logs / metrics over OTLP/HTTP to the
 # configured OTLP backend (for example Grafana + Loki + Tempo + Mimir
-# behind an OTel Collector). The collector is NOT in this compose.
-# Configure the agents via VOICE_OTLP_ENDPOINT (default example:
-# http://localhost:4318/v1/traces). See docs/OBSERVABILITY.md.
-
-# ---- Host-side OTel Collector (hostmetrics + dockerstats + httpcheck + filelog)
-host-collector-install: ## Download otelcol-contrib + bootstrap launchd job exporting host/docker/vendor telemetry
-	scripts/install-host-otel-collector.sh
-
-host-collector-restart: ## Re-render configs and bootstrap the launchd job (picks up template changes)
-	scripts/install-host-otel-collector.sh --restart
-
-host-collector-status: ## Print binary version, plist path, launchd state, recent log lines
-	scripts/install-host-otel-collector.sh --status
-
-host-collector-logs: ## Tail the host collector's stdout + stderr logs
-	tail -f $${HOME}/.openclaw/logs/otel-collector.log $${HOME}/.openclaw/logs/otel-collector.err.log
-
-host-collector-uninstall: ## Bootout the launchd job + remove plist (binary + config kept)
-	scripts/install-host-otel-collector.sh --uninstall
+# behind an OTel Collector). The collector is NOT in this compose — it
+# runs externally (shiori.mey.house:4318 in this deployment). Configure
+# the agents via VOICE_OTLP_ENDPOINT. See docs/OBSERVABILITY.md.
 
 # ---- LangSmith provisioning (archived) — see docs/LANGSMITH.md.
 # Kept around so a future operator can reactivate the LangSmith IaC

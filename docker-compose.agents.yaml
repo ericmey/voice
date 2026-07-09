@@ -1,4 +1,5 @@
-# Voice agents — mizuki. Standalone: no OpenClaw gateway delegation.
+# Voice agents — mizuki. Standalone: agents answer the phone and talk to
+# Musubi directly; there is no delegation to any other agent.
 # Server internal (livekit-server:7880); memory direct to Musubi.
 #
 # secrets/livekit-agents.env supplies the suffixed MUSUBI_V2_TOKEN_{AOI,NYLA,YUA}.

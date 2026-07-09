@@ -38,7 +38,7 @@ EXAMPLES: list[dict] = [
             # any of these substrings, the agent retrieved the right row.
             "answer_contains_any": ["cocoa", "coffee pod", "breakroom", "crayon"],
             "notes": (
-                "The cocoa-pods prank was saved on openclaw-Nyla; cross-channel "
+                "The cocoa-pods prank was saved on Discord-Nyla; cross-channel "
                 "wildcard MUST work for voice-Nyla to recall it."
             ),
         },

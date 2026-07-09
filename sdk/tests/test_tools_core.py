@@ -17,8 +17,3 @@ def test_composed_agent_has_core_tools(agent):
     """Core tools are discoverable on a composed agent instance."""
     assert hasattr(agent, "get_current_time")
     assert hasattr(agent, "get_weather")
-
-
-def test_openclaw_request_removed():
-    """openclaw_request was deleted — must not exist as a callable on the mixin."""
-    assert not callable(getattr(CoreToolsMixin, "openclaw_request", None))
