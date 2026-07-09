@@ -1,0 +1,40 @@
+#!/bin/sh
+# Resolve per-agent secrets into the unsuffixed names the SDK reads, then exec
+# the agent.
+#
+# secrets/livekit-agents.env carries MUSUBI_V2_TOKEN_{AOI,NYLA,YUA}; the SDK
+# reads MUSUBI_V2_TOKEN. Under launchd on nyla, scripts/deploy-agents.sh
+# (agent_musubi_token) made that selection while rendering each plist. Compose
+# cannot do it: ${VAR} inside an `environment:` block interpolates from the
+# shell and .env, never from env_file. So the selection happens here, once, at
+# container start.
+set -eu
+
+: "${AGENT:?AGENT must be set (aoi|nyla|yua|party)}"
+
+case "$AGENT" in
+	aoi) musubi_token="${MUSUBI_V2_TOKEN_AOI:-}" ;;
+	yua) musubi_token="${MUSUBI_V2_TOKEN_YUA:-}" ;;
+	# party mirrors nyla's AgentConfig namespace, so it shares her bearer.
+	nyla | party) musubi_token="${MUSUBI_V2_TOKEN_NYLA:-}" ;;
+	*)
+		echo "agent-entrypoint: no Musubi token mapping for AGENT=$AGENT" >&2
+		exit 64
+		;;
+esac
+
+# Refuse to start on an empty bearer. Musubi answers 401 "missing bearer token",
+# and the tool layer degrades that into a friendly "memory is unavailable right
+# now" line the agent says out loud — so the call sounds healthy while nothing
+# is ever recalled or stored. Crash-looping is the honest failure.
+if [ -z "$musubi_token" ]; then
+	echo "agent-entrypoint: MUSUBI_V2_TOKEN_$(echo "$AGENT" | tr 'a-z' 'A-Z') is empty" >&2
+	exit 78
+fi
+export MUSUBI_V2_TOKEN="$musubi_token"
+
+# Transcripts, trace, telemetry, post-call review and post-call memory all
+# resolve their paths from this one variable. Unset, each silently no-ops.
+export LIVEKIT_VOICE_LOGS="${LIVEKIT_VOICE_LOGS:-/app/logs/voice}"
+
+exec uv run python "agents/${AGENT}/src/agent.py" start

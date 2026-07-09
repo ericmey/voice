@@ -1,24 +1,52 @@
 # Voice agents — mizuki. Standalone: no OpenClaw gateway delegation.
 # Server internal (livekit-server:7880); memory direct to Musubi.
+#
+# secrets/livekit-agents.env supplies the suffixed MUSUBI_V2_TOKEN_{AOI,NYLA,YUA}.
+# scripts/agent-entrypoint.sh picks the one matching $AGENT and exports it as
+# MUSUBI_V2_TOKEN, the name the SDK reads. Don't try to do that selection here:
+# `${VAR}` in an `environment:` block interpolates from the shell and .env,
+# never from env_file, so it would silently resolve to "".
 x-agent-common: &agent-common
   image: openclaw-livekit-agent:latest
   env_file: [secrets/livekit-agents.env]
   depends_on: [livekit-server]
   restart: unless-stopped
+  volumes:
+    # Transcripts, trace, telemetry, call-reviews and the post-call memory log
+    # all resolve under LIVEKIT_VOICE_LOGS. Bind-mounted so they outlive the
+    # container and stay readable from the host.
+    - ./logs/voice:/app/logs/voice
+
+x-agent-env: &agent-env
+  LIVEKIT_URL: ws://livekit-server:7880
+  MUSUBI_V2_BASE_URL: http://musubi.mey.house:8100/v1
+  LIVEKIT_VOICE_LOGS: /app/logs/voice
+
 services:
   agent-aoi:
     <<: *agent-common
     container_name: openclaw-agent-aoi
-    environment: { AGENT: aoi, LIVEKIT_URL: ws://livekit-server:7880, MUSUBI_V2_BASE_URL: http://musubi.mey.house:8100/v1 }
+    environment:
+      <<: *agent-env
+      AGENT: aoi
+
   agent-nyla:
     <<: *agent-common
     container_name: openclaw-agent-nyla
-    environment: { AGENT: nyla, LIVEKIT_URL: ws://livekit-server:7880, MUSUBI_V2_BASE_URL: http://musubi.mey.house:8100/v1 }
+    environment:
+      <<: *agent-env
+      AGENT: nyla
+
   agent-yua:
     <<: *agent-common
     container_name: openclaw-agent-yua
-    environment: { AGENT: yua, LIVEKIT_URL: ws://livekit-server:7880, MUSUBI_V2_BASE_URL: http://musubi.mey.house:8100/v1 }
+    environment:
+      <<: *agent-env
+      AGENT: yua
+
   agent-party:
     <<: *agent-common
     container_name: openclaw-agent-party
-    environment: { AGENT: party, LIVEKIT_URL: ws://livekit-server:7880, MUSUBI_V2_BASE_URL: http://musubi.mey.house:8100/v1 }
+    environment:
+      <<: *agent-env
+      AGENT: party
