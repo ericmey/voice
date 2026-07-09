@@ -36,4 +36,9 @@ export MUSUBI_V2_TOKEN="$musubi_token"
 # resolve their paths from this one variable. Unset, each silently no-ops.
 export LIVEKIT_VOICE_LOGS="${LIVEKIT_VOICE_LOGS:-/app/logs/voice}"
 
+# tracing.py builds SERVICE_NAME as voice-<VOICE_AGENT_NAME>, falling back to a
+# bare "voice" when unset. Unset, all four agents report as one service and every
+# per-agent dashboard panel and alert selector (`voice-.*`) matches nothing.
+export VOICE_AGENT_NAME="$AGENT"
+
 exec uv run python "agents/${AGENT}/src/agent.py" start
