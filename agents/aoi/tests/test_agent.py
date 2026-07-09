@@ -61,15 +61,6 @@ class TestAgentClass:
         )
         assert agent._caller_from == "+13175551234"
 
-    def test_inherits_household_tools(self, agent_module):
-        from tools.household import HouseholdToolsMixin
-
-        assert issubclass(agent_module.AoiAgent, HouseholdToolsMixin)
-
-    def test_household_status_tool_present(self, agent_module):
-        agent = agent_module.AoiAgent(instructions="test")
-        assert hasattr(agent, "household_status")
-
     def test_active_tools_present(self, agent_module):
         """Tools currently exposed to the voice model."""
         agent = agent_module.AoiAgent(instructions="test")
@@ -78,7 +69,6 @@ class TestAgentClass:
             "get_weather",
             "musubi_recent",
             "musubi_remember",
-            "household_status",
         ]
         for tool in expected:
             assert hasattr(agent, tool), f"Missing tool: {tool}"
@@ -126,14 +116,13 @@ class TestPersona:
         content = prompt_path.read_text(encoding="utf-8")
         assert "You are Aoi" in content, "Persona must establish Aoi's identity"
 
-    def test_prompt_routes_household_to_household_status(self):
+    def test_prompt_does_not_promise_household_status(self):
+        """The house concept is retired — each agent speaks for herself. A prompt
+        that names a tool the runtime does not register makes the model fabricate."""
         prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "system.md"
         content = prompt_path.read_text(encoding="utf-8")
-        assert "household_status()" in content, (
-            "Prompt must route household queries to household_status"
-        )
-        assert "household_status" in content.split("## Call Flow")[1], (
-            "Call Flow must reference household_status for cross-agent queries"
+        assert "household_status" not in content, (
+            "Prompt must not reference household_status; the tool is gone"
         )
 
     def test_prompt_keeps_musubi_recent_for_self(self):

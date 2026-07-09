@@ -21,7 +21,6 @@ from tools.base_agent import (
 from tools.base_agent import (
     load_persona as _load_persona,
 )
-from tools.household import HouseholdToolsMixin
 
 __all__ = [
     "NYLA_CONFIG",
@@ -36,46 +35,21 @@ __all__ = [
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 NYLA_VOICE = "Aoede"
 
-#: Nyla's operational identity. Household router — no delegation
-#: restrictions, delegated work posts to her own Discord room.
+#: Nyla's operational identity.
 #:
-#: Canonical Musubi fields (musubi_v2_*, household_presences) wire the
-#: v2 client + household-status tool per ADR 0030 (agent-as-tenant).
-#:
-#: - musubi_v2_namespace / _presence: 2-seg ``<agent>/<channel>``.
-#:   Memory writes land at ``nyla/voice/episodic``; thought sends
-#:   carry ``from_presence = nyla/voice``.
-#: - household_presences: every agent's voice presence Nyla may
-#:   survey when asked "what's been going on". Token scope grants
-#:   ``*/*/*:r`` to resolve all of them — cross-agent write still 403s.
-HOUSEHOLD_VOICE_PRESENCES: tuple[str, ...] = (
-    # nyla machine
-    "nyla/voice",
-    "aoi/voice",
-    "hana/voice",
-    "rin/voice",
-    "sumi/voice",
-    "tama/voice",
-    "yumi/voice",
-    # hana machine
-    "mizuki/voice",
-    "shiori/voice",
-    "reika/voice",
-    "yua/voice",
-    "nana/voice",
-)
-
+#: musubi_v2_namespace / _presence: 2-seg ``<agent>/<channel>``. Memory writes
+#: land at ``nyla/voice/episodic``; thought sends carry
+#: ``from_presence = nyla/voice``.
 NYLA_CONFIG = AgentConfig(
     agent_name="nyla",
     memory_agent_tag="nyla-voice",
     musubi_v2_namespace="nyla/voice",
     musubi_v2_presence="nyla/voice",
-    household_presences=HOUSEHOLD_VOICE_PRESENCES,
 )
 
 
-class NylaAgent(HouseholdToolsMixin, BaseRealtimeAgent):
-    """Nyla with the core + Musubi tool set and the household survey."""
+class NylaAgent(BaseRealtimeAgent):
+    """Nyla — core + Musubi memory tools."""
 
     config = NYLA_CONFIG
 

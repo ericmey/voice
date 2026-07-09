@@ -266,8 +266,7 @@ async def list_episodic(
     whatever order the server's scroll returns; callers that want
     time-descending should sort by ``created_epoch`` client-side.
 
-    Used by ``MusubiToolsMixin.fetch_recent_context`` (per-agent) and
-    ``HouseholdToolsMixin.household_status`` (cross-agent fan-out).
+    Used by ``MusubiToolsMixin.fetch_recent_context``.
     """
     params = {"namespace": namespace, "limit": str(limit)}
     if cursor:

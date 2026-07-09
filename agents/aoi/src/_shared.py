@@ -18,7 +18,6 @@ from tools.base_agent import (
 from tools.base_agent import (
     load_persona as _load_persona,
 )
-from tools.household import HouseholdToolsMixin
 
 __all__ = [
     "AOI_CONFIG",
@@ -36,31 +35,15 @@ _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 AOI_CONFIG = AgentConfig(
     agent_name="aoi",
     memory_agent_tag="aoi-voice",
-    # Canonical Musubi under agent-as-tenant (ADR 0030): Aoi writes to
-    # ``aoi/voice/*`` and surveys the same household list as Nyla.
+    # Canonical Musubi under agent-as-tenant (ADR 0030): Aoi writes to her own
+    # ``<agent>/voice/*`` namespace.
     musubi_v2_namespace="aoi/voice",
     musubi_v2_presence="aoi/voice",
-    household_presences=(
-        # nyla machine
-        "nyla/voice",
-        "aoi/voice",
-        "hana/voice",
-        "rin/voice",
-        "sumi/voice",
-        "tama/voice",
-        "yumi/voice",
-        # hana machine
-        "mizuki/voice",
-        "shiori/voice",
-        "reika/voice",
-        "yua/voice",
-        "nana/voice",
-    ),
 )
 
 
-class AoiAgent(HouseholdToolsMixin, BaseRealtimeAgent):
-    """Aoi with the core + Musubi tool set and the household survey."""
+class AoiAgent(BaseRealtimeAgent):
+    """Aoi — core + Musubi memory tools."""
 
     config = AOI_CONFIG
 

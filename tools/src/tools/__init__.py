@@ -19,13 +19,11 @@ from .base_agent import (
     load_persona,
 )
 from .core import CoreToolsMixin
-from .household import HouseholdToolsMixin
 from .memory import MusubiToolsMixin
 
 __all__ = [
     "BaseRealtimeAgent",
     "CoreToolsMixin",
-    "HouseholdToolsMixin",
     "MusubiToolsMixin",
     "build_common_tools",
     "build_realtime_model",

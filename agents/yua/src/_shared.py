@@ -18,7 +18,6 @@ from tools.base_agent import (
 from tools.base_agent import (
     load_persona as _load_persona,
 )
-from tools.household import HouseholdToolsMixin
 
 __all__ = [
     "YUA_CONFIG",
@@ -38,31 +37,15 @@ YUA_VOICE = "Leda"
 YUA_CONFIG = AgentConfig(
     agent_name="yua",
     memory_agent_tag="yua-voice",
-    # Canonical Musubi under agent-as-tenant (ADR 0030): Yua writes to
-    # ``yua/voice/*`` and surveys the same household list as Nyla.
+    # Canonical Musubi under agent-as-tenant (ADR 0030): Yua writes to her own
+    # ``<agent>/voice/*`` namespace.
     musubi_v2_namespace="yua/voice",
     musubi_v2_presence="yua/voice",
-    household_presences=(
-        # nyla machine
-        "nyla/voice",
-        "aoi/voice",
-        "hana/voice",
-        "rin/voice",
-        "sumi/voice",
-        "tama/voice",
-        "yumi/voice",
-        # hana machine
-        "mizuki/voice",
-        "shiori/voice",
-        "reika/voice",
-        "yua/voice",
-        "nana/voice",
-    ),
 )
 
 
-class YuaAgent(HouseholdToolsMixin, BaseRealtimeAgent):
-    """Yua with the core + Musubi tool set and the household survey."""
+class YuaAgent(BaseRealtimeAgent):
+    """Yua — core + Musubi memory tools."""
 
     config = YUA_CONFIG
 

@@ -23,7 +23,7 @@ class AgentConfig:
             agent's own self-reference (e.g. "selfie of Nyla").
         memory_agent_tag: Value written into stored Musubi memories'
             ``payload.agent`` field. Separates voice identities so the
-            household can filter memories by speaker.
+            callers can filter memories by speaker.
         musubi_v2_namespace: Two-segment ``<agent>/<channel>`` prefix
             (Musubi ADR 0030 agent-as-tenant form) used by the canonical
             Musubi tools (``musubi_search`` / ``musubi_recent`` /
@@ -41,20 +41,12 @@ class AgentConfig:
             ``from_presence`` for `musubi_think` thought sends. Shape:
             ``<owner>/<agent>`` (e.g. ``eric/aoi``). Defaults to
             ``eric/<agent_name>`` at call time when ``None``.
-        household_presences: Presences this agent may survey via
-            ``household_status`` (``HouseholdToolsMixin``). Each entry
-            is a 2-segment presence like ``nyla/voice``. Empty tuple
-            means the agent has no household-wide visibility — the
-            mixin should not be mixed in for that agent. Nyla, Aoi, and Yua
-            get the full household list; party/voice personas that
-            mirror another agent get an empty tuple by default.
     """
 
     agent_name: str
     memory_agent_tag: str
     musubi_v2_namespace: str | None = None
     musubi_v2_presence: str | None = None
-    household_presences: tuple[str, ...] = ()
 
 
 # Default config preserves the pre-AgentConfig behavior: tag everything

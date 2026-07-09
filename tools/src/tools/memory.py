@@ -64,8 +64,7 @@ class MusubiToolsMixin(Agent):
 
     Per-agent scope: each agent reads/writes its own
     ``<agent>/<channel>/episodic`` per ADR 0030. Cross-channel reads
-    (``musubi_search``) fan via ``<agent>/*/episodic``. Cross-agent
-    surveying lives in ``HouseholdToolsMixin``.
+    (``musubi_search``) fan via ``<agent>/*/episodic``.
 
     Reads:
       - ``self.config.musubi_v2_namespace`` (or ``musubi_v2_presence``
@@ -514,9 +513,8 @@ class MusubiToolsMixin(Agent):
 def _format_row(row: dict[str, Any]) -> str:
     """One-line render for a scrolled episodic row.
 
-    Used by ``fetch_recent_context`` and (via the shared helper in
-    ``tools.household``) household status. Kept simple — LLM reads
-    this, not a human in a terminal.
+    Used by ``fetch_recent_context``. Kept simple — an LLM reads this,
+    not a human in a terminal.
     """
     tags = row.get("tags") or []
     agent_tag = next(

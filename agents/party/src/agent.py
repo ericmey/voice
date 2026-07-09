@@ -78,8 +78,6 @@ def _load_persona() -> str:
 #: Party line ever gets its own identity, fork this config, give it
 #: a distinct ``<agent>/voice`` prefix, and mint a dedicated token.
 #:
-#: No ``household_presences`` — Party is a voice channel, not a
-#: surveying persona. She doesn't need the household-status tool.
 PARTY_CONFIG = AgentConfig(
     agent_name="nyla",
     memory_agent_tag="nyla-voice",

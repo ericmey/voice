@@ -21,6 +21,8 @@ REMOVED_TOOLS = [
     # a registered tool that returned "not yet available" — the same defect
     # that took openclaw_delegate down.
     "musubi_get",
+    # the house concept is retired; each agent speaks for herself
+    "household_status",
     "openclaw_delegate",
     "sessions_send",
     "sessions_spawn",
