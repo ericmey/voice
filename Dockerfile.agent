@@ -1,0 +1,24 @@
+# openclaw-livekit voice agent — one image, agent selected at runtime.
+FROM python:3.12-slim
+
+# build deps for native wheels (livekit, grpc, audio libs)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential curl ca-certificates libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv (pinned installer)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+# workspace metadata first for layer caching
+COPY pyproject.toml uv.lock ./
+COPY sdk ./sdk
+COPY tools ./tools
+COPY agents ./agents
+# build the workspace venv
+RUN uv sync --frozen --no-dev
+
+# AGENT selects which agent dir runs (aoi|nyla|yua|party)
+ENV AGENT=aoi
+ENTRYPOINT ["/bin/sh","-c"]
+CMD ["uv run python agents/${AGENT}/src/agent.py start"]

@@ -1,0 +1,24 @@
+# Voice agents — mizuki. Standalone: no OpenClaw gateway delegation.
+# Server internal (livekit-server:7880); memory direct to Musubi.
+x-agent-common: &agent-common
+  image: openclaw-livekit-agent:latest
+  env_file: [secrets/livekit-agents.env]
+  depends_on: [livekit-server]
+  restart: unless-stopped
+services:
+  agent-aoi:
+    <<: *agent-common
+    container_name: openclaw-agent-aoi
+    environment: { AGENT: aoi, LIVEKIT_URL: ws://livekit-server:7880, MUSUBI_V2_BASE_URL: http://musubi.mey.house:8100/v1 }
+  agent-nyla:
+    <<: *agent-common
+    container_name: openclaw-agent-nyla
+    environment: { AGENT: nyla, LIVEKIT_URL: ws://livekit-server:7880, MUSUBI_V2_BASE_URL: http://musubi.mey.house:8100/v1 }
+  agent-yua:
+    <<: *agent-common
+    container_name: openclaw-agent-yua
+    environment: { AGENT: yua, LIVEKIT_URL: ws://livekit-server:7880, MUSUBI_V2_BASE_URL: http://musubi.mey.house:8100/v1 }
+  agent-party:
+    <<: *agent-common
+    container_name: openclaw-agent-party
+    environment: { AGENT: party, LIVEKIT_URL: ws://livekit-server:7880, MUSUBI_V2_BASE_URL: http://musubi.mey.house:8100/v1 }
