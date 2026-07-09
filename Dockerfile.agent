@@ -21,6 +21,12 @@ RUN uv sync --frozen --no-dev
 COPY scripts/agent-entrypoint.sh ./scripts/agent-entrypoint.sh
 RUN chmod +x ./scripts/agent-entrypoint.sh
 
+# service.version in every span/metric. Baked at build time so it describes the code
+# in THIS image rather than whatever the deploy shell happened to have checked out.
+# The retired launchd deploy derived it from `git rev-parse --short HEAD`.
+ARG VOICE_SERVICE_VERSION=dev
+ENV VOICE_SERVICE_VERSION=${VOICE_SERVICE_VERSION}
+
 # AGENT selects which agent dir runs (aoi|nyla|yua|party). The entrypoint maps
 # that to the per-agent Musubi bearer and sets LIVEKIT_VOICE_LOGS before exec.
 ENV AGENT=aoi

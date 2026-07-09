@@ -54,8 +54,15 @@ register-sip: ## Register/refresh SIP trunk + dispatch rules from ./config/ (or 
 # stanza, so build the image first, then bring the full stack up with
 # both compose files. Run these on the agent host (mizuki).
 
+# service.version on every span and metric. Baked into the image so it describes the
+# code inside it. The retired launchd deploy derived this the same way; losing it made
+# every trace report service.version=dev.
+VOICE_SERVICE_VERSION ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+
 build-agent: ## Build the voice-agent:latest image from Dockerfile.agent
-	docker build -f Dockerfile.agent -t voice-agent:latest .
+	docker build -f Dockerfile.agent \
+		--build-arg VOICE_SERVICE_VERSION=$(VOICE_SERVICE_VERSION) \
+		-t voice-agent:latest .
 
 deploy: build-agent ## Build the image + bring up infra and the four agents
 	docker compose -f docker-compose.yaml -f docker-compose.agents.yaml up -d

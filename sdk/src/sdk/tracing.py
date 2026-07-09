@@ -483,9 +483,7 @@ def _install_logs_pipeline(resource: Any) -> None:
         _debug(f"[OTEL-SETUP] logs pipeline unavailable: {exc}")
         return
 
-    endpoint = os.environ.get("VOICE_OTLP_LOGS_ENDPOINT") or os.environ.get(
-        "VOICE_OTLP_ENDPOINT"
-    )
+    endpoint = os.environ.get("VOICE_OTLP_LOGS_ENDPOINT") or os.environ.get("VOICE_OTLP_ENDPOINT")
     if endpoint and "/v1/" not in endpoint:
         endpoint = endpoint.rstrip("/") + "/v1/logs"
     elif endpoint and endpoint.endswith("/v1/traces"):

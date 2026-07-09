@@ -48,7 +48,7 @@ class TestAgentClass:
         import pytest
 
         with pytest.raises(ModuleNotFoundError):
-            import tools.sessions  # noqa: F401
+            importlib.import_module("tools.sessions")
 
     def test_config_is_nyla_identity(self, agent_module):
         """Harem World line uses Nyla's operational identity — same person,
@@ -93,8 +93,13 @@ class TestAgentClass:
         """The OpenClaw gateway is gone. A prompt that promises a tool the
         runtime does not register is a fabrication generator."""
         agent = agent_module.PartyAgent(instructions="test")
-        for name in ("openclaw_request", "openclaw_delegate", "sessions_send",
-                     "sessions_spawn", "schedule_callback"):
+        for name in (
+            "openclaw_request",
+            "openclaw_delegate",
+            "sessions_send",
+            "sessions_spawn",
+            "schedule_callback",
+        ):
             assert getattr(agent, name, None) is None, f"{name} is back"
 
 

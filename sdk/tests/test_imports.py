@@ -1,5 +1,7 @@
 """Verify all public SDK modules import cleanly."""
 
+import importlib
+
 import pytest
 
 
@@ -34,4 +36,4 @@ def test_import_constants():
 def test_gateway_modules_are_gone(module):
     """Retired with the OpenClaw gateway. Re-adding one should be deliberate."""
     with pytest.raises(ModuleNotFoundError):
-        __import__(module)
+        importlib.import_module(module)

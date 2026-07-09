@@ -22,6 +22,10 @@ x-agent-env: &agent-env
   LIVEKIT_URL: ws://livekit-server:7880
   MUSUBI_V2_BASE_URL: http://musubi.mey.house:8100/v1
   LIVEKIT_VOICE_LOGS: /app/logs/voice
+  # Opt-in, and it was `true` under the retired launchd deploy. Left unset, the egress
+  # container runs and records nothing. The default host/container recording dirs
+  # already line up with the ./logs/voice bind-mount and egress's /recordings.
+  VOICE_RECORD_AUDIO: "true"
 
 services:
   agent-aoi:

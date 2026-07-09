@@ -143,14 +143,9 @@ def _main() -> int:
     end_value = args.end if args.end is not None else int(time.time())
     start_value = args.start if args.start is not None else end_value - args.since
     service_selector = f'{{service_name=~"{args.service_regex}"}}'
-    agent_selector = (
-        '{service_name=~"voice-nyla|voice-aoi|'
-        'voice-yua|voice-party"}'
-    )
+    agent_selector = '{service_name=~"voice-nyla|voice-aoi|voice-yua|voice-party"}'
     queries = [
-        LokiQuery(
-            "voice_failures", f"{service_selector} |~ {json.dumps(FAILURE_REGEX)}"
-        ),
+        LokiQuery("voice_failures", f"{service_selector} |~ {json.dumps(FAILURE_REGEX)}"),
         LokiQuery(
             "voice_otel_export_failures", f"{agent_selector} |~ {json.dumps(OTEL_FAILURE_REGEX)}"
         ),

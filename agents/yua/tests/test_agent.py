@@ -48,7 +48,7 @@ class TestAgentClass:
         import pytest
 
         with pytest.raises(ModuleNotFoundError):
-            import tools.sessions  # noqa: F401
+            importlib.import_module("tools.sessions")
 
     def test_construction_with_defaults(self, agent_module):
         agent = agent_module.YuaAgent(instructions="test")
@@ -87,8 +87,13 @@ class TestAgentClass:
         """The OpenClaw gateway is gone. A prompt that promises a tool the
         runtime does not register is a fabrication generator."""
         agent = agent_module.YuaAgent(instructions="test")
-        for name in ("openclaw_request", "openclaw_delegate", "sessions_send",
-                     "sessions_spawn", "schedule_callback"):
+        for name in (
+            "openclaw_request",
+            "openclaw_delegate",
+            "sessions_send",
+            "sessions_spawn",
+            "schedule_callback",
+        ):
             assert getattr(agent, name, None) is None, f"{name} is back"
 
     def test_config_is_yua_identity(self, agent_module):
@@ -174,7 +179,7 @@ class TestSDKImports:
         import pytest
 
         with pytest.raises(ModuleNotFoundError):
-            import tools.sessions  # noqa: F401
+            importlib.import_module("tools.sessions")
 
 
 class TestProviderImports:
