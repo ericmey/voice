@@ -9,7 +9,7 @@ import aiohttp
 from livekit.agents import Agent, function_tool
 from sdk.trace import trace
 
-logger = logging.getLogger("openclaw-livekit.agent")
+logger = logging.getLogger("voice.agent")
 
 # Shared TCP connector for NWS weather calls. Sessions are scoped to
 # individual requests, so there is no module-level ClientSession to close.
@@ -56,7 +56,7 @@ class CoreToolsMixin(Agent):
         trace("tool=get_weather")
         nws_url = "https://api.weather.gov/stations/KTYQ/observations/latest"
         headers = {
-            "User-Agent": "(openclaw-voice-agent, user@example.com)",
+            "User-Agent": "(livekit-voice-agent, user@example.com)",
             "Accept": "application/geo+json",
         }
         try:

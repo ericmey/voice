@@ -3,10 +3,10 @@
 Pin the contract:
 
 * ``setup_otel_tracing`` is a hard no-op unless
-  ``OPENCLAW_OTEL_ENABLED=true`` AND ``OPENCLAW_OTLP_ENDPOINT`` is set.
+  ``VOICE_OTEL_ENABLED=true`` AND ``VOICE_OTLP_ENDPOINT`` is set.
 * It wires LiveKit's tracer provider on success.
 * :class:`NoiseSpanFilter` drops the named LiveKit framework spans
-  unless ``OPENCLAW_OTEL_VERBOSE`` is set.
+  unless ``VOICE_OTEL_VERBOSE`` is set.
 * :func:`attach_current_span_metadata` writes OTel-SemConv keys
   (``session.id``, ``enduser.id``) plus a small set of telephony-routing
   ``openclaw.*`` keys onto the active span.
@@ -39,7 +39,7 @@ def _reset_module_state() -> None:
 
 
 def test_setup_is_noop_when_env_var_unset(monkeypatch) -> None:
-    monkeypatch.delenv("OPENCLAW_OTEL_ENABLED", raising=False)
+    monkeypatch.delenv("VOICE_OTEL_ENABLED", raising=False)
     _reset_module_state()
 
     with patch("livekit.agents.telemetry.set_tracer_provider") as mock_set:
@@ -50,7 +50,7 @@ def test_setup_is_noop_when_env_var_unset(monkeypatch) -> None:
 
 
 def test_setup_is_noop_when_env_var_false(monkeypatch) -> None:
-    monkeypatch.setenv("OPENCLAW_OTEL_ENABLED", "false")
+    monkeypatch.setenv("VOICE_OTEL_ENABLED", "false")
     _reset_module_state()
 
     with patch("livekit.agents.telemetry.set_tracer_provider") as mock_set:
@@ -62,8 +62,8 @@ def test_setup_is_noop_when_env_var_false(monkeypatch) -> None:
 def test_setup_is_noop_when_otlp_endpoint_missing(monkeypatch) -> None:
     """Tracing requested but no OTLP endpoint configured → degrade quietly
     so production keeps serving calls. Operator forgot a half-step."""
-    monkeypatch.setenv("OPENCLAW_OTEL_ENABLED", "true")
-    monkeypatch.delenv("OPENCLAW_OTLP_ENDPOINT", raising=False)
+    monkeypatch.setenv("VOICE_OTEL_ENABLED", "true")
+    monkeypatch.delenv("VOICE_OTLP_ENDPOINT", raising=False)
     _reset_module_state()
 
     with patch("livekit.agents.telemetry.set_tracer_provider") as mock_set:
@@ -76,8 +76,8 @@ def test_setup_wires_provider_when_fully_configured(monkeypatch) -> None:
     """Happy path — enabled flag plus an OTLP endpoint must wire LiveKit's
     tracer provider. Asserts the integration point LiveKit relies on
     (``set_tracer_provider``) is actually called."""
-    monkeypatch.setenv("OPENCLAW_OTEL_ENABLED", "true")
-    monkeypatch.setenv("OPENCLAW_OTLP_ENDPOINT", "http://localhost:4318/v1/traces")
+    monkeypatch.setenv("VOICE_OTEL_ENABLED", "true")
+    monkeypatch.setenv("VOICE_OTLP_ENDPOINT", "http://localhost:4318/v1/traces")
     _reset_module_state()
 
     with (
@@ -95,8 +95,8 @@ def test_setup_wires_provider_when_fully_configured(monkeypatch) -> None:
 def test_setup_is_idempotent(monkeypatch) -> None:
     """Multiple calls (re-imports, accidental double-init) must not register
     the processor twice — duplicating spans would corrupt every dashboard."""
-    monkeypatch.setenv("OPENCLAW_OTEL_ENABLED", "true")
-    monkeypatch.setenv("OPENCLAW_OTLP_ENDPOINT", "http://localhost:4318/v1/traces")
+    monkeypatch.setenv("VOICE_OTEL_ENABLED", "true")
+    monkeypatch.setenv("VOICE_OTLP_ENDPOINT", "http://localhost:4318/v1/traces")
     _reset_module_state()
 
     with (
@@ -116,14 +116,14 @@ def test_setup_is_idempotent(monkeypatch) -> None:
 
 
 def test_resource_attributes_identify_agent(monkeypatch) -> None:
-    monkeypatch.setenv("OPENCLAW_AGENT_NAME", "aoi")
-    monkeypatch.setenv("OPENCLAW_DEPLOYMENT_ENVIRONMENT", "production")
-    monkeypatch.setenv("OPENCLAW_SERVICE_VERSION", "0.4.2")
+    monkeypatch.setenv("VOICE_AGENT_NAME", "aoi")
+    monkeypatch.setenv("VOICE_DEPLOYMENT_ENVIRONMENT", "production")
+    monkeypatch.setenv("VOICE_SERVICE_VERSION", "0.4.2")
 
     resource = tracing._build_resource()
     attrs = dict(resource.attributes)
 
-    assert attrs["service.name"] == "openclaw-livekit-aoi"
+    assert attrs["service.name"] == "voice-aoi"
     assert attrs["service.namespace"] == "openclaw"
     assert attrs["service.version"] == "0.4.2"
     assert attrs["deployment.environment"] == "production"
@@ -132,7 +132,7 @@ def test_resource_attributes_identify_agent(monkeypatch) -> None:
 
 
 def test_resource_attributes_default_to_local_environment(monkeypatch) -> None:
-    monkeypatch.delenv("OPENCLAW_DEPLOYMENT_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("VOICE_DEPLOYMENT_ENVIRONMENT", raising=False)
     monkeypatch.delenv("DEPLOYMENT_ENVIRONMENT", raising=False)
 
     resource = tracing._build_resource()
@@ -141,13 +141,13 @@ def test_resource_attributes_default_to_local_environment(monkeypatch) -> None:
 
 
 def test_resource_attributes_fallback_when_agent_name_unset(monkeypatch) -> None:
-    """Without ``OPENCLAW_AGENT_NAME`` (e.g. in pytest's hermetic env),
+    """Without ``VOICE_AGENT_NAME`` (e.g. in pytest's hermetic env),
     service.name must still be valid — falls back to a stable label."""
-    monkeypatch.delenv("OPENCLAW_AGENT_NAME", raising=False)
+    monkeypatch.delenv("VOICE_AGENT_NAME", raising=False)
 
     resource = tracing._build_resource()
 
-    assert dict(resource.attributes)["service.name"] == "openclaw-livekit"
+    assert dict(resource.attributes)["service.name"] == "voice"
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +164,7 @@ def _fake_span(name: str) -> ReadableSpan:
 def test_noise_filter_drops_named_spans_by_default(monkeypatch) -> None:
     """Default mode: TTS-playback and lifecycle spans get suppressed so
     the Tempo / Grafana trace tree only shows conversation content."""
-    monkeypatch.delenv("OPENCLAW_OTEL_VERBOSE", raising=False)
+    monkeypatch.delenv("VOICE_OTEL_VERBOSE", raising=False)
     downstream = MagicMock()
     f = tracing.NoiseSpanFilter(downstream)
 
@@ -204,9 +204,9 @@ def test_noise_filter_passes_through_meaningful_spans() -> None:
 
 
 def test_noise_filter_passes_everything_when_verbose(monkeypatch) -> None:
-    """Operators flip ``OPENCLAW_OTEL_VERBOSE=true`` for deep dives —
+    """Operators flip ``VOICE_OTEL_VERBOSE=true`` for deep dives —
     every span must reach the exporter, including the noise."""
-    monkeypatch.setenv("OPENCLAW_OTEL_VERBOSE", "true")
+    monkeypatch.setenv("VOICE_OTEL_VERBOSE", "true")
     downstream = MagicMock()
     f = tracing.NoiseSpanFilter(downstream)
 
@@ -326,11 +326,11 @@ def teardown_module(module) -> None:  # noqa: ARG001
     ``sdk.env`` (which calls setup) and skip wiring if we leave it set."""
     _reset_module_state()
     for k in (
-        "OPENCLAW_OTEL_ENABLED",
-        "OPENCLAW_OTLP_ENDPOINT",
-        "OPENCLAW_OTEL_VERBOSE",
-        "OPENCLAW_AGENT_NAME",
-        "OPENCLAW_DEPLOYMENT_ENVIRONMENT",
-        "OPENCLAW_SERVICE_VERSION",
+        "VOICE_OTEL_ENABLED",
+        "VOICE_OTLP_ENDPOINT",
+        "VOICE_OTEL_VERBOSE",
+        "VOICE_AGENT_NAME",
+        "VOICE_DEPLOYMENT_ENVIRONMENT",
+        "VOICE_SERVICE_VERSION",
     ):
         os.environ.pop(k, None)

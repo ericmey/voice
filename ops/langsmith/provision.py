@@ -23,7 +23,7 @@ What gets applied (in order):
    ``/api/v1/workspaces/current/secrets``. These power online
    LLM-as-judge evaluators. Already-present keys are not re-uploaded
    (avoids silent value rotation). Override source via
-   ``OPENCLAW_ENV_PATH`` env var.
+   ``VOICE_ENV_PATH`` env var.
 5. **Datasets** — created and populated from
    ``ops/langsmith/datasets/<name>.py::EXAMPLES``.
 
@@ -228,7 +228,7 @@ def apply_annotation_queues(
 
 
 def _load_openclaw_secrets() -> dict[str, str]:
-    """Source the operator's ~/.openclaw/.env (or ``OPENCLAW_ENV_PATH`` override)
+    """Source the operator's ~/.openclaw/.env (or ``VOICE_ENV_PATH`` override)
     via bash so quoted values + multiline continuations behave like normal
     shell sourcing. Same trick as client.py uses for our own provisioning env.
 
@@ -240,11 +240,11 @@ def _load_openclaw_secrets() -> dict[str, str]:
     import subprocess
     from pathlib import Path
 
-    src = os.environ.get("OPENCLAW_ENV_PATH") or str(Path.home() / ".openclaw" / ".env")
+    src = os.environ.get("VOICE_ENV_PATH") or str(Path.home() / ".openclaw" / ".env")
     src_path = Path(src)
     if not src_path.exists():
         raise FileNotFoundError(
-            f"openclaw env file not found: {src} — set OPENCLAW_ENV_PATH "
+            f"openclaw env file not found: {src} — set VOICE_ENV_PATH "
             "to override, or skip the secrets phase: `make langsmith-provision "
             "--phase=feedback` etc."
         )

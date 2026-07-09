@@ -11,7 +11,7 @@
   (`sdk/src/sdk/livekit_otel_enricher.py`, formerly the
   `LangSmithSpanProcessor`) — its mappings duplicated what LiveKit
   Agents 1.5+ already emits natively.
-* The multi-exporter knob (`OPENCLAW_OTEL_EXPORTERS`) and the
+* The multi-exporter knob (`VOICE_OTEL_EXPORTERS`) and the
   `_rewrite_langsmith_project_header` helper in `sdk/tracing.py`.
 * The dual-export to `https://api.smith.langchain.com/otel`.
 
@@ -43,10 +43,10 @@ again, the cleanest options are:
 
 1. Run a local OTel collector (`otelcol-contrib`) that fans out from
    one OTLP receiver to two OTLP exporters — one to your primary
-   backend, one to `https://api.smith.langchain.com/otel`. Point `OPENCLAW_OTLP_ENDPOINT`
+   backend, one to `https://api.smith.langchain.com/otel`. Point `VOICE_OTLP_ENDPOINT`
    at the local collector. No code changes here.
 2. Or revert this commit's removal of `livekit_otel_enricher.py` and
-   the `OPENCLAW_OTEL_EXPORTERS` branching in `sdk/tracing.py` — the
+   the `VOICE_OTEL_EXPORTERS` branching in `sdk/tracing.py` — the
    git history has the full prior implementation.
 
 The agent SDK itself stays vendor-neutral OTLP/HTTP either way.

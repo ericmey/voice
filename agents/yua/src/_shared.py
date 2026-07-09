@@ -36,26 +36,11 @@ YUA_VOICE = "Leda"
 
 #: Yua's operational identity. Shares Nyla's Discord room for now
 #: until Eric carves out a dedicated room. Memory goes to the yua-voice
-#: bucket so phone calls stay separable from her Codex/OpenClaw streams.
-#:
-#: Delegation allowlist matches her prompt: research to Yumi, ops to
-#: Rin, deep technical review to Aoi, herself for long-running code/QA
-#: work, and Nyla for household routing. Inbox/email and creative/image
-#: routing stay off-list so those requests go through the household
-#: router unless Eric explicitly widens the surface later.
+#: bucket so phone calls stay separable from her other streams.
 YUA_CONFIG = AgentConfig(
     agent_name="yua",
     memory_agent_tag="yua-voice",
     discord_room=NYLA_DISCORD_ROOM,
-    allowed_delegation_targets=frozenset(
-        {
-            "yumi",  # research / planning
-            "rin",  # ops / health checks
-            "aoi",  # senior review / technical partner
-            "yua",  # spawn herself for long-running code and QA work
-            "nyla",  # hand back to the household router on explicit ask
-        }
-    ),
     # Canonical Musubi under agent-as-tenant (ADR 0030): Yua writes to
     # ``yua/voice/*`` and surveys the same household list as Nyla.
     musubi_v2_namespace="yua/voice",
@@ -80,7 +65,7 @@ YUA_CONFIG = AgentConfig(
 
 
 class YuaAgent(HouseholdToolsMixin, BaseRealtimeAgent):
-    """Yua with all OpenClaw platform tools + household survey."""
+    """Yua with the core + Musubi tool set and the household survey."""
 
     config = YUA_CONFIG
 

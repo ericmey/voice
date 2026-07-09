@@ -16,7 +16,7 @@ livekit_source_connect_env_if_needed() {
     return 0
   fi
 
-  local service_env="${OPENCLAW_GATEWAY_SERVICE_ENV:-${HOME}/.openclaw/service-env/ai.openclaw.gateway.env}"
+  local service_env="${VOICE_SERVICE_ENV:-${HOME}/.voice/service-env/ai.voice.env}"
   if [[ -r "$service_env" ]]; then
     set -a
     # shellcheck disable=SC1090
@@ -35,7 +35,7 @@ livekit_reexec_with_1password_if_needed() {
     return 0
   fi
 
-  if [[ "${OPENCLAW_LIVEKIT_ENV_BOOTSTRAPPED:-}" == "1" ]]; then
+  if [[ "${VOICE_LIVEKIT_ENV_BOOTSTRAPPED:-}" == "1" ]]; then
     printf '[fatal] LIVEKIT_API_KEY/LIVEKIT_API_SECRET missing after 1Password env bootstrap\n' >&2
     exit 1
   fi
@@ -57,6 +57,6 @@ livekit_reexec_with_1password_if_needed() {
     exit 1
   fi
 
-  export OPENCLAW_LIVEKIT_ENV_BOOTSTRAPPED=1
+  export VOICE_LIVEKIT_ENV_BOOTSTRAPPED=1
   exec op run --env-file="$env_template" -- "$@"
 }

@@ -4,7 +4,7 @@ Implements the five-tool canonical surface from Musubi
 [[07-interfaces/agent-tools]] / ADR 0032: ``musubi_recent``,
 ``musubi_search``, ``musubi_get``, ``musubi_remember``, ``musubi_think``.
 Identical names + parameter shapes across every Musubi adapter (this
-mixin, the openclaw-musubi browser plugin, the Python MCP adapter)
+mixin, the browser plugin, the Python MCP adapter)
 so Eric (or any model) gets the same tool surface regardless of which
 modality Aoi/Nyla is on.
 
@@ -41,7 +41,7 @@ from sdk.musubi_v2_client import (
 )
 from sdk.trace import trace
 
-logger = logging.getLogger("openclaw-livekit.agent")
+logger = logging.getLogger("voice.agent")
 
 _DEGRADED_LOOKUP = "Couldn't check memory — Musubi is unavailable right now."
 _DEGRADED_STORE = "Memory didn't save — Musubi is unavailable right now."
@@ -155,7 +155,7 @@ class MusubiToolsMixin(Agent):
 
         Per Musubi ADR 0031: ``<tenant>/*/episodic`` fans an episodic
         retrieve across every channel the tenant has captured into. For
-        Nyla on the voice channel that means voice + openclaw + discord
+        Nyla on the voice channel that means voice + discord
         + any future surface — all read in one call. The agent still
         knows where each row came from because every result row carries
         its concrete stored namespace.
@@ -302,12 +302,11 @@ class MusubiToolsMixin(Agent):
         about the dentist appointment?", "Did I tell you about the
         Stable Diffusion update?", "What's the deploy plan you saved?"
 
-        Unlike musubi_recent (which is your VOICE channel only, last
-        24h), this searches across voice + Openclaw + Discord + every
-        other surface you exist on. If the user told Openclaw-you to
-        remember something, THIS is the tool that finds it on a phone
-        call. Each result row carries its origin namespace so you can
-        say "we talked about that on Openclaw" vs "on our last call".
+        Unlike musubi_recent (which scrolls your VOICE channel only, by
+        recency — not a time window), this searches every surface you
+        exist on. If you were told something on another surface, THIS is
+        the tool that finds it on a phone call. Each result row carries its origin namespace so you can
+        say which surface a memory came from.
 
         You MUST call this tool when answering recall questions. Saying
         "I remember…" without calling this tool is hallucination.
@@ -369,7 +368,7 @@ class MusubiToolsMixin(Agent):
         call this tool to store the memory. Saying you'll remember it
         without calling this tool means the memory is lost.
 
-        Tool name + parameter shape match the openclaw-musubi plugin's
+        Tool name + parameter shape match the browser plugin's
         ``musubi_remember`` so saves on either surface look the same in
         traces and to the model.
 
@@ -580,8 +579,7 @@ def _format_row(row: dict[str, Any]) -> str:
 def _format_search_row(row: dict[str, Any]) -> str:
     """One-line render for a retrieve hit. Surfaces the row's origin
     channel (the ``presence`` segment of the stored namespace) so the
-    LLM can attribute "you told me this on Openclaw" vs "on our last
-    call". Falls back to the raw namespace if the row's namespace
+    LLM can attribute which surface a memory came from. Falls back to the raw namespace if the row's namespace
     isn't 3-segment for any reason."""
     ns = row.get("namespace") or ""
     parts = ns.split("/")

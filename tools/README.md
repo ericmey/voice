@@ -58,9 +58,9 @@ and normal delivery behavior. The phone stack intentionally does not force
 a channel/target in the hook payload; `deliver_to="dm"` is carried as a
 plain-language preference in the delegated task.
 
-Configure `OPENCLAW_HOOK_TOKEN` with a dedicated Gateway hook token.
-`OPENCLAW_GATEWAY_HTTP_URL` defaults to `http://127.0.0.1:$GATEWAY_PORT`
-when unset, and `OPENCLAW_HOOKS_PATH` defaults to `/hooks`.
+Configure `VOICE_HOOK_TOKEN` with a dedicated Gateway hook token.
+`VOICE_GATEWAY_HTTP_URL` defaults to `http://127.0.0.1:$GATEWAY_PORT`
+when unset, and `VOICE_HOOKS_PATH` defaults to `/hooks`.
 
 The remaining CLI spawner is preserved only for disabled callback code
 while the callback redesign is pending.

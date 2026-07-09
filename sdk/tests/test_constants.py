@@ -1,48 +1,35 @@
-"""Tests for constants module."""
+"""Discord targets are the only constants left.
 
-from sdk.constants import (
-    DELAY_RE,
-    E164_RE,
-    ERIC_DISCORD_DM,
-    NYLA_DISCORD_ROOM,
-    sanitize,
-)
+The callback guardrails were deleted with ``schedule_callback``; this
+test pins that they stay gone, so a future re-add has to bring its own
+bounds rather than silently resurrecting the old ones.
+"""
+
+import pytest
+import sdk.constants as constants
+from sdk.constants import ERIC_DISCORD_DM, NYLA_DISCORD_ROOM
 
 
-def test_discord_channels_are_numeric_strings():
+def test_discord_targets_are_addressable():
     assert NYLA_DISCORD_ROOM.startswith("channel:")
     assert ERIC_DISCORD_DM.startswith("user:")
 
 
-def test_sanitize_uses_shlex_quote():
-    # shlex.quote wraps strings containing shell metacharacters
-    assert sanitize('hello "world"') == "'hello \"world\"'"
-    # Simple strings without shell-meaningful characters pass through unchanged
-    assert sanitize("safetext") == "safetext"
-    # Malicious input is safely quoted, not stripped
-    assert sanitize("rm -rf /; echo bad") == "'rm -rf /; echo bad'"
-
-
-def test_delay_regex_accepts_valid():
-    assert DELAY_RE.match("5m")
-    assert DELAY_RE.match("30m")
-    assert DELAY_RE.match("1h")
-    assert DELAY_RE.match("2d")
-
-
-def test_delay_regex_rejects_invalid():
-    assert not DELAY_RE.match("5")
-    assert not DELAY_RE.match("m")
-    assert not DELAY_RE.match("5x")
-    assert not DELAY_RE.match("")
-
-
-def test_e164_regex_accepts_valid():
-    assert E164_RE.match("+13175551234")
-    assert E164_RE.match("+442071234567")
-
-
-def test_e164_regex_rejects_invalid():
-    assert not E164_RE.match("3175551234")
-    assert not E164_RE.match("+0123")
-    assert not E164_RE.match("")
+@pytest.mark.parametrize(
+    "symbol",
+    [
+        "DELAY_RE",
+        "E164_RE",
+        "CALLBACK_MIN_DELAY_S",
+        "CALLBACK_MAX_DELAY_S",
+        "CALLBACK_SHORT_DELAY_S",
+        "CALLBACK_QUIET_START_HOUR",
+        "CALLBACK_QUIET_END_HOUR",
+        "ERIC_TZ",
+        "sanitize",
+        "parse_delay_seconds",
+        "is_quiet_hour",
+    ],
+)
+def test_callback_guardrails_are_gone(symbol):
+    assert not hasattr(constants, symbol), f"{symbol} outlived schedule_callback"

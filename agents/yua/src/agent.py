@@ -28,7 +28,7 @@ from sdk.transcript import wire_transcript_logging
 # --- env ---------------------------------------------------------------
 load_env_once()
 
-logger = logging.getLogger("openclaw-livekit.agent")
+logger = logging.getLogger("voice.agent")
 
 # --- server + session --------------------------------------------------
 server = AgentServer(port=8085)

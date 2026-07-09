@@ -24,7 +24,7 @@ This page mirrors the flow with OpenClaw-specific notes.
 
 Twilio Console → **Elastic SIP Trunking** → **Trunks** → **Create new trunk**.
 
-- **Friendly name:** `openclaw-livekit`
+- **Friendly name:** `voice`
 - Leave defaults; you'll fill in origination/termination below.
 
 Save the **Trunk SID** — you'll reference it later.

@@ -16,18 +16,17 @@ def test_agent_config_is_frozen():
 
 
 def test_nyla_default_config_values():
-    """The SDK-level default tags everything as Nyla and unrestricts delegation."""
+    """The SDK-level default tags everything as Nyla."""
     assert NYLA_DEFAULT_CONFIG.agent_name == "nyla"
     assert NYLA_DEFAULT_CONFIG.memory_agent_tag == "nyla-voice"
     assert NYLA_DEFAULT_CONFIG.discord_room.startswith("channel:")
-    assert NYLA_DEFAULT_CONFIG.allowed_delegation_targets is None
 
 
-def test_agent_config_accepts_delegation_allowlist():
+def test_agent_config_has_no_delegation_allowlist():
+    """Delegation went with the gateway; the field should not come back quietly."""
     cfg = AgentConfig(
         agent_name="aoi",
         memory_agent_tag="aoi-voice",
         discord_room="channel:0",
-        allowed_delegation_targets=frozenset({"yumi", "rin"}),
     )
-    assert cfg.allowed_delegation_targets == frozenset({"yumi", "rin"})
+    assert not hasattr(cfg, "allowed_delegation_targets")

@@ -148,7 +148,7 @@ errors are often logged and swallowed.
 
 **Trigger:** The observability backend migrated from a local collector
 to a remote OTLP stack, but `scripts/deploy-agents.sh` still defaulted
-`OPENCLAW_OTLP_ENDPOINT` to `http://localhost:4318/v1/traces` when the
+`VOICE_OTLP_ENDPOINT` to `http://localhost:4318/v1/traces` when the
 secrets file omitted the variable.
 
 **Lesson:** Backend migrations must update deploy-time fallbacks and
@@ -192,7 +192,7 @@ correctly routed.
 ## 2026-05-05 — Treat voice subprocess boundaries as security boundaries
 
 **Trigger:** A live post-call hook failed because launchd rendered
-`OPENCLAW_BIN` to a stale path, and a review of voice tool subprocesses
+`VOICE_BIN` to a stale path, and a review of voice tool subprocesses
 showed the agent runtime trusted that path before launching `openclaw`.
 
 **Lesson:** Validate external executables at both deploy time and runtime:

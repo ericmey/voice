@@ -1,6 +1,6 @@
 # Bring Your Own Stack
 
-This repository is a reference implementation for one OpenClaw LiveKit
+This repository is a reference implementation for one LiveKit voice
 voice deployment. The included personas, tools, and service names are
 examples from that stack. Treat them as working samples you can replace,
 not as a required application shape.
@@ -27,9 +27,9 @@ than copying the whole stack.
 | SIP trunk + dispatch rules | Yes for phone calls | `config/sip-*.json`, `docs/twilio-trunk.md` | Twilio, Telnyx, carrier SBC, or any LiveKit SIP-compatible provider |
 | Agents/personas | Yes | `agents/*/src/agent.py`, `agents/*/prompts/system.md` | Your own agent packages, names, voices, prompts, model choices |
 | Tools | Optional but useful | `tools/src/tools/`, `tools/README.md` | Your own LiveKit `@function_tool` mixins |
-| OpenClaw delegation | Optional | `OPENCLAW_HOOK_*`, `sdk/src/sdk/openclaw_hooks.py`, `tools/src/tools/sessions.py` | Another async job API, webhook receiver, queue, or no delegation |
+| OpenClaw delegation | Optional | `VOICE_HOOK_*`, `sdk/src/sdk/openclaw_hooks.py`, `tools/src/tools/sessions.py` | Another async job API, webhook receiver, queue, or no delegation |
 | Musubi memory | Optional | `MUSUBI_V2_*`, `sdk/src/sdk/musubi_v2_client.py`, `tools/src/tools/memory.py` | Another memory API, local store, or remove memory tools |
-| Observability | Recommended | `OPENCLAW_OTLP_*`, `docs/OBSERVABILITY.md` | Grafana, Honeycomb, Datadog, New Relic, or any OTLP/HTTP backend |
+| Observability | Recommended | `VOICE_OTLP_*`, `docs/OBSERVABILITY.md` | Grafana, Honeycomb, Datadog, New Relic, or any OTLP/HTTP backend |
 | Agent lifecycle | Required on macOS | `config/launchd/`, `scripts/deploy-agents.sh`, `scripts/cycle-agents.sh` | systemd, containers, Nomad, Kubernetes, or another supervisor |
 
 ## Replacing Agents
@@ -108,7 +108,7 @@ The agents emit OTLP/HTTP traces, logs, and metrics. You need one of:
 The app-side endpoint must include the OTLP signal path:
 
 ```bash
-OPENCLAW_OTLP_ENDPOINT=http://localhost:4318/v1/traces
+VOICE_OTLP_ENDPOINT=http://localhost:4318/v1/traces
 ```
 
 When explicit log/metric endpoints are unset, the SDK derives

@@ -21,8 +21,8 @@ from typing import Any
 DEFAULT_GRAFANA_URL = "http://localhost:3000"
 DEFAULT_DATASOURCE_UID = "loki"
 DEFAULT_SERVICE_REGEX = (
-    "openclaw-livekit-nyla|openclaw-livekit-aoi|openclaw-livekit-yua|"
-    "openclaw-livekit-party|openclaw-.*"
+    "voice-nyla|voice-aoi|voice-yua|"
+    "voice-party|openclaw-.*"
 )
 FAILURE_REGEX = (
     "(?i)(error|exception|traceback|failed|rejected|denied|unauthorized|timeout|"
@@ -147,8 +147,8 @@ def _main() -> int:
     start_value = args.start if args.start is not None else end_value - args.since
     service_selector = f'{{service_name=~"{args.service_regex}"}}'
     agent_selector = (
-        '{service_name=~"openclaw-livekit-nyla|openclaw-livekit-aoi|'
-        'openclaw-livekit-yua|openclaw-livekit-party"}'
+        '{service_name=~"voice-nyla|voice-aoi|'
+        'voice-yua|voice-party"}'
     )
     queries = [
         LokiQuery(

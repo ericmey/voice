@@ -69,25 +69,25 @@ class TestAgentClass:
         assert hasattr(agent, "household_status")
 
     def test_active_tools_present(self, agent_module):
-        """Tools currently exposed to the voice model. schedule_callback
-        is deliberately OFF this list — the cron path isn't wired; see
-        SDK TODO.md for the re-enable plan."""
+        """Tools currently exposed to the voice model."""
         agent = agent_module.YuaAgent(instructions="test")
         expected = [
             "get_current_time",
             "get_weather",
             "musubi_recent",
             "musubi_remember",
-            "openclaw_delegate",
             "household_status",
         ]
         for tool in expected:
             assert hasattr(agent, tool), f"Missing tool: {tool}"
 
-    def test_openclaw_request_absent(self, agent_module):
+    def test_retired_gateway_tools_absent(self, agent_module):
+        """The OpenClaw gateway is gone. A prompt that promises a tool the
+        runtime does not register is a fabrication generator."""
         agent = agent_module.YuaAgent(instructions="test")
-        attr = getattr(agent, "openclaw_request", None)
-        assert not callable(attr), "openclaw_request was deleted in SDK cleanup"
+        for name in ("openclaw_request", "openclaw_delegate", "sessions_send",
+                     "sessions_spawn", "schedule_callback"):
+            assert getattr(agent, name, None) is None, f"{name} is back"
 
     def test_config_is_yua_identity(self, agent_module):
         """Yua's config must tag memories to yua-voice and set her own agent name."""
@@ -96,15 +96,10 @@ class TestAgentClass:
         assert cfg.memory_agent_tag == "yua-voice"
         assert cfg.discord_room.startswith("channel:")
 
-    def test_config_delegation_allowlist_matches_persona(self, agent_module):
-        """Yua's prompt commits to bounded routing for voice calls."""
+    def test_config_has_no_delegation_allowlist(self, agent_module):
+        """Delegation retired with the gateway; the allowlist went with it."""
         cfg = agent_module.YuaAgent.config
-        allowed = cfg.allowed_delegation_targets
-        assert allowed is not None, "Yua should have a bounded delegation set"
-        assert {"yumi", "rin", "aoi", "yua", "nyla"} <= allowed
-        assert "momo" not in allowed
-        assert "hana" not in allowed
-        assert "tama" not in allowed
+        assert not hasattr(cfg, "allowed_delegation_targets")
 
     def test_config_uses_yua_musubi_namespace(self, agent_module):
         cfg = agent_module.YuaAgent.config

@@ -1,4 +1,4 @@
-"""OpenTelemetry tracing, logs, and metrics for the OpenClaw voice agents.
+"""OpenTelemetry tracing, logs, and metrics for the LiveKit voice agents.
 
 The configured backend is any OTLP/HTTP-compatible collector, commonly
 Grafana + Loki + Tempo + Mimir behind an OTel Collector. The setup relies
@@ -15,25 +15,25 @@ attributes. We add no span enrichment beyond:
 * :func:`attach_current_span_metadata` — stamps SIP / caller identity
   onto the active ``agent_session`` span as standard OTel SemConv
   attributes (``session.id``, ``enduser.id``) plus a small set of
-  telephony-routing fields (``openclaw.dialed_number`` /
-  ``openclaw.caller_source`` / ``openclaw.lk_job_id``) not covered by
+  telephony-routing fields (``voice.dialed_number`` /
+  ``voice.caller_source`` / ``voice.lk_job_id``) not covered by
   SemConv.
 
 The exporter speaks generic OTLP/HTTP, so any OTLP backend works
-without code changes — point ``OPENCLAW_OTLP_ENDPOINT`` at a different
+without code changes — point ``VOICE_OTLP_ENDPOINT`` at a different
 collector if the topology ever shifts.
 
 Configuration:
 
-* ``OPENCLAW_OTEL_ENABLED=true`` — master switch.
-* ``OPENCLAW_OTLP_ENDPOINT`` / ``OPENCLAW_OTLP_HEADERS`` — OTLP/HTTP
+* ``VOICE_OTEL_ENABLED=true`` — master switch.
+* ``VOICE_OTLP_ENDPOINT`` / ``VOICE_OTLP_HEADERS`` — OTLP/HTTP
   traces endpoint (default:
   ``http://localhost:4318/v1/traces``) and any auth headers required by
   the backend.
-* ``OPENCLAW_OTEL_DEBUG=true`` — adds a ConsoleSpanExporter for local diag.
-* ``OPENCLAW_OTEL_HTTP_INSTRUMENTATION=false`` — disable HTTP auto-instr.
-* ``OPENCLAW_OTEL_VERBOSE=true`` — keep the noise spans in the trace tree.
-* ``OPENCLAW_OTEL_LOGS_ENABLED`` / ``OPENCLAW_OTEL_METRICS_ENABLED`` —
+* ``VOICE_OTEL_DEBUG=true`` — adds a ConsoleSpanExporter for local diag.
+* ``VOICE_OTEL_HTTP_INSTRUMENTATION=false`` — disable HTTP auto-instr.
+* ``VOICE_OTEL_VERBOSE=true`` — keep the noise spans in the trace tree.
+* ``VOICE_OTEL_LOGS_ENABLED`` / ``VOICE_OTEL_METRICS_ENABLED`` —
   explicit overrides (auto-on alongside an OTLP exporter).
 
 Setup MUST happen before ``AgentServer()`` is instantiated; LiveKit
@@ -52,7 +52,7 @@ from typing import Any
 
 from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor
 
-logger = logging.getLogger("openclaw-livekit.tracing")
+logger = logging.getLogger("voice.tracing")
 
 _initialized = False
 _provider: Any | None = None
@@ -62,7 +62,7 @@ _atexit_registered = False
 _instance_id = uuid.uuid4().hex
 
 
-# Spans that are pure UI noise. Filtered out unless OPENCLAW_OTEL_VERBOSE
+# Spans that are pure UI noise. Filtered out unless VOICE_OTEL_VERBOSE
 # is set. ``agent_speaking`` / ``user_speaking`` mark TTS playback and
 # user audio capture, not conversation events; ``on_enter`` / ``on_exit``
 # / ``drain_agent_activity`` are framework lifecycle hooks. None contain
@@ -83,7 +83,7 @@ class NoiseSpanFilter(SpanProcessor):
 
     Wraps another :class:`SpanProcessor` and forwards everything except
     spans whose name is in :data:`_NOISE_SPAN_NAMES`. Honours
-    ``OPENCLAW_OTEL_VERBOSE=true`` to disable filtering for deep dives.
+    ``VOICE_OTEL_VERBOSE=true`` to disable filtering for deep dives.
     """
 
     def __init__(self, downstream: SpanProcessor) -> None:
@@ -112,7 +112,7 @@ class NoiseSpanFilter(SpanProcessor):
 def setup_otel_tracing() -> None:
     """Wire OTel tracing if enabled. Idempotent.
 
-    Reads ``OPENCLAW_OTEL_ENABLED``. Configures the TracerProvider with
+    Reads ``VOICE_OTEL_ENABLED``. Configures the TracerProvider with
     one BatchSpanProcessor wrapped in :class:`NoiseSpanFilter`, then
     publishes the provider to both the global OTel registry and
     LiveKit's dynamic tracer wrapper.
@@ -127,7 +127,7 @@ def setup_otel_tracing() -> None:
         return
 
     if not _otel_enabled():
-        _debug(f"[OTEL-SETUP] pid={pid} OPENCLAW_OTEL_ENABLED off — disabled")
+        _debug(f"[OTEL-SETUP] pid={pid} VOICE_OTEL_ENABLED off — disabled")
         return
 
     try:
@@ -137,7 +137,7 @@ def setup_otel_tracing() -> None:
     except ImportError as exc:
         _debug(f"[OTEL-SETUP] pid={pid} ImportError: {exc} — disabled")
         logger.warning(
-            "OPENCLAW_OTEL_ENABLED=true but OTel deps not installed (%s) — disabled. "
+            "VOICE_OTEL_ENABLED=true but OTel deps not installed (%s) — disabled. "
             "Run `uv sync` from the repository root to refresh the workspace environment.",
             exc,
         )
@@ -250,9 +250,9 @@ def attach_current_span_metadata(
 
     * ``session.id`` — SIP Call-ID (OTel SemConv standard).
     * ``enduser.id`` — caller phone number in E.164 (OTel SemConv).
-    * ``openclaw.dialed_number`` — which DID the caller dialed.
-    * ``openclaw.caller_source`` — twilio / sip / livekit-cloud / ...
-    * ``openclaw.lk_job_id`` — LiveKit job ID for cross-log correlation.
+    * ``voice.dialed_number`` — which DID the caller dialed.
+    * ``voice.caller_source`` — twilio / sip / livekit-cloud / ...
+    * ``voice.lk_job_id`` — LiveKit job ID for cross-log correlation.
 
     Operators filter Traces by ``service.name`` plus any of the above on
     the root ``agent_session`` span, then drill into the trace tree
@@ -272,11 +272,11 @@ def attach_current_span_metadata(
     if enduser_id:
         span.set_attribute("enduser.id", str(enduser_id))
     if dialed_number:
-        span.set_attribute("openclaw.dialed_number", str(dialed_number))
+        span.set_attribute("voice.dialed_number", str(dialed_number))
     if caller_source:
-        span.set_attribute("openclaw.caller_source", str(caller_source))
+        span.set_attribute("voice.caller_source", str(caller_source))
     if lk_job_id:
-        span.set_attribute("openclaw.lk_job_id", str(lk_job_id))
+        span.set_attribute("voice.lk_job_id", str(lk_job_id))
 
 
 # ---------------------------------------------------------------------------
@@ -285,11 +285,11 @@ def attach_current_span_metadata(
 
 
 def _otel_enabled() -> bool:
-    return os.environ.get("OPENCLAW_OTEL_ENABLED", "").lower() in ("true", "1", "yes")
+    return os.environ.get("VOICE_OTEL_ENABLED", "").lower() in ("true", "1", "yes")
 
 
 def _http_instrumentation_enabled() -> bool:
-    return os.environ.get("OPENCLAW_OTEL_HTTP_INSTRUMENTATION", "true").lower() not in (
+    return os.environ.get("VOICE_OTEL_HTTP_INSTRUMENTATION", "true").lower() not in (
         "false",
         "0",
         "no",
@@ -297,11 +297,11 @@ def _http_instrumentation_enabled() -> bool:
 
 
 def _debug_enabled() -> bool:
-    return os.environ.get("OPENCLAW_OTEL_DEBUG", "").lower() in ("true", "1", "yes")
+    return os.environ.get("VOICE_OTEL_DEBUG", "").lower() in ("true", "1", "yes")
 
 
 def _verbose_telemetry_enabled() -> bool:
-    return os.environ.get("OPENCLAW_OTEL_VERBOSE", "").lower() in ("true", "1", "yes")
+    return os.environ.get("VOICE_OTEL_VERBOSE", "").lower() in ("true", "1", "yes")
 
 
 def _debug(message: str) -> None:
@@ -313,7 +313,7 @@ def _debug(message: str) -> None:
 
 
 def _agent_name() -> str:
-    return (os.environ.get("OPENCLAW_AGENT_NAME") or "").strip().lower() or "unknown"
+    return (os.environ.get("VOICE_AGENT_NAME") or "").strip().lower() or "unknown"
 
 
 def _build_resource() -> Any:
@@ -331,21 +331,21 @@ def _build_resource() -> Any:
 
     agent = _agent_name()
     environment = os.environ.get(
-        "OPENCLAW_DEPLOYMENT_ENVIRONMENT",
+        "VOICE_DEPLOYMENT_ENVIRONMENT",
         os.environ.get("DEPLOYMENT_ENVIRONMENT", "local"),
     )
-    version = os.environ.get("OPENCLAW_SERVICE_VERSION", "dev")
+    version = os.environ.get("VOICE_SERVICE_VERSION", "dev")
 
     attrs: dict[str, Any] = {
-        SERVICE_NAME: f"openclaw-livekit-{agent}" if agent != "unknown" else "openclaw-livekit",
-        SERVICE_NAMESPACE: "openclaw",
+        SERVICE_NAME: f"voice-{agent}" if agent != "unknown" else "voice",
+        SERVICE_NAMESPACE: "voice",
         SERVICE_VERSION: version,
         SERVICE_INSTANCE_ID: _instance_id,
         DEPLOYMENT_ENVIRONMENT: environment,
         HOST_NAME: socket.gethostname(),
         PROCESS_PID: os.getpid(),
-        "openclaw.platform": platform.platform(),
-        "openclaw.python_version": platform.python_version(),
+        "voice.platform": platform.platform(),
+        "voice.python_version": platform.python_version(),
     }
     return Resource.create(attrs)
 
@@ -354,10 +354,10 @@ def _add_otlp_exporter(provider: Any) -> bool:
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-    endpoint = os.environ.get("OPENCLAW_OTLP_ENDPOINT")
-    headers = _parse_headers(os.environ.get("OPENCLAW_OTLP_HEADERS"))
+    endpoint = os.environ.get("VOICE_OTLP_ENDPOINT")
+    headers = _parse_headers(os.environ.get("VOICE_OTLP_HEADERS"))
     if not endpoint:
-        logger.warning("OPENCLAW_OTLP_ENDPOINT not set — OTLP exporter disabled")
+        logger.warning("VOICE_OTLP_ENDPOINT not set — OTLP exporter disabled")
         return False
 
     batch = BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, headers=headers))
@@ -429,12 +429,12 @@ def _install_http_instrumentation(provider: Any) -> None:
 
 
 def _logs_enabled() -> bool:
-    explicit = os.environ.get("OPENCLAW_OTEL_LOGS_ENABLED", "").lower()
+    explicit = os.environ.get("VOICE_OTEL_LOGS_ENABLED", "").lower()
     if explicit in ("true", "1", "yes"):
         return True
     if explicit in ("false", "0", "no"):
         return False
-    return bool(os.environ.get("OPENCLAW_OTLP_ENDPOINT"))
+    return bool(os.environ.get("VOICE_OTLP_ENDPOINT"))
 
 
 # Loggers whose records must never enter the OTel logs pipeline. Shipping
@@ -483,8 +483,8 @@ def _install_logs_pipeline(resource: Any) -> None:
         _debug(f"[OTEL-SETUP] logs pipeline unavailable: {exc}")
         return
 
-    endpoint = os.environ.get("OPENCLAW_OTLP_LOGS_ENDPOINT") or os.environ.get(
-        "OPENCLAW_OTLP_ENDPOINT"
+    endpoint = os.environ.get("VOICE_OTLP_LOGS_ENDPOINT") or os.environ.get(
+        "VOICE_OTLP_ENDPOINT"
     )
     if endpoint and "/v1/" not in endpoint:
         endpoint = endpoint.rstrip("/") + "/v1/logs"
@@ -492,7 +492,7 @@ def _install_logs_pipeline(resource: Any) -> None:
         endpoint = endpoint[: -len("/v1/traces")] + "/v1/logs"
 
     headers = _parse_headers(
-        os.environ.get("OPENCLAW_OTLP_LOGS_HEADERS") or os.environ.get("OPENCLAW_OTLP_HEADERS")
+        os.environ.get("VOICE_OTLP_LOGS_HEADERS") or os.environ.get("VOICE_OTLP_HEADERS")
     )
 
     try:
@@ -523,12 +523,12 @@ def _install_logs_pipeline(resource: Any) -> None:
 
 
 def _metrics_enabled() -> bool:
-    explicit = os.environ.get("OPENCLAW_OTEL_METRICS_ENABLED", "").lower()
+    explicit = os.environ.get("VOICE_OTEL_METRICS_ENABLED", "").lower()
     if explicit in ("true", "1", "yes"):
         return True
     if explicit in ("false", "0", "no"):
         return False
-    return bool(os.environ.get("OPENCLAW_OTLP_ENDPOINT"))
+    return bool(os.environ.get("VOICE_OTLP_ENDPOINT"))
 
 
 def _install_metrics_pipeline(resource: Any) -> None:
@@ -540,7 +540,7 @@ def _install_metrics_pipeline(resource: Any) -> None:
       * ``system.*`` host metrics (CPU, mem, network, disk) from
         :class:`SystemMetricsInstrumentor`
       * any custom counters/histograms downstream code records via
-        ``opentelemetry.metrics.get_meter("openclaw")``.
+        ``opentelemetry.metrics.get_meter("voice")``.
     """
     global _meter_provider
 
@@ -553,8 +553,8 @@ def _install_metrics_pipeline(resource: Any) -> None:
         _debug(f"[OTEL-SETUP] metrics pipeline unavailable: {exc}")
         return
 
-    endpoint = os.environ.get("OPENCLAW_OTLP_METRICS_ENDPOINT") or os.environ.get(
-        "OPENCLAW_OTLP_ENDPOINT"
+    endpoint = os.environ.get("VOICE_OTLP_METRICS_ENDPOINT") or os.environ.get(
+        "VOICE_OTLP_ENDPOINT"
     )
     if endpoint and "/v1/" not in endpoint:
         endpoint = endpoint.rstrip("/") + "/v1/metrics"
@@ -562,7 +562,7 @@ def _install_metrics_pipeline(resource: Any) -> None:
         endpoint = endpoint[: -len("/v1/traces")] + "/v1/metrics"
 
     headers = _parse_headers(
-        os.environ.get("OPENCLAW_OTLP_METRICS_HEADERS") or os.environ.get("OPENCLAW_OTLP_HEADERS")
+        os.environ.get("VOICE_OTLP_METRICS_HEADERS") or os.environ.get("VOICE_OTLP_HEADERS")
     )
 
     try:

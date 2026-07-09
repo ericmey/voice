@@ -975,13 +975,13 @@ realtime = [
 ]
 
 [[package]]
-name = "openclaw-livekit-agent-party"
+name = "voice-agent-party"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "livekit-agents", extra = ["google", "openai", "silero"] },
     { name = "livekit-plugins-elevenlabs" },
-    { name = "openclaw-livekit-agent-sdk" },
+    { name = "voice-agent-sdk" },
 ]
 
 [package.dev-dependencies]
@@ -994,7 +994,7 @@ dev = [
 requires-dist = [
     { name = "livekit-agents", extras = ["openai", "google", "silero"], specifier = "~=1.5" },
     { name = "livekit-plugins-elevenlabs", specifier = "~=1.5" },
-    { name = "openclaw-livekit-agent-sdk", editable = "../openclaw-livekit-agent-sdk" },
+    { name = "voice-agent-sdk", editable = "../voice-agent-sdk" },
 ]
 
 [package.metadata.requires-dev]
@@ -1004,9 +1004,9 @@ dev = [
 ]
 
 [[package]]
-name = "openclaw-livekit-agent-sdk"
+name = "voice-agent-sdk"
 version = "0.1.0"
-source = { editable = "../openclaw-livekit-agent-sdk" }
+source = { editable = "../voice-agent-sdk" }
 dependencies = [
     { name = "aiohttp" },
     { name = "livekit-agents" },

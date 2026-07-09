@@ -1,6 +1,6 @@
 # sdk/
 
-Shared Python runtime for the OpenClaw LiveKit voice agents. Provides the
+Shared Python runtime for the LiveKit voice agents. Provides the
 worker bootstrap, telemetry / trace / transcript writers, tool mixins
 (time, weather, memory, OpenClaw delegation), and the post-call review
 pipeline that feeds Rin's review queue.

@@ -8,7 +8,7 @@
 #     host.docker.internal:6379 on Mac, or redis:6379 if you prefer the
 #     container's service name on Linux).
 #
-# Bind-mounted into the openclaw-livekit-server container at /etc/livekit.yaml.
+# Bind-mounted into the voice-livekit-server container at /etc/livekit.yaml.
 
 port: 7880
 

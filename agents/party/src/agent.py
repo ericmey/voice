@@ -6,7 +6,7 @@ Registers as "phone-party" with LiveKit. Uses separate components:
   - LLM: Gemini 3.1 Flash-Lite Preview (text model, not multimodal)
   - TTS: ElevenLabs Flash v2.5
 
-Inherits the OpenClaw voice tool set (Core, Memory, Delegation).
+Inherits the voice tool set (Core, Memory).
 memory_agent_tag defaults to ``"nyla-voice"`` because the
 Harem World line is Nyla-on-chained-pipeline — same person, different
 voice engine. Override when/if Party gets its own identity.
@@ -45,12 +45,11 @@ from sdk.tracing import attach_current_span_metadata, wire_otel_shutdown_flush
 from sdk.transcript import wire_transcript_logging
 from tools.core import CoreToolsMixin
 from tools.memory import MusubiToolsMixin
-from tools.sessions import SessionsToolsMixin
 
 # --- env ---------------------------------------------------------------
 load_env()
 
-logger = logging.getLogger("openclaw-livekit.agent")
+logger = logging.getLogger("voice.agent")
 
 # ElevenLabs voice ID (Harem World default — Nyla's voice for now).
 _ELEVENLABS_VOICE_ID = "AEW6JTgnyoPaoB9zlK3S"
@@ -86,7 +85,6 @@ PARTY_CONFIG = AgentConfig(
     agent_name="nyla",
     memory_agent_tag="nyla-voice",
     discord_room=NYLA_DISCORD_ROOM,
-    allowed_delegation_targets=None,
     musubi_v2_namespace="nyla/voice",
     musubi_v2_presence="nyla/voice",
 )
@@ -95,10 +93,9 @@ PARTY_CONFIG = AgentConfig(
 class PartyAgent(
     CoreToolsMixin,
     MusubiToolsMixin,
-    SessionsToolsMixin,
     Agent,
 ):
-    """Harem World agent with full OpenClaw platform tool set.
+    """Harem World agent — core + Musubi memory tools.
 
     Config matches Nyla's because the Harem World line is Nyla on the
     chained pipeline — same person, different voice engine.

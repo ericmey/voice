@@ -17,7 +17,7 @@ import os
 import time
 from pathlib import Path
 
-logger = logging.getLogger("openclaw-livekit.trace")
+logger = logging.getLogger("voice.trace")
 
 
 def trace(msg: str) -> None:

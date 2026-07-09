@@ -3,11 +3,10 @@
 # the agent.
 #
 # secrets/livekit-agents.env carries MUSUBI_V2_TOKEN_{AOI,NYLA,YUA}; the SDK
-# reads MUSUBI_V2_TOKEN. Under launchd on nyla, scripts/deploy-agents.sh
-# (agent_musubi_token) made that selection while rendering each plist. Compose
-# cannot do it: ${VAR} inside an `environment:` block interpolates from the
-# shell and .env, never from env_file. So the selection happens here, once, at
-# container start.
+# reads MUSUBI_V2_TOKEN. The retired launchd deploy resolved that per agent
+# while rendering each plist. Compose cannot: ${VAR} inside an `environment:`
+# block interpolates from the shell and .env, never from env_file. So the
+# selection happens here, once, at container start.
 set -eu
 
 : "${AGENT:?AGENT must be set (aoi|nyla|yua|party)}"

@@ -7,7 +7,7 @@
 # `${VAR}` in an `environment:` block interpolates from the shell and .env,
 # never from env_file, so it would silently resolve to "".
 x-agent-common: &agent-common
-  image: openclaw-livekit-agent:latest
+  image: voice-agent:latest
   env_file: [secrets/livekit-agents.env]
   depends_on: [livekit-server]
   restart: unless-stopped
@@ -25,28 +25,28 @@ x-agent-env: &agent-env
 services:
   agent-aoi:
     <<: *agent-common
-    container_name: openclaw-agent-aoi
+    container_name: voice-agent-aoi
     environment:
       <<: *agent-env
       AGENT: aoi
 
   agent-nyla:
     <<: *agent-common
-    container_name: openclaw-agent-nyla
+    container_name: voice-agent-nyla
     environment:
       <<: *agent-env
       AGENT: nyla
 
   agent-yua:
     <<: *agent-common
-    container_name: openclaw-agent-yua
+    container_name: voice-agent-yua
     environment:
       <<: *agent-env
       AGENT: yua
 
   agent-party:
     <<: *agent-common
-    container_name: openclaw-agent-party
+    container_name: voice-agent-party
     environment:
       <<: *agent-env
       AGENT: party

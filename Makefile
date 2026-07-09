@@ -1,4 +1,4 @@
-# OpenClaw LiveKit — operational verbs.
+# LiveKit voice — operational verbs.
 #
 # Prefer `make <target>` over invoking scripts/ directly; the Makefile is
 # the stable public surface. Scripts can change; these names don't.
@@ -30,7 +30,7 @@ up: ## docker compose up -d + auto-register SIP routing (idempotent self-heal)
 	docker compose up -d
 	@printf "[up] waiting for redis + livekit-server... "
 	@for i in $$(seq 1 15); do \
-	  if docker exec openclaw-redis redis-cli ping >/dev/null 2>&1; then echo "ready"; break; fi; \
+	  if docker exec voice-redis redis-cli ping >/dev/null 2>&1; then echo "ready"; break; fi; \
 	  sleep 1; \
 	done
 	@sleep 2
@@ -80,7 +80,7 @@ loki-smoke: ## Query Grafana/Loki for post-smoke-test failures (requires GRAFANA
 # This project ships traces / logs / metrics over OTLP/HTTP to the
 # configured OTLP backend (for example Grafana + Loki + Tempo + Mimir
 # behind an OTel Collector). The collector is NOT in this compose.
-# Configure the agents via OPENCLAW_OTLP_ENDPOINT (default example:
+# Configure the agents via VOICE_OTLP_ENDPOINT (default example:
 # http://localhost:4318/v1/traces). See docs/OBSERVABILITY.md.
 
 # ---- Host-side OTel Collector (hostmetrics + dockerstats + httpcheck + filelog)

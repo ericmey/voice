@@ -30,12 +30,6 @@ class AgentConfig:
             where delegated work results should post when the voice agent
             delegates with ``deliver_to="room"``. Typically the agent's
             own Discord channel.
-        allowed_delegation_targets: Optional whitelist of agent ids this
-            voice agent may delegate to via ``openclaw_delegate``.
-            ``None`` means no restriction (household
-            router behavior — Nyla's default). A frozenset means any
-            ``agent_id`` outside the set is rejected with an error
-            message rather than firing.
         musubi_v2_namespace: Two-segment ``<agent>/<channel>`` prefix
             (Musubi ADR 0030 agent-as-tenant form) used by the canonical
             Musubi tools (``musubi_search`` / ``musubi_recent`` /
@@ -65,7 +59,6 @@ class AgentConfig:
     agent_name: str
     memory_agent_tag: str
     discord_room: str
-    allowed_delegation_targets: frozenset[str] | None = None
     musubi_v2_namespace: str | None = None
     musubi_v2_presence: str | None = None
     household_presences: tuple[str, ...] = ()
@@ -73,7 +66,6 @@ class AgentConfig:
 
 # Default config preserves the pre-AgentConfig behavior: tag everything
 # as Nyla-voice, deliver room-targeted work to Nyla's channel, no
-# delegation restrictions.
 #
 # WARNING: this is the class-level fallback on every mixin. If a new
 # agent forgets to set its own ``config``, it will silently pollute
@@ -83,5 +75,4 @@ NYLA_DEFAULT_CONFIG = AgentConfig(
     agent_name="nyla",
     memory_agent_tag="nyla-voice",
     discord_room=NYLA_DISCORD_ROOM,
-    allowed_delegation_targets=None,
 )

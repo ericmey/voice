@@ -17,8 +17,7 @@ run the extraction. Subprocess (not asyncio task) because the LiveKit
 worker process tears down after the job ends, killing any in-flight
 coroutines on its event loop — which silently lost extractions on short
 calls. The subprocess survives parent shutdown and runs to completion
-in its own process group, just like the Rin QC review (see
-:mod:`sdk.cli_spawner`).
+in its own process group.
 
 Failure modes:
 - ``LIVEKIT_VOICE_LOGS`` unset → no-op (no transcript path to read).
@@ -53,7 +52,7 @@ from .musubi_v2_client import (
 )
 from .trace import trace
 
-logger = logging.getLogger("openclaw-livekit.agent")
+logger = logging.getLogger("voice.agent")
 
 
 # --- controlled vocabulary --------------------------------------------------
@@ -216,7 +215,7 @@ def _validate_memory(raw: Any) -> ExtractedMemory | None:
 # Status hints emitted by `_extract_memories` so the caller's
 # completion log distinguishes "Gemini auth broke" from "transcript was
 # genuinely empty" — the conflation that hid the 2026-05-15 voice-path
-# silent-loss for three days (see openclaw-livekit#29).
+# silent-loss for three days (see #29).
 #
 # `extracted` = memories list non-empty, capture step runs next.
 # `empty_extraction` = valid transcript reached Gemini, Gemini returned
@@ -227,7 +226,7 @@ def _validate_memory(raw: Any) -> ExtractedMemory | None:
 # `no_api_key` = GEMINI_API_KEY / GOOGLE_API_KEY unset.
 # `auth_failed` = Gemini returned 401 / 403 / UNAUTHENTICATED. The
 #   typical credential-rotation-not-propagated failure (see
-#   wiki/gotchas/openclaw-livekit-deploy-traps §1).
+#   wiki/gotchas/voice-deploy-traps §1).
 # `transport_failed` = catch-all non-auth Gemini call failure (network
 #   error, timeout, connection refused, unexpected SDK-side exception).
 #   The provider may or may not have been reached — distinguishing them
@@ -256,7 +255,7 @@ class ExtractionResult:
     ``status`` field carries the cause when ``memories`` is empty so
     the completion-log line can distinguish auth failure from
     genuine no-extraction (the silent-loss class fixed in
-    openclaw-livekit#29).
+    #29).
     """
 
     memories: list[ExtractedMemory]
@@ -416,7 +415,7 @@ async def run_extraction(
         - ``no_transcript_text`` (file present, body whitespace-only)
         - ``no_api_key`` (GEMINI_API_KEY/GOOGLE_API_KEY unset)
         - ``auth_failed`` (Gemini 401/403 — most often a stale key
-          per wiki/gotchas/openclaw-livekit-deploy-traps §1)
+          per wiki/gotchas/voice-deploy-traps §1)
         - ``transport_failed`` (Gemini network/timeout error)
         - ``parse_failed`` (Gemini returned non-JSON or wrong shape)
         - ``empty_extraction`` (Gemini reached + parsed but produced
@@ -425,7 +424,7 @@ async def run_extraction(
           succeeded)
         - ``no_captures`` (memories extracted but every capture failed)
 
-        Pre-openclaw-livekit#29, ``auth_failed`` / ``transport_failed`` /
+        Pre-#29, ``auth_failed`` / ``transport_failed`` /
         ``parse_failed`` / ``empty_extraction`` all logged as
         ``empty_extraction`` — silently hid the 2026-05-15 voice path
         breakage for three days.

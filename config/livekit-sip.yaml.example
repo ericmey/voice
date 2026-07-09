@@ -1,7 +1,7 @@
 # livekit-sip configuration.
 #
 # Copy to config/livekit-sip.yaml (gitignored) before starting the
-# openclaw-livekit-sip container. Keys here must match the ones in
+# voice-livekit-sip container. Keys here must match the ones in
 # livekit.yaml — the sip process authenticates to livekit-server with them.
 
 log_level: info

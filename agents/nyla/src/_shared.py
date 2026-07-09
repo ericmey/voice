@@ -70,7 +70,6 @@ NYLA_CONFIG = AgentConfig(
     agent_name="nyla",
     memory_agent_tag="nyla-voice",
     discord_room=NYLA_DISCORD_ROOM,
-    allowed_delegation_targets=None,
     musubi_v2_namespace="nyla/voice",
     musubi_v2_presence="nyla/voice",
     household_presences=HOUSEHOLD_VOICE_PRESENCES,
@@ -78,7 +77,7 @@ NYLA_CONFIG = AgentConfig(
 
 
 class NylaAgent(HouseholdToolsMixin, BaseRealtimeAgent):
-    """Nyla with all OpenClaw platform tools + household survey."""
+    """Nyla with the core + Musubi tool set and the household survey."""
 
     config = NYLA_CONFIG
 

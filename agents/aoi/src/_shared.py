@@ -36,25 +36,10 @@ _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 #: (she doesn't have her own channel yet); swap ``discord_room`` when
 #: Eric carves one out. Memory goes to the aoi-voice bucket so her
 #: stored context is separable from Nyla's.
-#:
-#: Delegation allowlist is the tight version matching her prompt: she
-#: routes research to Yumi, ops to Rin, spawns herself (``aoi``) for
-#: long-running code work, and can kick things back to Nyla for
-#: household routing. Inbox / email is NOT on the list — those
-#: conversations belong with Nyla, who routes them to Momo. Creative
-#: and image work (hana, tama) likewise off-list per her prompt.
 AOI_CONFIG = AgentConfig(
     agent_name="aoi",
     memory_agent_tag="aoi-voice",
     discord_room=NYLA_DISCORD_ROOM,
-    allowed_delegation_targets=frozenset(
-        {
-            "yumi",  # research / planning (her prompt's explicit default)
-            "rin",  # ops / health checks (her prompt's explicit default)
-            "aoi",  # spawn herself for long-running code work
-            "nyla",  # hand back to the household router on explicit ask
-        }
-    ),
     # Canonical Musubi under agent-as-tenant (ADR 0030): Aoi writes to
     # ``aoi/voice/*`` and surveys the same household list as Nyla.
     musubi_v2_namespace="aoi/voice",
@@ -79,7 +64,7 @@ AOI_CONFIG = AgentConfig(
 
 
 class AoiAgent(HouseholdToolsMixin, BaseRealtimeAgent):
-    """Aoi with all OpenClaw platform tools + household survey."""
+    """Aoi with the core + Musubi tool set and the household survey."""
 
     config = AOI_CONFIG
 

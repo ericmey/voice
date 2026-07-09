@@ -1,4 +1,4 @@
-# OpenClaw LiveKit infrastructure.
+# LiveKit voice infrastructure.
 #
 # Orchestrates the container-side services: livekit-server (WebRTC signaling +
 # TURN), livekit-sip (SIP trunk to Twilio, room dispatch), livekit-egress
@@ -29,7 +29,7 @@
 services:
   redis:
     image: redis:7-alpine
-    container_name: openclaw-redis
+    container_name: voice-redis
     restart: unless-stopped
     # Persistent across container restarts so SIP trunk + dispatch-rule
     # state survives Docker Desktop updates, host reboot, power loss.
@@ -50,7 +50,7 @@ services:
 
   livekit-server:
     image: livekit/livekit-server:v1.10.1
-    container_name: openclaw-livekit-server
+    container_name: voice-livekit-server
     restart: unless-stopped
     depends_on:
       - redis
@@ -67,7 +67,7 @@ services:
 
   livekit-sip:
     image: livekit/sip:v1.2.0
-    container_name: openclaw-livekit-sip
+    container_name: voice-livekit-sip
     restart: unless-stopped
     depends_on:
       - redis
@@ -82,7 +82,7 @@ services:
 
   livekit-egress:
     image: livekit/egress:v1.12.0
-    container_name: openclaw-livekit-egress
+    container_name: voice-livekit-egress
     restart: unless-stopped
     depends_on:
       - redis
@@ -102,10 +102,10 @@ services:
 # this compose file; run your own local collector/LGTM stack or point at
 # a hosted OTLP backend.
 #
-# Agents flip on by setting OPENCLAW_OTEL_ENABLED=true and
-# OPENCLAW_OTLP_ENDPOINT=http://localhost:4318/v1/traces in
+# Agents flip on by setting VOICE_OTEL_ENABLED=true and
+# VOICE_OTLP_ENDPOINT=http://localhost:4318/v1/traces in
 # secrets/livekit-agents.env. Logs ship through the same OTLP endpoint
-# via OTLPLogExporter when OPENCLAW_OTEL_LOGS_ENABLED=true.
+# via OTLPLogExporter when VOICE_OTEL_LOGS_ENABLED=true.
 
 # Named volume for persistent Redis state. Survives container recreation
 # and Docker Desktop updates. Wiped only by `docker compose down -v`.

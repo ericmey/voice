@@ -69,25 +69,25 @@ class TestAgentClass:
         assert hasattr(agent, "household_status")
 
     def test_active_tools_present(self, agent_module):
-        """Tools currently exposed to the voice model. schedule_callback
-        is deliberately OFF this list — the cron path isn't wired; see
-        SDK TODO.md for the re-enable plan."""
+        """Tools currently exposed to the voice model."""
         agent = agent_module.AoiAgent(instructions="test")
         expected = [
             "get_current_time",
             "get_weather",
             "musubi_recent",
             "musubi_remember",
-            "openclaw_delegate",
             "household_status",
         ]
         for tool in expected:
             assert hasattr(agent, tool), f"Missing tool: {tool}"
 
-    def test_openclaw_request_absent(self, agent_module):
+    def test_retired_gateway_tools_absent(self, agent_module):
+        """The OpenClaw gateway is gone. A prompt that promises a tool the
+        runtime does not register is a fabrication generator."""
         agent = agent_module.AoiAgent(instructions="test")
-        attr = getattr(agent, "openclaw_request", None)
-        assert not callable(attr), "openclaw_request was deleted in SDK cleanup"
+        for name in ("openclaw_request", "openclaw_delegate", "sessions_send",
+                     "sessions_spawn", "schedule_callback"):
+            assert getattr(agent, name, None) is None, f"{name} is back"
 
     def test_config_is_aoi_identity(self, agent_module):
         """Aoi's config must tag memories to aoi-voice and set her own agent name."""
@@ -96,20 +96,10 @@ class TestAgentClass:
         assert cfg.memory_agent_tag == "aoi-voice"
         assert cfg.discord_room.startswith("channel:")
 
-    def test_config_delegation_allowlist_matches_persona(self, agent_module):
-        """Aoi's prompt commits to specific default routing — research to
-        Yumi, ops to Rin, code to herself, handoff to Nyla. Inbox / email
-        is deliberately OFF the list (those conversations belong with
-        Nyla, who routes them to Momo). Creative/image work (Hana, Tama)
-        is also off so she's forced to route those back through Nyla
-        instead of doing them."""
+    def test_config_has_no_delegation_allowlist(self, agent_module):
+        """Delegation retired with the gateway; the allowlist went with it."""
         cfg = agent_module.AoiAgent.config
-        allowed = cfg.allowed_delegation_targets
-        assert allowed is not None, "Aoi should have a bounded delegation set"
-        assert {"yumi", "rin", "aoi", "nyla"} <= allowed
-        assert "momo" not in allowed
-        assert "hana" not in allowed
-        assert "tama" not in allowed
+        assert not hasattr(cfg, "allowed_delegation_targets")
 
 
 class TestPersona:

@@ -4,13 +4,11 @@ import pytest
 from livekit.agents import Agent
 from tools.core import CoreToolsMixin
 from tools.memory import MemoryToolsMixin
-from tools.sessions import SessionsToolsMixin
 
 
 class ComposedAgent(
     CoreToolsMixin,
     MemoryToolsMixin,
-    SessionsToolsMixin,
     Agent,
 ):
     """Test agent with all mixins composed."""

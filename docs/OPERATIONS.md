@@ -34,8 +34,8 @@ shutdown noise in Loki.
 ### Deploy a fresh machine
 
 ```bash
-git clone <repo-url> openclaw-livekit
-cd openclaw-livekit
+git clone <repo-url> voice
+cd voice
 make bootstrap                  # installs deps, drops config templates
 
 # Edit the files bootstrap drops in ./config/ and
@@ -71,12 +71,12 @@ Voice agents delegate outside work through OpenClaw Gateway hooks, not
 the `openclaw` CLI. Set these in `secrets/livekit-agents.env`:
 
 ```bash
-OPENCLAW_HOOK_TOKEN=<dedicated Gateway hooks token>
-OPENCLAW_GATEWAY_HTTP_URL=http://127.0.0.1:18789
-OPENCLAW_HOOKS_PATH=/hooks
+VOICE_HOOK_TOKEN=<dedicated Gateway hooks token>
+VOICE_GATEWAY_HTTP_URL=http://127.0.0.1:18789
+VOICE_HOOKS_PATH=/hooks
 ```
 
-Keep `OPENCLAW_HOOK_TOKEN` distinct from `GATEWAY_AUTH_TOKEN`. On the
+Keep `VOICE_HOOK_TOKEN` distinct from `GATEWAY_AUTH_TOKEN`. On the
 OpenClaw side, enable hooks and constrain `hooks.allowedAgentIds` to the
 agents the phone stack may route to.
 

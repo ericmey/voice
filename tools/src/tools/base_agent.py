@@ -19,9 +19,8 @@ from sdk.env import load_env
 
 from tools.core import CoreToolsMixin
 from tools.memory import MusubiToolsMixin
-from tools.sessions import SessionsToolsMixin
 
-logger = logging.getLogger("openclaw-livekit.agent")
+logger = logging.getLogger("voice.agent")
 
 # --- env -----------------------------------------------------------------
 _env_loaded = False
@@ -52,7 +51,6 @@ def load_persona(prompts_dir: Path) -> str:
 class BaseRealtimeAgent(
     CoreToolsMixin,
     MusubiToolsMixin,
-    SessionsToolsMixin,
     Agent,
 ):
     """Base class for realtime Gemini-native-audio voice agents.

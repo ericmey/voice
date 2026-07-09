@@ -12,7 +12,7 @@ from livekit.agents import AgentSession
 
 from .trace import trace
 
-logger = logging.getLogger("openclaw-livekit.agent")
+logger = logging.getLogger("voice.agent")
 
 
 def _transcript_dir() -> Path | None:

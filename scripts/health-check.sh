@@ -53,7 +53,7 @@ record() {
 launchd_pid() {
   local agent="$1"
   launchctl list 2>/dev/null \
-    | awk -v lbl="ai.openclaw.livekit-agent-${agent}" '$3 == lbl {print $1; exit}'
+    | awk -v lbl="ai.voice.livekit-agent-${agent}" '$3 == lbl {print $1; exit}'
 }
 
 # ---- redis ---------------------------------------------------------
@@ -61,14 +61,14 @@ if command -v redis-cli >/dev/null 2>&1 \
   && redis-cli -h 127.0.0.1 -p 6379 ping 2>/dev/null | grep -q PONG; then
   record "redis" ok "PONG via host redis-cli"
 elif command -v docker >/dev/null 2>&1 \
-  && docker exec openclaw-redis redis-cli ping 2>/dev/null | grep -q PONG; then
-  record "redis" ok "PONG via openclaw-redis container"
+  && docker exec voice-redis redis-cli ping 2>/dev/null | grep -q PONG; then
+  record "redis" ok "PONG via voice-redis container"
 else
-  record "redis" fail "no PONG via host redis-cli or openclaw-redis container"
+  record "redis" fail "no PONG via host redis-cli or voice-redis container"
 fi
 
 # ---- livekit-server -----------------------------------------------
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx openclaw-livekit-server; then
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx voice-livekit-server; then
   if curl -fsS --max-time 3 http://127.0.0.1:7880/ >/dev/null 2>&1; then
     record "livekit-server" ok "container up, :7880 responding"
   else
@@ -79,14 +79,14 @@ else
 fi
 
 # ---- livekit-sip --------------------------------------------------
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx openclaw-livekit-sip; then
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx voice-livekit-sip; then
   record "livekit-sip" ok "container up"
 else
   record "livekit-sip" fail "container not running"
 fi
 
 # ---- livekit-egress -----------------------------------------------
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx openclaw-livekit-egress; then
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx voice-livekit-egress; then
   record "livekit-egress" ok "container up"
 else
   record "livekit-egress" fail "container not running"

@@ -35,7 +35,7 @@ from sdk.trace import trace
 
 from tools.memory import _format_row
 
-logger = logging.getLogger("openclaw-livekit.agent")
+logger = logging.getLogger("voice.agent")
 
 _DEGRADED_TRANSIENT = "Couldn't check household status — Musubi is unavailable right now."
 _DEGRADED_HARD = "Couldn't check household status — access denied or misconfigured."

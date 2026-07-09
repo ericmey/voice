@@ -452,7 +452,7 @@ async def test_run_extraction_auth_failure_logs_distinct_status(
     `auth_failed` status → `run_extraction` propagates it to the
     completion log line as `status=auth_failed`, NOT `status=empty_extraction`.
 
-    Pre-openclaw-livekit#29, this same scenario logged
+    Pre-#29, this same scenario logged
     `status=empty_extraction`, indistinguishable from a genuinely
     uneventful call. If this assertion ever breaks, the silent-loss
     class is back.
@@ -476,7 +476,7 @@ async def test_run_extraction_auth_failure_logs_distinct_status(
     mock_genai_client.models = mock_models
 
     with (
-        caplog.at_level(logging.INFO, logger="openclaw-livekit.agent"),
+        caplog.at_level(logging.INFO, logger="voice.agent"),
         patch("sdk.postcall_memory.genai.Client", return_value=mock_genai_client),
     ):
         captured = await run_extraction(

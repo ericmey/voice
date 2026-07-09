@@ -14,26 +14,26 @@ def test_recording_dirs_default_under_voice_logs(monkeypatch, tmp_path) -> None:
 
 
 def test_enabled_when_env_true(monkeypatch) -> None:
-    monkeypatch.setenv("OPENCLAW_RECORD_AUDIO", "true")
+    monkeypatch.setenv("VOICE_RECORD_AUDIO", "true")
     assert audio_recording._enabled() is True
 
 
 def test_enabled_default_false(monkeypatch) -> None:
-    monkeypatch.delenv("OPENCLAW_RECORD_AUDIO", raising=False)
+    monkeypatch.delenv("VOICE_RECORD_AUDIO", raising=False)
     assert audio_recording._enabled() is False
 
 
 def test_enabled_legacy_alias_no_longer_honored(monkeypatch) -> None:
     """LANGSMITH_ATTACH_AUDIO was retired alongside the OTel refactor.
-    Operators must use OPENCLAW_RECORD_AUDIO; the old alias is silently
+    Operators must use VOICE_RECORD_AUDIO; the old alias is silently
     ignored so a stale .env file can't accidentally re-enable recording."""
-    monkeypatch.delenv("OPENCLAW_RECORD_AUDIO", raising=False)
+    monkeypatch.delenv("VOICE_RECORD_AUDIO", raising=False)
     monkeypatch.setenv("LANGSMITH_ATTACH_AUDIO", "true")
     assert audio_recording._enabled() is False
 
 
 def test_public_audio_url_when_base_set(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("OPENCLAW_AUDIO_PUBLIC_BASE_URL", "https://media.example/recordings/")
+    monkeypatch.setenv("VOICE_AUDIO_PUBLIC_BASE_URL", "https://media.example/recordings/")
     rec = audio_recording.CallAudioRecording(
         call_sid="SCL_1",
         agent_name="nyla",
@@ -50,7 +50,7 @@ def test_public_audio_url_when_base_set(monkeypatch, tmp_path) -> None:
 
 
 def test_public_audio_url_returns_none_without_base(monkeypatch, tmp_path) -> None:
-    monkeypatch.delenv("OPENCLAW_AUDIO_PUBLIC_BASE_URL", raising=False)
+    monkeypatch.delenv("VOICE_AUDIO_PUBLIC_BASE_URL", raising=False)
     rec = audio_recording.CallAudioRecording(
         call_sid="SCL_1",
         agent_name="nyla",

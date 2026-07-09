@@ -23,7 +23,7 @@ from typing import Literal
 from livekit import rtc
 from livekit.agents import JobContext
 
-logger = logging.getLogger("openclaw-livekit.telephony")
+logger = logging.getLogger("voice.telephony")
 
 # Default wait budget for a SIP participant to show up after the agent
 # joins the room. In practice SIP participants arrive before the agent

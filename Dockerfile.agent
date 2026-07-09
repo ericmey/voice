@@ -1,4 +1,4 @@
-# openclaw-livekit voice agent — one image, agent selected at runtime.
+# LiveKit voice agent — one image, agent selected at runtime.
 FROM python:3.12-slim
 
 # build deps for native wheels (livekit, grpc, audio libs)

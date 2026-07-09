@@ -21,7 +21,7 @@ BGE-M3), so the client's job is just to shape requests + handle auth +
 translate errors into typed exceptions the tool layer can reason about.
 
 Transport: aiohttp to match the rest of this repo's async HTTP posture
-(see `musubi_client.py`, `gateway_client.py`). Per-call timeout defaults
+(see `musubi_client.py`). Per-call timeout defaults
 to `MUSUBI_V2_TIMEOUT_S` (2s) — a voice tool can't wait longer and still
 feel responsive; the tool layer catches the timeout and degrades.
 """
@@ -37,7 +37,7 @@ from typing import Any
 
 import aiohttp
 
-logger = logging.getLogger("openclaw-livekit.musubi-v2")
+logger = logging.getLogger("voice.musubi-v2")
 
 # Environment-driven so the same wheel runs against local/dev/prod
 # Musubi instances without code changes. `MUSUBI_V2_*` namespace keeps

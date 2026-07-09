@@ -5,7 +5,7 @@ In production, the launchd plist exports all vars directly before
 spawning the worker, so .env files are a dev-mode convenience.
 
 Also wires OTel tracing for an OTLP/HTTP backend if
-``OPENCLAW_OTEL_ENABLED=true`` — the
+``VOICE_OTEL_ENABLED=true`` — the
 hook lives here because every agent calls ``load_env()`` at module
 top, before LiveKit's ``AgentServer`` is instantiated. LiveKit caches
 the tracer provider at server-construction time; missing this window
@@ -35,6 +35,6 @@ def load_env() -> None:
     if not os.environ.get("ELEVEN_API_KEY") and os.environ.get("ELEVENLABS_API_KEY"):
         os.environ["ELEVEN_API_KEY"] = os.environ["ELEVENLABS_API_KEY"]
 
-    # No-op when OPENCLAW_OTEL_ENABLED is unset or false — keeps unit
+    # No-op when VOICE_OTEL_ENABLED is unset or false — keeps unit
     # tests and CI hermetic. Idempotent across re-imports.
     setup_otel_tracing()

@@ -5,7 +5,7 @@ exposes the resulting file path/URL as an OTel span attribute so any
 backend (Grafana/Tempo, Phoenix, Datadog, ...) can link the call run to its
 recording without a vendor-specific upload SDK.
 
-Enable with ``OPENCLAW_RECORD_AUDIO=true``.
+Enable with ``VOICE_RECORD_AUDIO=true``.
 
 The agent entrypoint calls :func:`start_call_audio_recording` after
 ``ctx.connect``, :func:`annotate_call_audio_recording` immediately after
@@ -19,7 +19,7 @@ Where to listen to the audio:
   ``logs/voice/recordings``) is the host-mounted directory egress
   writes to. Files appear at
   ``<host_dir>/<agent>/<call_sid>.<ext>``.
-* If you set ``OPENCLAW_AUDIO_PUBLIC_BASE_URL`` (e.g.
+* If you set ``VOICE_AUDIO_PUBLIC_BASE_URL`` (e.g.
   ``http://my-host:8090/recordings``), the span attribute becomes a
   clickable URL instead of a file path. Stand up a tiny static-file
   server pointed at the host recordings dir to enable click-to-listen
@@ -39,7 +39,7 @@ from typing import Any
 
 from .trace import trace
 
-logger = logging.getLogger("openclaw-livekit.agent")
+logger = logging.getLogger("voice.agent")
 
 
 @dataclass
@@ -55,8 +55,8 @@ class CallAudioRecording:
 
 
 def _enabled() -> bool:
-    """Audio recording is opt-in via ``OPENCLAW_RECORD_AUDIO=true``."""
-    return os.environ.get("OPENCLAW_RECORD_AUDIO", "").lower() in ("true", "1", "yes")
+    """Audio recording is opt-in via ``VOICE_RECORD_AUDIO=true``."""
+    return os.environ.get("VOICE_RECORD_AUDIO", "").lower() in ("true", "1", "yes")
 
 
 def _voice_logs_dir() -> Path:
@@ -95,7 +95,7 @@ def _public_audio_url(recording: CallAudioRecording) -> str | None:
     file server in front of the recordings dir. Without one, span
     attributes carry the raw filesystem path instead.
     """
-    base = os.environ.get("OPENCLAW_AUDIO_PUBLIC_BASE_URL", "").rstrip("/")
+    base = os.environ.get("VOICE_AUDIO_PUBLIC_BASE_URL", "").rstrip("/")
     if not base:
         return None
     return f"{base}/{recording.agent_name}/{recording.host_path.name}"
@@ -204,14 +204,14 @@ def _annotate_active_span(recording: CallAudioRecording) -> None:
     span = otel_trace.get_current_span()
     if span is None or not span.is_recording():
         return
-    span.set_attribute("openclaw.audio.call_sid", recording.call_sid)
-    span.set_attribute("openclaw.audio.path", str(recording.host_path))
-    span.set_attribute("openclaw.audio.mime_type", recording.mime_type)
+    span.set_attribute("voice.audio.call_sid", recording.call_sid)
+    span.set_attribute("voice.audio.path", str(recording.host_path))
+    span.set_attribute("voice.audio.mime_type", recording.mime_type)
     if recording.egress_id:
-        span.set_attribute("openclaw.audio.egress_id", recording.egress_id)
+        span.set_attribute("voice.audio.egress_id", recording.egress_id)
     public_url = _public_audio_url(recording)
     if public_url:
-        span.set_attribute("openclaw.audio.url", public_url)
+        span.set_attribute("voice.audio.url", public_url)
 
 
 def annotate_call_audio_recording(recording: CallAudioRecording | None) -> None:

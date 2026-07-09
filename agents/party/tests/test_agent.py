@@ -73,16 +73,13 @@ class TestAgentClass:
         assert not hasattr(agent, "household_status")
 
     def test_active_tools_present(self, agent_module):
-        """Tools currently exposed to the voice model. schedule_callback
-        is deliberately OFF this list — the cron path isn't wired; see
-        SDK TODO.md for the re-enable plan."""
+        """Tools currently exposed to the voice model."""
         agent = agent_module.PartyAgent(instructions="test")
         expected = [
             "get_current_time",
             "get_weather",
             "musubi_recent",
             "musubi_remember",
-            "openclaw_delegate",
         ]
         for tool in expected:
             assert hasattr(agent, tool), f"Missing tool: {tool}"
@@ -90,10 +87,13 @@ class TestAgentClass:
     def test_chained_llm_model_is_current_gemini_lite(self, agent_module):
         assert agent_module._CHAINED_LLM_MODEL == "gemini-3.1-flash-lite-preview"
 
-    def test_openclaw_request_absent(self, agent_module):
+    def test_retired_gateway_tools_absent(self, agent_module):
+        """The OpenClaw gateway is gone. A prompt that promises a tool the
+        runtime does not register is a fabrication generator."""
         agent = agent_module.PartyAgent(instructions="test")
-        attr = getattr(agent, "openclaw_request", None)
-        assert not callable(attr), "openclaw_request was deleted in SDK cleanup"
+        for name in ("openclaw_request", "openclaw_delegate", "sessions_send",
+                     "sessions_spawn", "schedule_callback"):
+            assert getattr(agent, name, None) is None, f"{name} is back"
 
 
 class TestPersona:

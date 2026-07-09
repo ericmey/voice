@@ -1,7 +1,7 @@
 # livekit-egress configuration.
 #
 # Copy to config/livekit-egress.yaml (gitignored) before starting the
-# openclaw-livekit-egress container. Keys here must match livekit.yaml.
+# voice-livekit-egress container. Keys here must match livekit.yaml.
 # The egress container writes local recordings to /recordings, which
 # docker-compose bind-mounts to ./logs/voice/recordings on the host.
 

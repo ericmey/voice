@@ -69,45 +69,25 @@ class TestAgentClass:
         assert hasattr(agent, "household_status")
 
     def test_active_tools_present(self, agent_module):
-        """Tools currently exposed to the voice model. schedule_callback
-        is deliberately OFF this list — the cron path isn't wired; see
-        SDK TODO.md for the re-enable plan."""
+        """Tools currently exposed to the voice model."""
         agent = agent_module.NylaAgent(instructions="test")
         expected = [
             "get_current_time",
             "get_weather",
             "musubi_recent",
             "musubi_remember",
-            "openclaw_delegate",
             "household_status",
         ]
         for tool in expected:
             assert hasattr(agent, tool), f"Missing tool: {tool}"
 
-    def test_schedule_callback_is_not_a_tool(self, agent_module):
-        """Disabled while the cron payload redesign is open. The method
-        body still exists for guardrail tests to call directly, but it
-        must NOT be @function_tool-decorated so the voice model can't
-        discover or fire it.
-
-        Compare against openclaw_delegate — that one IS decorated and
-        becomes a FunctionTool instance; schedule_callback stays a
-        plain coroutine function so LiveKit's tool scanner skips it.
-        """
-        import inspect
-
-        send = agent_module.NylaAgent.openclaw_delegate
-        callback = agent_module.NylaAgent.schedule_callback
-        # The enabled tool is a FunctionTool wrapper.
-        assert type(send).__name__ == "FunctionTool"
-        # The disabled method is a plain coroutine function.
-        assert inspect.iscoroutinefunction(callback)
-        assert type(callback).__name__ == "function"
-
-    def test_openclaw_request_absent(self, agent_module):
+    def test_retired_gateway_tools_absent(self, agent_module):
+        """The OpenClaw gateway is gone. A prompt that promises a tool the
+        runtime does not register is a fabrication generator."""
         agent = agent_module.NylaAgent(instructions="test")
-        attr = getattr(agent, "openclaw_request", None)
-        assert not callable(attr), "openclaw_request was deleted in SDK cleanup"
+        for name in ("openclaw_request", "openclaw_delegate", "sessions_send",
+                     "sessions_spawn", "schedule_callback"):
+            assert getattr(agent, name, None) is None, f"{name} is back"
 
     def test_config_is_nyla_identity(self, agent_module):
         """Nyla's config tags memories as nyla-voice and sets her name/room."""
@@ -115,8 +95,6 @@ class TestAgentClass:
         assert cfg.agent_name == "nyla"
         assert cfg.memory_agent_tag == "nyla-voice"
         assert cfg.discord_room.startswith("channel:")
-        # Nyla is the household router — she may delegate to anyone.
-        assert cfg.allowed_delegation_targets is None
 
     def test_voice_is_aoede(self):
         from _shared import NYLA_VOICE

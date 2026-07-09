@@ -1,4 +1,4 @@
-# openclaw-livekit
+# voice
 
 Monorepo for the OpenClaw voice stack: SIP trunking, realtime voice agents, and
 the operations layer that wires them together.
@@ -6,7 +6,7 @@ the operations layer that wires them together.
 ## What's in here
 
 ```
-openclaw-livekit/
+voice/
 ├── pyproject.toml                 uv workspace root + ruff/pyright config
 ├── docker-compose.yaml            livekit-server + livekit-sip + redis
 ├── config/                        live configs (bootstrap copies .example files here)
@@ -43,9 +43,9 @@ Before trying to run it, have these pieces at hand:
 | SIP provider | A DID/trunk provider such as Twilio | `config/sip-*.json`, [docs/twilio-trunk.md](docs/twilio-trunk.md) |
 | Agents | Personas, prompts, voices, models | `agents/*`, `scripts/deploy-agents.sh` |
 | Tools | Function tools the voice model may call | `tools/src/tools/`, [tools/README.md](tools/README.md) |
-| OpenClaw | Optional Gateway hook target for async delegation | `OPENCLAW_HOOK_*`, [OpenClaw](https://github.com/openclaw/openclaw) |
+| OpenClaw | Optional Gateway hook target for async delegation | `VOICE_HOOK_*`, [OpenClaw](https://github.com/openclaw/openclaw) |
 | Musubi | Optional memory/presence service | `MUSUBI_V2_*`, [Musubi](https://github.com/ericmey/musubi) |
-| Telemetry | Any OTLP/HTTP backend or collector | `OPENCLAW_OTLP_*`, [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) |
+| Telemetry | Any OTLP/HTTP backend or collector | `VOICE_OTLP_*`, [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) |
 | macOS supervisor | launchd runs the Python agents | `config/launchd/`, `make deploy`, `make cycle` |
 
 See [docs/BRING-YOUR-OWN-STACK.md](docs/BRING-YOUR-OWN-STACK.md) for the
@@ -71,8 +71,8 @@ and `make deploy` to apply the stack.
 ## Quickstart
 
 ```bash
-git clone <repo-url> openclaw-livekit
-cd openclaw-livekit
+git clone <repo-url> voice
+cd voice
 
 # First time on a new machine
 make bootstrap

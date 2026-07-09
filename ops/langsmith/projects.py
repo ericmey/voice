@@ -32,7 +32,7 @@ class ProjectSettings(TypedDict):
 
 PROJECT_SETTINGS: ProjectSettings = {
     "description": (
-        "OpenClaw LiveKit voice agents — realtime traces from Nyla, Aoi, and Party. "
+        "LiveKit voice agents — realtime traces from Nyla, Aoi, and Party. "
         "LiveKit Agents 1.5+ emits gen_ai.* semantic-convention attributes natively "
         "(input_tokens, output_tokens, ttft, model). The previous custom enricher "
         "(sdk/src/sdk/livekit_otel_enricher.py) was removed on 2026-05-01 — see "
@@ -40,7 +40,7 @@ PROJECT_SETTINGS: ProjectSettings = {
     ),
     "metadata": {
         "managed_by": "ops/langsmith/provision.py",
-        "source_repo": "github.com/ericmey/openclaw-livekit",
+        "source_repo": "github.com/ericmey/voice",
         "agents": "nyla,aoi,party",
         "pipeline_shapes": "realtime,chained",
     },
@@ -141,7 +141,7 @@ class AnnotationQueueConfig(TypedDict):
 # auth errors at run time.
 #
 # Source: each entry's ``key`` is looked up in the ``~/.openclaw/.env``
-# file (override via ``OPENCLAW_ENV_PATH``). The actual key VALUE is
+# file (override via ``VOICE_ENV_PATH``). The actual key VALUE is
 # never checked into this repo — only the NAMES we forward.
 #
 # Stored on LangSmith side via POST /api/v1/workspaces/current/secrets.

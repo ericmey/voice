@@ -1,7 +1,7 @@
 # AGENTS.md — runbook for AI coding agents in this monorepo
 
 Generic technical runbook for any AI coding agent (Claude Code, Codex,
-Cursor, Aider, etc.) working in the `openclaw-livekit` monorepo. For
+Cursor, Aider, etc.) working in the `voice` monorepo. For
 Claude-specific repo notes see [CLAUDE.md](CLAUDE.md).
 
 ## Continuous learning (read this first)
@@ -16,7 +16,7 @@ prior entries.
 ## Monorepo layout
 
 ```
-openclaw-livekit/
+voice/
 ├── pyproject.toml                   uv workspace root + ruff/pyright config
 ├── docker-compose.yaml              livekit-server + livekit-sip + redis
 ├── config/                          live configs (bootstrap drops .example → real here)
@@ -160,14 +160,14 @@ The deploy script writes these into each agent's launchd plist from
 | `GATEWAY_AUTH_TOKEN`, `GATEWAY_PORT` | all | Access to the OpenClaw gateway (memory, sessions) |
 | `DISCORD_BOT_TOKEN` | all | Per-agent Discord identity (deploy script maps `DISCORD_TOKEN_<AGENT>` → this) |
 | `LIVEKIT_VOICE_LOGS` | all | Directory for voice logs / telemetry / transcripts |
-| `OPENCLAW_HOOK_TOKEN`, `OPENCLAW_GATEWAY_HTTP_URL`, `OPENCLAW_HOOKS_PATH` | all | OpenClaw Gateway hook delegation config |
-| `OPENCLAW_BIN` | all | Absolute path to the `openclaw` CLI binary for legacy disabled callback code |
+| `VOICE_HOOK_TOKEN`, `VOICE_GATEWAY_HTTP_URL`, `VOICE_HOOKS_PATH` | all | OpenClaw Gateway hook delegation config |
+| `VOICE_BIN` | all | Absolute path to the `openclaw` CLI binary for legacy disabled callback code |
 | `LIVEKIT_AGENT_DRAIN_WAIT_SECONDS`, `LIVEKIT_AGENT_EXIT_TIMEOUT` | deploy scripts | Graceful launchd restart wait/timeout knobs |
-| `OPENCLAW_OTEL_ENABLED` | all | Enables OTel export |
-| `OPENCLAW_OTLP_ENDPOINT`, `OPENCLAW_OTLP_HEADERS` | all | OTLP traces endpoint + optional auth headers |
-| `OPENCLAW_OTEL_LOGS_ENABLED`, `OPENCLAW_OTLP_LOGS_ENDPOINT`, `OPENCLAW_OTLP_LOGS_HEADERS` | all | Optional OTLP logs overrides |
-| `OPENCLAW_OTEL_METRICS_ENABLED`, `OPENCLAW_OTLP_METRICS_ENDPOINT`, `OPENCLAW_OTLP_METRICS_HEADERS` | all | Optional OTLP metrics overrides |
-| `OPENCLAW_RECORD_AUDIO` | all | Enables LiveKit Egress audio recording links |
+| `VOICE_OTEL_ENABLED` | all | Enables OTel export |
+| `VOICE_OTLP_ENDPOINT`, `VOICE_OTLP_HEADERS` | all | OTLP traces endpoint + optional auth headers |
+| `VOICE_OTEL_LOGS_ENABLED`, `VOICE_OTLP_LOGS_ENDPOINT`, `VOICE_OTLP_LOGS_HEADERS` | all | Optional OTLP logs overrides |
+| `VOICE_OTEL_METRICS_ENABLED`, `VOICE_OTLP_METRICS_ENDPOINT`, `VOICE_OTLP_METRICS_HEADERS` | all | Optional OTLP metrics overrides |
+| `VOICE_RECORD_AUDIO` | all | Enables LiveKit Egress audio recording links |
 
 ## References
 

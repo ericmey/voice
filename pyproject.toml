@@ -1,4 +1,4 @@
-# openclaw-livekit — monorepo workspace root.
+# voice — monorepo workspace root.
 #
 # Declares a uv workspace whose members are each Python package in the
 # repo. One root .venv, one uv.lock. Pylance / Pyright / IDE resolve

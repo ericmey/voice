@@ -6,7 +6,7 @@ operator-specific infrastructure.
 
 ## Current State
 
-`openclaw-livekit` is a monorepo for a local LiveKit voice stack:
+`voice` is a monorepo for a local LiveKit voice stack:
 
 - Docker Compose runs the infrastructure tier: `livekit-server`,
   `livekit-sip`, `livekit-egress`, and Redis.
@@ -19,7 +19,7 @@ operator-specific infrastructure.
   (default `./logs/voice/`).
 - Observability is plain OTLP/HTTP. The examples point at placeholder
   collector endpoints; operators should set their own
-  `OPENCLAW_OTLP_*` values in `secrets/livekit-agents.env`.
+  `VOICE_OTLP_*` values in `secrets/livekit-agents.env`.
 
 ## Verification
 

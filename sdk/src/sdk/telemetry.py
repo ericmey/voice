@@ -34,7 +34,7 @@ from livekit.agents import AgentSession
 
 from .trace import trace
 
-logger = logging.getLogger("openclaw-livekit.agent")
+logger = logging.getLogger("voice.agent")
 
 _MODEL_USAGE_FIELDS = (
     "input_tokens",
