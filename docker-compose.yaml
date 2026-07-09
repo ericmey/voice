@@ -27,6 +27,13 @@
 # Bring down: docker compose down
 # Tail logs:  docker compose logs -f
 
+# Compose project name, pinned. Without this it derives from the directory, so
+# renaming the checkout orphans every project-scoped volume — including
+# redis_data, which holds `sip_dispatch_rule` and `sip_inbound_trunk`. Losing
+# those silently breaks inbound phone routing while every container still looks
+# healthy.
+name: voice
+
 services:
   redis:
     image: redis:7-alpine
