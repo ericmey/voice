@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .constants import NYLA_DISCORD_ROOM
-
 
 @dataclass(frozen=True)
 class AgentConfig:
@@ -26,14 +24,10 @@ class AgentConfig:
         memory_agent_tag: Value written into stored Musubi memories'
             ``payload.agent`` field. Separates voice identities so the
             household can filter memories by speaker.
-        discord_room: Discord target (``channel:<id>`` or ``user:<id>``)
-            where delegated work results should post when the voice agent
-            delegates with ``deliver_to="room"``. Typically the agent's
-            own Discord channel.
         musubi_v2_namespace: Two-segment ``<agent>/<channel>`` prefix
             (Musubi ADR 0030 agent-as-tenant form) used by the canonical
             Musubi tools (``musubi_search`` / ``musubi_recent`` /
-            ``musubi_remember`` / ``musubi_think`` / ``musubi_get``) in
+            ``musubi_remember`` / ``musubi_think``) in
             ``tools/memory.py``. The mixin appends the plane segment at
             call time: ``<prefix>/episodic`` for remember/recent,
             ``<prefix>/thought`` for think; ``musubi_search`` widens
@@ -58,7 +52,6 @@ class AgentConfig:
 
     agent_name: str
     memory_agent_tag: str
-    discord_room: str
     musubi_v2_namespace: str | None = None
     musubi_v2_presence: str | None = None
     household_presences: tuple[str, ...] = ()
@@ -74,5 +67,4 @@ class AgentConfig:
 NYLA_DEFAULT_CONFIG = AgentConfig(
     agent_name="nyla",
     memory_agent_tag="nyla-voice",
-    discord_room=NYLA_DISCORD_ROOM,
 )

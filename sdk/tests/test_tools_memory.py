@@ -1,8 +1,8 @@
 """Tests for MusubiToolsMixin — canonical agent-tools surface.
 
 Covers musubi_recent, musubi_search, musubi_remember, musubi_think,
-musubi_get + the fetch_recent_context helper. Also asserts the
-``MemoryToolsMixin`` deprecation alias still resolves to the canonical
+the fetch_recent_context helper. Also asserts the
+``MusubiToolsMixin`` deprecation alias still resolves to the canonical
 class for one release.
 """
 
@@ -11,14 +11,14 @@ from typing import Any, cast
 
 import pytest
 from sdk.config import NYLA_DEFAULT_CONFIG, AgentConfig
-from tools.memory import MemoryToolsMixin, MusubiToolsMixin
+from tools.memory import MusubiToolsMixin
 
 
 def test_memory_mixin_alias_resolves_to_musubi_tools_mixin() -> None:
-    """``MemoryToolsMixin`` is a one-release deprecation alias per
+    """``MusubiToolsMixin`` is a one-release deprecation alias per
     Musubi ADR 0032. Until the alias is removed, importers must keep
     landing on the canonical class so behavior stays identical."""
-    assert MemoryToolsMixin is MusubiToolsMixin
+    assert MusubiToolsMixin is MusubiToolsMixin
 
 
 def _unwrap(tool: Any) -> Any:
@@ -31,31 +31,31 @@ def _unwrap(tool: Any) -> Any:
 
 
 def test_memory_mixin_has_musubi_recent():
-    assert hasattr(MemoryToolsMixin, "musubi_recent")
-    assert callable(MemoryToolsMixin.musubi_recent)
+    assert hasattr(MusubiToolsMixin, "musubi_recent")
+    assert callable(MusubiToolsMixin.musubi_recent)
 
 
 def test_memory_mixin_has_musubi_search():
-    assert hasattr(MemoryToolsMixin, "musubi_search")
-    assert callable(MemoryToolsMixin.musubi_search)
+    assert hasattr(MusubiToolsMixin, "musubi_search")
+    assert callable(MusubiToolsMixin.musubi_search)
 
 
 def test_memory_mixin_has_musubi_remember():
-    assert hasattr(MemoryToolsMixin, "musubi_remember")
-    assert callable(MemoryToolsMixin.musubi_remember)
+    assert hasattr(MusubiToolsMixin, "musubi_remember")
+    assert callable(MusubiToolsMixin.musubi_remember)
 
 
 def test_memory_mixin_exposes_fetch_recent_context_helper():
     """The plain-async helper used by on_enter must exist and be callable
     without the function_tool wrapping that musubi_recent carries."""
-    assert hasattr(MemoryToolsMixin, "fetch_recent_context")
-    assert callable(MemoryToolsMixin.fetch_recent_context)
+    assert hasattr(MusubiToolsMixin, "fetch_recent_context")
+    assert callable(MusubiToolsMixin.fetch_recent_context)
 
 
 def test_memory_mixin_default_config_is_nyla():
     """Absent an override, stored memories are tagged as Nyla's."""
-    assert MemoryToolsMixin.config is NYLA_DEFAULT_CONFIG
-    assert MemoryToolsMixin.config.memory_agent_tag == "nyla-voice"
+    assert MusubiToolsMixin.config is NYLA_DEFAULT_CONFIG
+    assert MusubiToolsMixin.config.memory_agent_tag == "nyla-voice"
 
 
 def test_memory_mixin_config_is_overridable():
@@ -63,15 +63,14 @@ def test_memory_mixin_config_is_overridable():
     aoi_cfg = AgentConfig(
         agent_name="aoi",
         memory_agent_tag="aoi-voice",
-        discord_room="channel:0",
     )
 
-    class _AoiMemory(MemoryToolsMixin):
+    class _AoiMemory(MusubiToolsMixin):
         config = aoi_cfg
 
     assert _AoiMemory.config.memory_agent_tag == "aoi-voice"
     # Parent class unaffected.
-    assert MemoryToolsMixin.config.memory_agent_tag == "nyla-voice"
+    assert MusubiToolsMixin.config.memory_agent_tag == "nyla-voice"
 
 
 def test_composed_agent_has_memory_tools(agent):
@@ -150,12 +149,11 @@ async def test_musubi_search_uses_tenant_wildcard_namespace(agent):
     agent.config = AgentConfig(
         agent_name="nyla",
         memory_agent_tag="nyla-voice",
-        discord_room="channel:0",
         musubi_v2_namespace="nyla/voice",
         musubi_v2_presence="nyla/voice",
     )
 
-    await _unwrap(MemoryToolsMixin.musubi_search)(agent, query="prank", limit=5)
+    await _unwrap(MusubiToolsMixin.musubi_search)(agent, query="prank", limit=5)
 
     assert len(stub.calls) == 1
     call = stub.calls[0]
@@ -173,12 +171,11 @@ async def test_musubi_search_passes_state_filter_for_fresh_save_recall(agent):
     agent.config = AgentConfig(
         agent_name="nyla",
         memory_agent_tag="nyla-voice",
-        discord_room="channel:0",
         musubi_v2_namespace="nyla/voice",
         musubi_v2_presence="nyla/voice",
     )
 
-    await _unwrap(MemoryToolsMixin.musubi_search)(agent, query="anything", limit=5)
+    await _unwrap(MusubiToolsMixin.musubi_search)(agent, query="anything", limit=5)
 
     call = stub.calls[0]
     assert call["state_filter"] == ["provisional", "matured", "promoted"]
@@ -209,12 +206,11 @@ async def test_musubi_search_returns_origin_channel_in_each_row(agent):
     agent.config = AgentConfig(
         agent_name="nyla",
         memory_agent_tag="nyla-voice",
-        discord_room="channel:0",
         musubi_v2_namespace="nyla/voice",
         musubi_v2_presence="nyla/voice",
     )
 
-    rendered = await _unwrap(MemoryToolsMixin.musubi_search)(agent, query="prank")
+    rendered = await _unwrap(MusubiToolsMixin.musubi_search)(agent, query="prank")
     assert "[discord]" in rendered, rendered
     assert "cocoa-pods prank" in rendered, rendered
 
@@ -277,7 +273,6 @@ async def test_musubi_think_uses_own_thought_namespace(agent) -> None:
     agent.config = AgentConfig(
         agent_name="aoi",
         memory_agent_tag="aoi-voice",
-        discord_room="channel:0",
         musubi_v2_namespace="aoi/voice",
         musubi_v2_presence="aoi/voice",
     )
@@ -300,7 +295,6 @@ async def test_musubi_think_resolves_bare_recipient_to_own_channel(agent) -> Non
     agent.config = AgentConfig(
         agent_name="aoi",
         memory_agent_tag="aoi-voice",
-        discord_room="channel:0",
         musubi_v2_namespace="aoi/voice",
         musubi_v2_presence="aoi/voice",
     )
@@ -319,7 +313,6 @@ async def test_musubi_think_rejects_empty_recipient_or_content(agent) -> None:
     agent.config = AgentConfig(
         agent_name="aoi",
         memory_agent_tag="aoi-voice",
-        discord_room="channel:0",
         musubi_v2_namespace="aoi/voice",
         musubi_v2_presence="aoi/voice",
     )
@@ -345,7 +338,6 @@ async def test_musubi_think_returns_object_id_in_ack(agent) -> None:
     agent.config = AgentConfig(
         agent_name="aoi",
         memory_agent_tag="aoi-voice",
-        discord_room="channel:0",
         musubi_v2_namespace="aoi/voice",
         musubi_v2_presence="aoi/voice",
     )
@@ -359,28 +351,13 @@ async def test_musubi_think_returns_object_id_in_ack(agent) -> None:
 
 
 # ---------------------------------------------------------------------------
-# musubi_get — deferred stub
+# musubi_get — removed 2026-07-09
 # ---------------------------------------------------------------------------
 
 
-def test_memory_mixin_has_musubi_get() -> None:
-    """``musubi_get`` must register so its name is reserved at the
-    canonical surface even before the SDK extension lands."""
-    assert hasattr(MusubiToolsMixin, "musubi_get")
-    assert callable(MusubiToolsMixin.musubi_get)
-
-
-@pytest.mark.asyncio
-async def test_musubi_get_returns_deferred_message(agent) -> None:
-    """Per Musubi ADR 0032 + CLAUDE.md "ADR-punted dependencies must
-    fail loud" rule: until the SDK gains per-plane ``.get()`` accessors,
-    ``musubi_get`` returns a clear deferred message rather than silently
-    no-op'ing or claiming success."""
-    rendered = await _unwrap(MusubiToolsMixin.musubi_get)(
-        agent, plane="episodic", namespace="aoi/voice/episodic", object_id="x" * 27
-    )
-
-    assert "not yet available" in rendered.lower()
-    # Must point the model back at musubi_search so it gets a graceful
-    # fall-back path instead of giving up on the recall.
-    assert "musubi_search" in rendered
+def test_musubi_get_is_gone() -> None:
+    """It was registered as a tool and returned "not yet available", which is
+    the same defect that took ``openclaw_delegate`` down: a prompt-visible tool
+    the runtime cannot fulfil. Reserving a name is not worth teaching the model
+    to reach for something that is not there."""
+    assert not hasattr(MusubiToolsMixin, "musubi_get")

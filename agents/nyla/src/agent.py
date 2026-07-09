@@ -1,7 +1,7 @@
 """Nyla voice agent — Gemini 2.5 Flash Native Audio, voice "Leda".
 
 Registers as "phone-nyla" with LiveKit. For the text-only test variant,
-see agent_text.py (registers as "phone-nyla-text").
+
 """
 
 from __future__ import annotations

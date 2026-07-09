@@ -9,7 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from sdk.config import AgentConfig
-from sdk.constants import NYLA_DISCORD_ROOM
 from tools.base_agent import (
     BaseRealtimeAgent,
     build_common_tools,
@@ -32,14 +31,11 @@ __all__ = [
 
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
-#: Aoi's operational identity. Shares Nyla's Discord room for now
-#: (she doesn't have her own channel yet); swap ``discord_room`` when
-#: Eric carves one out. Memory goes to the aoi-voice bucket so her
+#: Aoi's operational identity. Memory goes to the aoi-voice bucket so her
 #: stored context is separable from Nyla's.
 AOI_CONFIG = AgentConfig(
     agent_name="aoi",
     memory_agent_tag="aoi-voice",
-    discord_room=NYLA_DISCORD_ROOM,
     # Canonical Musubi under agent-as-tenant (ADR 0030): Aoi writes to
     # ``aoi/voice/*`` and surveys the same household list as Nyla.
     musubi_v2_namespace="aoi/voice",

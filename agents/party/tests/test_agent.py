@@ -39,9 +39,9 @@ class TestAgentClass:
         assert issubclass(agent_module.PartyAgent, CoreToolsMixin)
 
     def test_inherits_memory_tools(self, agent_module):
-        from tools.memory import MemoryToolsMixin
+        from tools.memory import MusubiToolsMixin
 
-        assert issubclass(agent_module.PartyAgent, MemoryToolsMixin)
+        assert issubclass(agent_module.PartyAgent, MusubiToolsMixin)
 
     def test_does_not_inherit_sessions_tools(self, agent_module):
         """Retired with the OpenClaw gateway."""
@@ -56,7 +56,6 @@ class TestAgentClass:
         cfg = agent_module.PartyAgent.config
         assert cfg.agent_name == "nyla"
         assert cfg.memory_agent_tag == "nyla-voice"
-        assert cfg.discord_room.startswith("channel:")
 
     def test_construction_with_defaults(self, agent_module):
         agent = agent_module.PartyAgent(instructions="test")

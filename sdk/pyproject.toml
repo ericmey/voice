@@ -10,7 +10,6 @@ requires-python = ">=3.11,<3.13"
 dependencies = [
     "livekit-agents~=1.5",
     "aiohttp",
-    "langsmith>=0.7.38",
     "python-dotenv",
     # OTel tracing → vendor-neutral OTLP/HTTP. The
     # pipeline activates whenever VOICE_OTEL_ENABLED is true.

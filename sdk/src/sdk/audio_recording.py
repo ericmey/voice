@@ -228,7 +228,7 @@ async def finalize_call_audio_recording(
 ) -> None:
     """Stop egress and wait for the file to settle.
 
-    Replaces the legacy LangSmith upload path. The recording stays on
+    The recording stays on
     disk; observability backends discover it via the path / URL span
     attributes written earlier by :func:`annotate_call_audio_recording`.
     """
@@ -246,10 +246,6 @@ async def finalize_call_audio_recording(
         recording.host_path.stat().st_size,
     )
     trace(f"audio recording finalized: {recording.host_path}")
-
-
-# Backwards-compatible alias — agents currently call this name.
-attach_call_audio_to_langsmith = finalize_call_audio_recording
 
 
 def wire_call_audio_attachment(ctx: Any, recording: CallAudioRecording | None) -> None:

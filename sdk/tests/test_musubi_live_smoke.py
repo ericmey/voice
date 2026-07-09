@@ -134,7 +134,6 @@ async def test_live_canonical_search_against_wildcard_namespace() -> None:
     cfg = AgentConfig(
         agent_name="smoke",
         memory_agent_tag="smoke-voice",
-        discord_room="channel:0",
         musubi_v2_namespace=_NS_ROOT,
     )
 

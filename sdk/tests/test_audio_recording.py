@@ -134,9 +134,7 @@ def test_finalize_call_audio_recording_does_not_mutate_span(monkeypatch, tmp_pat
     annotate.assert_not_called()
 
 
-def test_legacy_alias_still_imports() -> None:
-    """Agents that still call ``attach_call_audio_to_langsmith`` keep working."""
-    assert (
-        audio_recording.attach_call_audio_to_langsmith
-        is audio_recording.finalize_call_audio_recording
-    )
+def test_langsmith_alias_is_gone() -> None:
+    """LangSmith is decommissioned. The back-compat alias claimed "agents
+    currently call this name" and no agent ever did."""
+    assert not hasattr(audio_recording, "attach_call_audio_to_langsmith")

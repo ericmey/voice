@@ -89,20 +89,6 @@ loki-smoke: ## Query Grafana/Loki for post-smoke-test failures (requires GRAFANA
 # runs externally (shiori.mey.house:4318 in this deployment). Configure
 # the agents via VOICE_OTLP_ENDPOINT. See docs/OBSERVABILITY.md.
 
-# ---- LangSmith provisioning (archived) — see docs/LANGSMITH.md.
-# Kept around so a future operator can reactivate the LangSmith IaC
-# (projects, datasets, evaluator config) without rebuilding it from
-# scratch. The agent SDK no longer dual-exports to LangSmith;
-# reactivation requires either reverting the enricher deletion or
-# adding a fan-out OTel collector. Hidden from `make help` by
-# omitting the leading `##`.
-
-langsmith-plan-legacy:
-	uv run python -m ops.langsmith.provision --dry-run
-
-langsmith-provision-legacy:
-	uv run python -m ops.langsmith.provision
-
 # ---- tests ---------------------------------------------------------
 
 test: ## Run pytest across all workspace members (sdk + tools + agents)

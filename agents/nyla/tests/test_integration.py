@@ -5,7 +5,7 @@ Uses LiveKit's built-in AgentSession test harness:
   session.run(user_input="...")           → drives a turn, waits for completion
 
 Requires GOOGLE_API_KEY in the environment (talks to real Gemini).
-All tools run for real — no mocks. Tests hit Qdrant, NWS, Discord, etc.
+All tools run for real — no mocks. Tests hit Musubi and NWS.
 
 Tests are grouped into small sessions (2-3 turns each) so they stay well
 under Gemini's 10-minute WebSocket limit. Each test gets its own session —
@@ -18,13 +18,9 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-import time
 from pathlib import Path
 
-import aiohttp
 import pytest
-import pytest_asyncio
-from sdk.musubi_client import MUSUBI_COLLECTION, qdrant_url
 
 # Add src/ to path so imports work
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -87,40 +83,11 @@ def agent():
     return _make_agent()
 
 
-@pytest_asyncio.fixture(autouse=True)
-async def cleanup_musubi():
-    """Delete any Musubi memories created by nyla-voice during the test run."""
-    start_epoch = time.time()
-    yield
-    try:
-        async with aiohttp.ClientSession() as http:
-            async with http.post(
-                f"{qdrant_url()}/collections/{MUSUBI_COLLECTION}/points/delete",
-                json={
-                    "filter": {
-                        "must": [
-                            {"key": "agent", "match": {"value": "nyla-voice"}},
-                            {"key": "created_epoch", "range": {"gte": start_epoch}},
-                        ]
-                    }
-                },
-                params={"wait": "true"},
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    status = data.get("status")
-                    if status != "ok":
-                        print(f"[cleanup] Qdrant delete status: {status}")
-                else:
-                    print(f"[cleanup] Qdrant delete failed: {resp.status}")
-    except Exception as err:
-        print(f"[cleanup] Musubi cleanup failed: {err}")
-
-
-# -- Tests -----------------------------------------------------------------
-# Split into small test methods (2-3 turns each) to stay under Gemini's
-# 10-minute WebSocket timeout. Each test gets its own session.
+# NOTE: there is no automated cleanup. The old fixture deleted test memories by
+# POSTing straight to Qdrant through the retired v1 client — an alpha stack that no
+# longer exists and is not reachable. MusubiV2Client has no retract/delete, so these
+# tests write REAL rows into nyla/voice/episodic. Run them against a scratch presence,
+# or clean up with `aoi-memory-data musubi retract`.
 
 
 class TestCoreTools:

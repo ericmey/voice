@@ -12,7 +12,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from sdk.config import AgentConfig
-from sdk.constants import NYLA_DISCORD_ROOM
 from tools.base_agent import (
     BaseRealtimeAgent,
     build_common_tools,
@@ -69,7 +68,6 @@ HOUSEHOLD_VOICE_PRESENCES: tuple[str, ...] = (
 NYLA_CONFIG = AgentConfig(
     agent_name="nyla",
     memory_agent_tag="nyla-voice",
-    discord_room=NYLA_DISCORD_ROOM,
     musubi_v2_namespace="nyla/voice",
     musubi_v2_presence="nyla/voice",
     household_presences=HOUSEHOLD_VOICE_PRESENCES,

@@ -26,11 +26,6 @@ def load_env() -> None:
     """Load agent-local ``./.env``, alias provider-specific keys, wire tracing."""
     load_dotenv(Path.cwd() / ".env")
 
-    # The xAI plugin reads XAI_API_KEY. Alias from XAI_REALTIME_API_KEY if
-    # the deploy env used that name.
-    if not os.environ.get("XAI_API_KEY") and os.environ.get("XAI_REALTIME_API_KEY"):
-        os.environ["XAI_API_KEY"] = os.environ["XAI_REALTIME_API_KEY"]
-
     # ElevenLabs plugin reads ELEVEN_API_KEY. Alias from ELEVENLABS_API_KEY.
     if not os.environ.get("ELEVEN_API_KEY") and os.environ.get("ELEVENLABS_API_KEY"):
         os.environ["ELEVEN_API_KEY"] = os.environ["ELEVENLABS_API_KEY"]

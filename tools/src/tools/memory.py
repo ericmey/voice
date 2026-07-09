@@ -1,24 +1,16 @@
-"""MusubiToolsMixin — canonical agent-tools surface for voice agents.
+"""MusubiToolsMixin — the agent-tools surface for voice agents.
 
-Implements the five-tool canonical surface from Musubi
-[[07-interfaces/agent-tools]] / ADR 0032: ``musubi_recent``,
-``musubi_search``, ``musubi_get``, ``musubi_remember``, ``musubi_think``.
-Identical names + parameter shapes across every Musubi adapter (this
-mixin, the browser plugin, the Python MCP adapter)
-so Eric (or any model) gets the same tool surface regardless of which
-modality Aoi/Nyla is on.
+Four tools: ``musubi_recent``, ``musubi_search``, ``musubi_remember``,
+``musubi_think``. Identical names + parameter shapes across every Musubi
+adapter (this mixin, the browser plugin, the Python MCP adapter) so Eric
+or any model gets the same surface regardless of modality.
 
-``musubi_get`` ships in this mixin as a clearly-deferred stub — the
-Python MusubiV2Client doesn't expose per-plane ``get(object_id)``
-methods today, and SDK extensions are out of this slice's scope (see
-[[_slices/slice-livekit-canonical-tools]] § Forbidden paths). The stub
-returns a user-readable deferred message so a curious model + the
-operator both see the dependency immediately.
-
-``MemoryToolsMixin`` is preserved as a one-release deprecation alias
-(``MemoryToolsMixin = MusubiToolsMixin`` at the bottom of this file)
-so existing imports keep working through the deprecation window. Drops
-in the next minor release.
+``musubi_get`` was removed 2026-07-09. It was registered as a tool but
+returned a "not yet available" message, because the Python MusubiV2Client
+never gained per-plane ``get(object_id)`` accessors. A prompt-visible tool
+the runtime cannot fulfil is a fabrication generator — the same defect that
+took ``openclaw_delegate`` down. Reserving a name is not worth teaching the
+model to reach for something that isn't there. Use ``musubi_search``.
 """
 
 from __future__ import annotations
@@ -67,9 +59,8 @@ _SEARCH_STATE_FILTER = ["provisional", "matured", "promoted"]
 class MusubiToolsMixin(Agent):
     """Provides the canonical agent-tools surface.
 
-    Five tools per [[07-interfaces/agent-tools]] / ADR 0032:
-    ``musubi_recent``, ``musubi_search``, ``musubi_get`` (deferred
-    stub), ``musubi_remember``, ``musubi_think``.
+    Four tools: ``musubi_recent``, ``musubi_search``, ``musubi_remember``,
+    ``musubi_think``.
 
     Per-agent scope: each agent reads/writes its own
     ``<agent>/<channel>/episodic`` per ADR 0030. Cross-channel reads
@@ -519,45 +510,6 @@ class MusubiToolsMixin(Agent):
             importance=importance,
         )
 
-    # ------------------------------------------------------------------
-    # musubi_get — deferred stub (depends on SDK plane.get extension)
-    # ------------------------------------------------------------------
-
-    @function_tool
-    async def musubi_get(
-        self,
-        plane: str,
-        namespace: str,
-        object_id: str,
-    ) -> str:
-        """Fetch one Musubi object's full content + metadata by id.
-
-        NOT YET WIRED in the voice mixin — depends on the Python
-        ``MusubiV2Client`` gaining per-plane ``get(object_id)``
-        accessors. Tracked separately; SDK extensions are out of
-        scope for [[_slices/slice-livekit-canonical-tools]]. The
-        tool registers so its name is reserved at the canonical
-        surface; calls return a clear deferred message.
-
-        Use ``musubi_search`` to find content; this tool will surface
-        the full underlying object once the SDK extension lands.
-        """
-        trace(f"tool=musubi_get plane={plane!r} object_id={object_id!r}")
-        # Per CLAUDE.md prohibited patterns: ADR-punted dependencies
-        # fail loud. The tool's contract is canonical, but the SDK
-        # extension it needs is on the way. We log at WARNING so the
-        # operator notices repeated calls in degraded mode.
-        logger.warning(
-            "musubi_get invoked but is not yet available in the voice "
-            "mixin (depends on MusubiV2Client per-plane .get() accessors)"
-        )
-        return (
-            f"musubi_get is not yet available in the voice mixin — its SDK "
-            f"dependency (per-plane MusubiV2Client.{plane}.get) hasn't shipped. "
-            f"Use musubi_search to find content; the deep-link tool lights up "
-            f"when the SDK extension lands."
-        )
-
 
 def _format_row(row: dict[str, Any]) -> str:
     """One-line render for a scrolled episodic row.
@@ -588,10 +540,4 @@ def _format_search_row(row: dict[str, Any]) -> str:
     return f"[{channel}] {content}"
 
 
-#: One-release deprecation alias. ADR 0032 standardises on
-#: ``MusubiToolsMixin``; ``MemoryToolsMixin`` keeps existing imports
-#: compiling through the deprecation window. Drops in the next minor
-#: release — at which point this line goes away too.
-MemoryToolsMixin = MusubiToolsMixin
-
-__all__ = ["MusubiToolsMixin", "MemoryToolsMixin"]
+__all__ = ["MusubiToolsMixin"]

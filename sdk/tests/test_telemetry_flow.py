@@ -98,8 +98,8 @@ def test_record_tool_execution_captures_calls_and_errors() -> None:
     c = telemetry.TelemetryCollector("call-1", "phone-nyla")
     ok_call = SimpleNamespace(name="musubi_search", arguments='{"q":"x"}', call_id="t1")
     ok_output = SimpleNamespace(output="found", is_error=False)
-    bad_call = SimpleNamespace(name="musubi_get", arguments="{}", call_id="t2")
-    bad_output = SimpleNamespace(output="not yet implemented", is_error=True)
+    bad_call = SimpleNamespace(name="a_tool_that_failed", arguments="{}", call_id="t2")
+    bad_output = SimpleNamespace(output="boom", is_error=True)
     ev = SimpleNamespace(
         function_calls=[ok_call, bad_call],
         function_call_outputs=[ok_output, bad_output],
@@ -111,7 +111,7 @@ def test_record_tool_execution_captures_calls_and_errors() -> None:
     assert c.tool_calls[0]["name"] == "musubi_search"
     assert c.tool_calls[0]["success"] is True
     assert c.tool_calls[0]["output"] == "found"
-    assert c.tool_calls[1]["name"] == "musubi_get"
+    assert c.tool_calls[1]["name"] == "a_tool_that_failed"
     assert c.tool_calls[1]["success"] is False
     assert c.tool_calls[1]["is_error"] is True
 

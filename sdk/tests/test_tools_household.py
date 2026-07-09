@@ -15,7 +15,14 @@ from tools.household import HouseholdToolsMixin
 
 
 def _run(coro: Any) -> Any:
-    return asyncio.get_event_loop().run_until_complete(coro)
+    """Drive a coroutine from a sync test.
+
+    Was ``asyncio.get_event_loop().run_until_complete(coro)``, which only worked
+    when some earlier async test happened to leave a loop installed on the main
+    thread. On 3.12 that raises "There is no current event loop" the moment
+    collection order changes. It passed by accident, not by design.
+    """
+    return asyncio.run(coro)
 
 
 class _FakeConfig:
@@ -66,7 +73,6 @@ def _agent_cfg(presences: tuple[str, ...]) -> AgentConfig:
     return AgentConfig(
         agent_name="nyla",
         memory_agent_tag="nyla-voice",
-        discord_room="channel:0",
         household_presences=presences,
     )
 

@@ -33,7 +33,6 @@ from sdk.audio_recording import (
     wire_call_audio_attachment,
 )
 from sdk.config import AgentConfig
-from sdk.constants import NYLA_DISCORD_ROOM
 from sdk.env import load_env
 from sdk.musubi_v2_client import wire_musubi_v2_shutdown
 from sdk.postcall import wire_postcall_review
@@ -84,7 +83,6 @@ def _load_persona() -> str:
 PARTY_CONFIG = AgentConfig(
     agent_name="nyla",
     memory_agent_tag="nyla-voice",
-    discord_room=NYLA_DISCORD_ROOM,
     musubi_v2_namespace="nyla/voice",
     musubi_v2_presence="nyla/voice",
 )

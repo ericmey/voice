@@ -6,7 +6,7 @@ import pytest
 
 
 def test_import_tools_package():
-    from tools import CoreToolsMixin, MemoryToolsMixin  # noqa: F401
+    from tools import CoreToolsMixin, MusubiToolsMixin  # noqa: F401
 
 
 def test_import_env():
@@ -21,19 +21,18 @@ def test_import_transcript():
     from sdk.transcript import wire_transcript_logging  # noqa: F401
 
 
-def test_import_musubi_client():
-    from sdk.musubi_client import async_embed_text  # noqa: F401
-
-
-def test_import_constants():
-    from sdk.constants import NYLA_DISCORD_ROOM  # noqa: F401
-
-
 @pytest.mark.parametrize(
     "module",
-    ["sdk.gateway_client", "sdk.cli_spawner", "sdk.openclaw_hooks", "tools.sessions"],
+    [
+        "sdk.gateway_client",
+        "sdk.cli_spawner",
+        "sdk.openclaw_hooks",
+        "tools.sessions",
+        "sdk.musubi_client",  # v1 client, unused
+        "sdk.constants",  # only held Discord constants nothing read
+    ],
 )
 def test_gateway_modules_are_gone(module):
-    """Retired with the OpenClaw gateway. Re-adding one should be deliberate."""
+    """Retired. Re-adding any of these should be deliberate, not accidental."""
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module(module)

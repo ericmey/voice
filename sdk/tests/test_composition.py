@@ -11,7 +11,6 @@ import pytest
 EXPECTED_TOOLS = [
     "get_current_time",
     "get_weather",
-    "musubi_get",
     "musubi_recent",
     "musubi_remember",
     "musubi_search",
@@ -19,6 +18,9 @@ EXPECTED_TOOLS = [
 ]
 
 REMOVED_TOOLS = [
+    # a registered tool that returned "not yet available" — the same defect
+    # that took openclaw_delegate down.
+    "musubi_get",
     "openclaw_delegate",
     "sessions_send",
     "sessions_spawn",

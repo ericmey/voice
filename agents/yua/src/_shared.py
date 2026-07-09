@@ -9,7 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from sdk.config import AgentConfig
-from sdk.constants import NYLA_DISCORD_ROOM
 from tools.base_agent import (
     BaseRealtimeAgent,
     build_common_tools,
@@ -34,13 +33,11 @@ __all__ = [
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 YUA_VOICE = "Leda"
 
-#: Yua's operational identity. Shares Nyla's Discord room for now
-#: until Eric carves out a dedicated room. Memory goes to the yua-voice
-#: bucket so phone calls stay separable from her other streams.
+#: Yua's operational identity. Memory goes to the yua-voice bucket so phone
+#: calls stay separable from her other streams.
 YUA_CONFIG = AgentConfig(
     agent_name="yua",
     memory_agent_tag="yua-voice",
-    discord_room=NYLA_DISCORD_ROOM,
     # Canonical Musubi under agent-as-tenant (ADR 0030): Yua writes to
     # ``yua/voice/*`` and surveys the same household list as Nyla.
     musubi_v2_namespace="yua/voice",

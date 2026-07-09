@@ -39,9 +39,9 @@ class TestAgentClass:
         assert issubclass(agent_module.AoiAgent, CoreToolsMixin)
 
     def test_inherits_memory_tools(self, agent_module):
-        from tools.memory import MemoryToolsMixin
+        from tools.memory import MusubiToolsMixin
 
-        assert issubclass(agent_module.AoiAgent, MemoryToolsMixin)
+        assert issubclass(agent_module.AoiAgent, MusubiToolsMixin)
 
     def test_does_not_inherit_sessions_tools(self, agent_module):
         """Retired with the OpenClaw gateway."""
@@ -101,7 +101,6 @@ class TestAgentClass:
         cfg = agent_module.AoiAgent.config
         assert cfg.agent_name == "aoi"
         assert cfg.memory_agent_tag == "aoi-voice"
-        assert cfg.discord_room.startswith("channel:")
 
     def test_config_has_no_delegation_allowlist(self, agent_module):
         """Delegation retired with the gateway; the allowlist went with it."""
@@ -161,9 +160,9 @@ class TestSDKImports:
         assert CoreToolsMixin is not None
 
     def test_import_memory_tools(self):
-        from tools.memory import MemoryToolsMixin
+        from tools.memory import MusubiToolsMixin
 
-        assert MemoryToolsMixin is not None
+        assert MusubiToolsMixin is not None
 
     def test_sessions_tools_module_is_gone(self):
         import pytest

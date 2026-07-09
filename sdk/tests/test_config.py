@@ -9,7 +9,6 @@ def test_agent_config_is_frozen():
     cfg = AgentConfig(
         agent_name="x",
         memory_agent_tag="x-voice",
-        discord_room="channel:0",
     )
     with pytest.raises(AttributeError):
         cfg.agent_name = "y"  # type: ignore[misc]
@@ -19,7 +18,6 @@ def test_nyla_default_config_values():
     """The SDK-level default tags everything as Nyla."""
     assert NYLA_DEFAULT_CONFIG.agent_name == "nyla"
     assert NYLA_DEFAULT_CONFIG.memory_agent_tag == "nyla-voice"
-    assert NYLA_DEFAULT_CONFIG.discord_room.startswith("channel:")
 
 
 def test_agent_config_has_no_delegation_allowlist():
@@ -27,6 +25,5 @@ def test_agent_config_has_no_delegation_allowlist():
     cfg = AgentConfig(
         agent_name="aoi",
         memory_agent_tag="aoi-voice",
-        discord_room="channel:0",
     )
     assert not hasattr(cfg, "allowed_delegation_targets")

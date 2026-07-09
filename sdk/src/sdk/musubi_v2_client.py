@@ -1,14 +1,13 @@
 """Musubi v2 — async HTTP client for the new canonical API.
 
-This is the **new-stack** client. The legacy `musubi_client.py` talks
-directly to Qdrant on localhost for the alpha Musubi; this module talks
+This is the client for the Musubi v2 HTTP API.
 to Musubi's canonical API (HTTP/JSON at ``/v1/*``) with bearer auth.
 Both co-exist so voice agents can migrate one at a time per
 `AgentConfig` — see ``tools/src/tools/memory.py``.
 
 Scope: just enough surface for the canonical agent-tools mixin
 (``musubi_search`` / ``musubi_recent`` / ``musubi_remember`` /
-``musubi_think``; ``musubi_get`` is reserved pending per-plane
+``musubi_think``.
 ``.get()`` accessors). The full Musubi SDK lives upstream in the
 Musubi monorepo under
 ``src/musubi/sdk/`` and will be publishable as a ``musubi-client`` wheel
@@ -21,7 +20,7 @@ BGE-M3), so the client's job is just to shape requests + handle auth +
 translate errors into typed exceptions the tool layer can reason about.
 
 Transport: aiohttp to match the rest of this repo's async HTTP posture
-(see `musubi_client.py`). Per-call timeout defaults
+Per-call timeout defaults
 to `MUSUBI_V2_TIMEOUT_S` (2s) — a voice tool can't wait longer and still
 feel responsive; the tool layer catches the timeout and degrades.
 """
@@ -41,14 +40,14 @@ logger = logging.getLogger("voice.musubi-v2")
 
 # Environment-driven so the same wheel runs against local/dev/prod
 # Musubi instances without code changes. `MUSUBI_V2_*` namespace keeps
-# these from colliding with the alpha `QDRANT_*` / `MUSUBI_*` vars the
+# these from colliding with other `MUSUBI_*` vars the
 # legacy client reads.
 MUSUBI_V2_BASE_URL_ENV = "MUSUBI_V2_BASE_URL"
 MUSUBI_V2_TOKEN_ENV = "MUSUBI_V2_TOKEN"
 DEFAULT_BASE_URL = "http://localhost:8100/v1"
 
 # Voice-facing tools live on a tight latency budget — 2s is already
-# perceptible. The legacy client uses 500ms against a local Qdrant; a
+# perceptible. A
 # real Musubi with TEI reranking needs more, but still must feel
 # responsive. Tools catch the timeout and degrade gracefully.
 MUSUBI_V2_TIMEOUT_S = 2.0
@@ -264,10 +263,10 @@ async def list_episodic(
     """GET /v1/episodic — list memories in a namespace.
 
     Returns ``{"items": [...], "next_cursor": str|null}``. Items are
-    whatever order Qdrant's scroll returns; callers that want
+    whatever order the server's scroll returns; callers that want
     time-descending should sort by ``created_epoch`` client-side.
 
-    Used by ``MemoryToolsMixin.fetch_recent_context`` (per-agent) and
+    Used by ``MusubiToolsMixin.fetch_recent_context`` (per-agent) and
     ``HouseholdToolsMixin.household_status`` (cross-agent fan-out).
     """
     params = {"namespace": namespace, "limit": str(limit)}

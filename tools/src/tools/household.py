@@ -2,7 +2,7 @@
 
 Gives a curated set of agents (Nyla, Aoi) the ability to see what
 *other* agents have been doing recently. The per-agent mixin
-(``MemoryToolsMixin``) only surfaces the caller's own episodic
+(``MusubiToolsMixin``) only surfaces the caller's own episodic
 stream; this mixin fans out to the ``AgentConfig.household_presences``
 list and merges the results into one time-ordered view.
 
