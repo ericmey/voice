@@ -40,7 +40,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "livekit-agents", extras = ["google"], specifier = "~=1.5" },
+    { name = "livekit-agents", extras = ["google"], specifier = "~=1.6.5" },
     { name = "sdk", editable = "sdk" },
     { name = "tools", editable = "tools" },
 ]
@@ -69,7 +69,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "livekit-agents", extras = ["google"], specifier = "~=1.5" },
+    { name = "livekit-agents", extras = ["google"], specifier = "~=1.6.5" },
     { name = "sdk", editable = "sdk" },
     { name = "tools", editable = "tools" },
 ]
@@ -99,7 +99,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "livekit-agents", extras = ["openai", "google", "silero"], specifier = "~=1.5" },
+    { name = "livekit-agents", extras = ["openai", "google", "silero"], specifier = "~=1.6.5" },
     { name = "livekit-plugins-elevenlabs", specifier = "~=1.5" },
     { name = "sdk", editable = "sdk" },
     { name = "tools", editable = "tools" },
@@ -129,7 +129,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "livekit-agents", extras = ["google"], specifier = "~=1.5" },
+    { name = "livekit-agents", extras = ["google"], specifier = "~=1.6.5" },
     { name = "sdk", editable = "sdk" },
     { name = "tools", editable = "tools" },
 ]
@@ -1798,7 +1798,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp" },
-    { name = "livekit-agents", specifier = "~=1.5" },
+    { name = "livekit-agents", specifier = "~=1.6.5" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.27" },
     { name = "opentelemetry-instrumentation-aiohttp-client", specifier = ">=0.48b0" },
     { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.48b0" },
@@ -1877,7 +1877,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp" },
-    { name = "livekit-agents", specifier = "~=1.5" },
+    { name = "livekit-agents", specifier = "~=1.6.5" },
     { name = "sdk", editable = "sdk" },
 ]
 

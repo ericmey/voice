@@ -3,10 +3,10 @@
 # Copy to config/livekit.yaml (gitignored) and edit:
 #   - `keys`: generate a strong secret; the devkey/devsecret default below is
 #     only useful for a first-boot smoke test on a disconnected box.
-#   - `redis.address`: leave as-is if you're running the shipped compose
-#     (redis service is reachable from the server container at
-#     host.docker.internal:6379 on Mac, or redis:6379 if you prefer the
-#     container's service name on Linux).
+#   - `redis.address`: `redis:6379` — the compose service name. The
+#     livekit-server container is on the compose bridge network, so it reaches
+#     redis by service name on both Linux and Mac. (Do NOT use
+#     host.docker.internal — that routes to the host, not the redis container.)
 #
 # Bind-mounted into the voice-livekit-server container at /etc/livekit.yaml.
 
@@ -20,7 +20,7 @@ rtc:
 # livekit-sip coordination. Without this, `lk sip ...` returns
 # "sip not connected (redis required)".
 redis:
-  address: host.docker.internal:6379
+  address: redis:6379
 
 keys:
   devkey: devsecret-change-me-before-real-use

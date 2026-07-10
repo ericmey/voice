@@ -10,12 +10,13 @@ log_level: info
 api_key: "devkey"
 api_secret: "devsecret-change-me-before-real-use"
 
-# On Mac with compose defaults, containers reach livekit-server through
-# host.docker.internal. Keep this aligned with LIVEKIT_URL in secrets.
-ws_url: "ws://host.docker.internal:7880"
+# livekit-egress is a bridge container on the compose network, so it reaches
+# the server and redis by service name (both Linux and Mac). Keep ws_url
+# aligned with LIVEKIT_URL in secrets.
+ws_url: "ws://livekit-server:7880"
 
 redis:
-  address: "host.docker.internal:6379"
+  address: "redis:6379"
 
 # Chrome sandbox needs SYS_ADMIN in Docker; compose grants it on the
 # egress service. Keeping the sandbox enabled matches LiveKit's default.

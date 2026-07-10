@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 #
-# First-time machine setup. Safe to re-run — every step checks before
-# installing. Does NOT deploy agents or register SIP routing; those are
-# separate explicit steps so you can review before running them.
+# First-time LOCAL-DEV machine setup (macOS/Homebrew). Safe to re-run — every
+# step checks before installing. Does NOT deploy agents or register SIP
+# routing; those are separate explicit steps so you can review first.
+#
+# Production runs Docker Compose on the Linux host (mizuki); this script is
+# the dev-laptop convenience, not a host provisioner.
 #
 # Run once on a fresh box:
 #   scripts/bootstrap.sh
@@ -81,8 +84,8 @@ cat <<EOF
 Next steps:
 
   1. Edit ${REPO_ROOT}/secrets/livekit-agents.env
-     (GOOGLE_API_KEY, GATEWAY_AUTH_TOKEN, LIVEKIT_API_SECRET,
-      DISCORD_TOKEN_NYLA, DISCORD_TOKEN_AOI, DISCORD_TOKEN_YUA)
+     (GOOGLE_API_KEY, LIVEKIT_API_SECRET, OPENAI_API_KEY, ELEVENLABS_API_KEY,
+      MUSUBI_V2_TOKEN_{NYLA,AOI,YUA,PARTY}, VOICE_OTLP_ENDPOINT)
 
   2. Edit ${REPO_ROOT}/config/livekit.yaml
      (keys section: set a real api_secret)

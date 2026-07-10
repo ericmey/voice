@@ -10,7 +10,7 @@ requires-python = ">=3.11,<3.13"
 dependencies = [
     "sdk",
     "tools",
-    "livekit-agents[openai,google,silero]~=1.5",
+    "livekit-agents[openai,google,silero]~=1.6.5",
     "livekit-plugins-elevenlabs~=1.5",
 ]
 

@@ -9,7 +9,7 @@ description = "Voice agent tool mixins — browseable catalog of @function_tool 
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "sdk",
-    "livekit-agents~=1.5",
+    "livekit-agents~=1.6.5",
     "aiohttp",
 ]
 

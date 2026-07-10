@@ -11,13 +11,16 @@ log_level: info
 api_key: "devkey"
 api_secret: "devsecret-change-me-before-real-use"
 
-# WebSocket URL of livekit-server. On Mac with compose defaults:
-ws_url: "ws://host.docker.internal:7880"
+# WebSocket URL of livekit-server. livekit-sip runs network_mode: host (it
+# needs the host's real IP for SIP/RTP), so it is NOT on the compose network —
+# it reaches the server and redis via the ports they forward to the host.
+ws_url: "ws://127.0.0.1:7880"
 
 # ---- Redis (REQUIRED) ------------------------------------------------
 # livekit-sip uses Redis for SIP session state. No in-memory fallback.
+# 127.0.0.1:6379 — redis forwards this port to the host (see docker-compose.yaml).
 redis:
-  address: "host.docker.internal:6379"
+  address: "127.0.0.1:6379"
 
 # ---- SIP listener ----------------------------------------------------
 sip_port: 5060

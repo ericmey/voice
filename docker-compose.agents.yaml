@@ -24,7 +24,10 @@ x-agent-common: &agent-common
 
 x-agent-env: &agent-env
   LIVEKIT_URL: ws://livekit-server:7880
-  MUSUBI_V2_BASE_URL: http://musubi.mey.house:8100/v1
+  # MUSUBI_V2_BASE_URL comes from the env_file (secrets/livekit-agents.env) —
+  # it's a deploy-specific host, kept out of git. Don't also set it here: a
+  # compose `environment:` value shadows env_file, so a duplicate would make
+  # editing the secret file silently have no effect.
   LIVEKIT_VOICE_LOGS: /app/logs/voice
   # Opt-in, and it was `true` under the retired launchd deploy. Left unset, the egress
   # container runs and records nothing. The default host/container recording dirs
