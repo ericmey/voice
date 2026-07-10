@@ -220,14 +220,17 @@ async def test_musubi_search_returns_origin_channel_in_each_row(agent):
 # ---------------------------------------------------------------------------
 
 
-def test_memory_mixin_has_musubi_think() -> None:
-    assert hasattr(MusubiToolsMixin, "musubi_think")
-    assert callable(MusubiToolsMixin.musubi_think)
+def test_musubi_think_tool_is_not_exposed() -> None:
+    """``musubi_think`` was un-registered 2026-07-10: the persona forbids
+    claiming a handoff and the thought plane isn't consumed by the live
+    webbing. The LLM-facing tool must be absent while ``think_impl`` (the
+    programmatic body) is retained — see the module docstring."""
+    assert not hasattr(MusubiToolsMixin, "musubi_think")
 
 
 def test_memory_mixin_exposes_think_impl_helper() -> None:
-    """``think_impl`` is the plain-async body so tests (and post-call
-    hooks, if any) can invoke without the ``@function_tool`` descriptor."""
+    """``think_impl`` is the plain-async body, retained for programmatic use
+    even though the ``@function_tool musubi_think`` wrapper was removed."""
     assert hasattr(MusubiToolsMixin, "think_impl")
     assert callable(MusubiToolsMixin.think_impl)
 
@@ -277,7 +280,7 @@ async def test_musubi_think_uses_own_thought_namespace(agent) -> None:
         musubi_v2_presence="aoi/voice",
     )
 
-    await _unwrap(MusubiToolsMixin.musubi_think)(agent, to_presence="nyla/voice", content="hey")
+    await MusubiToolsMixin.think_impl(agent, to_presence="nyla/voice", content="hey")
 
     assert len(stub.calls) == 1
     call = stub.calls[0]
@@ -299,7 +302,7 @@ async def test_musubi_think_resolves_bare_recipient_to_own_channel(agent) -> Non
         musubi_v2_presence="aoi/voice",
     )
 
-    await _unwrap(MusubiToolsMixin.musubi_think)(agent, to_presence="nyla", content="ping")
+    await MusubiToolsMixin.think_impl(agent, to_presence="nyla", content="ping")
 
     assert stub.calls[0]["to_presence"] == "nyla/voice"
 
@@ -317,12 +320,8 @@ async def test_musubi_think_rejects_empty_recipient_or_content(agent) -> None:
         musubi_v2_presence="aoi/voice",
     )
 
-    empty_recipient = await _unwrap(MusubiToolsMixin.musubi_think)(
-        agent, to_presence="", content="hi"
-    )
-    empty_content = await _unwrap(MusubiToolsMixin.musubi_think)(
-        agent, to_presence="nyla", content=""
-    )
+    empty_recipient = await MusubiToolsMixin.think_impl(agent, to_presence="", content="hi")
+    empty_content = await MusubiToolsMixin.think_impl(agent, to_presence="nyla", content="")
 
     assert "to_presence is required" in empty_recipient
     assert "content is required" in empty_content
@@ -342,7 +341,7 @@ async def test_musubi_think_returns_object_id_in_ack(agent) -> None:
         musubi_v2_presence="aoi/voice",
     )
 
-    rendered = await _unwrap(MusubiToolsMixin.musubi_think)(
+    rendered = await MusubiToolsMixin.think_impl(
         agent, to_presence="nyla/discord", content="deploy is done"
     )
 

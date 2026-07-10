@@ -14,13 +14,16 @@ EXPECTED_TOOLS = [
     "musubi_recent",
     "musubi_remember",
     "musubi_search",
-    "musubi_think",
 ]
 
 REMOVED_TOOLS = [
     # a registered tool that returned "not yet available" — the same defect
     # that took openclaw_delegate down.
     "musubi_get",
+    # presence-to-presence send, un-exposed 2026-07-10: personas forbid saying
+    # "I passed it along," and the thought plane it wrote to isn't consumed by
+    # the live webbing. ``think_impl`` is retained; the tool is not registered.
+    "musubi_think",
     # the house concept is retired; each agent speaks for herself
     "household_status",
     "openclaw_delegate",

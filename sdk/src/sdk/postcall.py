@@ -64,7 +64,14 @@ def wire_postcall_review(
     call_sid: str | None,
     agent_name: str = "unknown",
 ) -> None:
-    """Register a ``close`` handler that logs the call and spawns Rin.
+    """Register a ``close`` handler that appends the call to the manifest.
+
+    Records one JSONL entry per closed call (sid, agent, close reason,
+    error, transcript presence) as an append-only audit log. There is no
+    automated reviewer — the external CLI gateway that spawned Rin for QC
+    is retired — so every entry lands as ``review_status="no_reviewer"``
+    (or ``"skipped_no_transcript"``). The manifest is a durable record a
+    future reviewer can sweep; nothing reads it at runtime today.
 
     Call this AFTER ``wire_transcript_logging`` in the agent entrypoint.
     """

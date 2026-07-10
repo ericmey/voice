@@ -1,9 +1,18 @@
 """MusubiToolsMixin — the agent-tools surface for voice agents.
 
-Four tools: ``musubi_recent``, ``musubi_search``, ``musubi_remember``,
-``musubi_think``. Identical names + parameter shapes across every Musubi
+Three LLM-exposed tools: ``musubi_recent``, ``musubi_search``,
+``musubi_remember``. Identical names + parameter shapes across every Musubi
 adapter (this mixin, the browser plugin, the Python MCP adapter) so Eric
 or any model gets the same surface regardless of modality.
+
+``musubi_think`` (presence-to-presence send) is **retained in code but not
+exposed to the LLM** as of 2026-07-10. The live comms webbing reaches peers
+via agent-bridge (TUI inject), not a Musubi thought-inbox scroll — no
+presence subscribes to ``/v1/thoughts/stream`` for these four agents — so a
+phone-side send would land in a plane nobody checks, and a persona that says
+"never say you passed something along" cannot truthfully offer it. ``think_impl``
+and ``MusubiV2Client.send_thought`` stay ready; re-add the ``@function_tool``
+wrapper if a real consumer is wired. See the deleted ``musubi_think`` tool below.
 
 ``musubi_get`` was removed 2026-07-09. It was registered as a tool but
 returned a "not yet available" message, because the Python MusubiV2Client
@@ -59,8 +68,9 @@ _SEARCH_STATE_FILTER = ["provisional", "matured", "promoted"]
 class MusubiToolsMixin(Agent):
     """Provides the canonical agent-tools surface.
 
-    Four tools: ``musubi_recent``, ``musubi_search``, ``musubi_remember``,
-    ``musubi_think``.
+    Three LLM-exposed tools: ``musubi_recent``, ``musubi_search``,
+    ``musubi_remember``. ``musubi_think`` is retained as ``think_impl`` but
+    not registered as a tool (see the module docstring).
 
     Per-agent scope: each agent reads/writes its own
     ``<agent>/<channel>/episodic`` per ADR 0030. Cross-channel reads
@@ -426,8 +436,11 @@ class MusubiToolsMixin(Agent):
         channel: str = "default",
         importance: int = 5,
     ) -> str:
-        """Plain-async body of ``musubi_think``. Extracted so tests can
-        target it without going through the ``@function_tool`` descriptor."""
+        """Presence-to-presence thought send. **Retained but not LLM-exposed**
+        (2026-07-10) — the ``@function_tool musubi_think`` wrapper was removed
+        because the live webbing does not consume the thought plane for these
+        agents (see module docstring). Kept callable for programmatic use and
+        so re-enabling the tool is a one-line wrapper away."""
         trace(f"tool=musubi_think to={to_presence!r} content={content[:60]!r} channel={channel!r}")
         namespace = self._own_thought_namespace()
         if namespace is None:
@@ -473,41 +486,13 @@ class MusubiToolsMixin(Agent):
         object_id = ack.get("object_id") or "<unknown>"
         return f"Sent to {resolved_to}. (id={object_id})"
 
-    @function_tool
-    async def musubi_think(
-        self,
-        to_presence: str,
-        content: str,
-        channel: str = "default",
-        importance: int = 5,
-    ) -> str:
-        """Send a presence-to-presence thought to another agent.
-
-        Invocation Condition: Invoke this tool when the user asks you
-        to tell another agent something. Examples: "Tell my Claude
-        Code session the deploy is done", "Let Aoi know I'm heading
-        out", "Send a note to Nyla". You MUST call this tool to
-        actually deliver the message — saying it without calling means
-        nothing was sent.
-
-        Args:
-            to_presence: Recipient. Either canonical ``<agent>/<channel>``
-                form (``aoi/voice``, ``nyla/discord``) or a bare
-                ``<agent>`` alias the adapter resolves to its own
-                channel. ``all`` broadcasts.
-            content: The thought to deliver. Short, natural. Recipient
-                reads it as if you paged them.
-            channel: Channel within the recipient's inbox. Defaults
-                to ``default``; use ``scheduler`` for time-boxed
-                reminders.
-            importance: 1-10. Default 5.
-        """
-        return await self.think_impl(
-            to_presence=to_presence,
-            content=content,
-            channel=channel,
-            importance=importance,
-        )
+    # NOTE: the ``@function_tool musubi_think`` wrapper was removed 2026-07-10.
+    # It told the model "you MUST call this to deliver a note to another agent,"
+    # which contradicts every persona's "there is no delegation route from the
+    # phone / never say you passed something along" — and the thought plane it
+    # wrote to is not consumed by the live comms webbing. ``think_impl`` above
+    # stays for programmatic use; re-add a thin ``@function_tool`` wrapper here
+    # if a real consumer (SSE subscriber / inbox scroll) is wired for these agents.
 
 
 def _format_row(row: dict[str, Any]) -> str:
