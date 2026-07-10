@@ -149,3 +149,36 @@ For a full-repo rollback, `git revert` the offending commit on main.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) "Hardening direction" for the
 sequencing.
+
+## Known issues
+
+### Realtime job process hangs ~10s on hangup, then is force-killed (exit -10)
+
+**Symptom.** After a native-audio call ends, the agent log shows
+`deleting the room because the user ended the call`, then ~10s of silence,
+then `process did not exit in time, killing process` /
+`sending SIGUSR1 signal to process` / `process exited with non-zero exit
+code -10`. Intermittent — seen on aoi (the long thinking-partner calls),
+not deterministic.
+
+**Impact — benign, but noisy.** Post-call memory is safe: it runs in a
+*detached* subprocess (`start_new_session=True`) that survives the kill and
+completes independently (verified: `postcall_memory: completed
+status=captured` lands before the kill). The call is already over. The only
+cost is `ERROR`-level log lines on otherwise-healthy calls, which put a
+false-positive floor under any error-rate alerting — the reason this is worth
+fixing before wiring alerts, not just cosmetic.
+
+**Root cause.** livekit-agents' `WorkerOptions.shutdown_process_timeout`
+defaults to 10.0s. The job process doesn't exit within it because the Gemini
+realtime session's close hangs after `EndCallTool(delete_room=True)` tears the
+room down out from under it. The SIGUSR1 is livekit-agents asking the stuck
+process to dump stack traces before killing it.
+
+**Fix — validate before shipping.** Candidate approaches: (a) an explicit
+session/realtime close in a shutdown hook before room deletion, (b) revisit
+`delete_room=True` timing, (c) a larger `shutdown_process_timeout` *only if*
+the close actually completes given more time. All of these change call
+teardown and must be proven on a **real test call**, not assumed — bumping the
+timeout blindly just delays the kill and masks the signal. Tracked as a
+deploy-session validation item.

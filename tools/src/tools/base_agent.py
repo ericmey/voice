@@ -45,6 +45,47 @@ def load_persona(prompts_dir: Path) -> str:
     return _DEFAULT_PERSONA
 
 
+# --- greeting -------------------------------------------------------------
+
+_GREETING_BASE = (
+    "Open the call like a friend would, not an assistant. Be natural, "
+    "varied, sometimes playful, sometimes quick. A short 'oh hey Eric, "
+    "what's up?' is fine — so is a warm comment, a tease, or just 'hey.' "
+    "Vary your openers across calls; don't lock into one shape. Keep "
+    "it under two sentences."
+)
+
+# fetch_recent_context returns one of these user-readable strings when memory
+# is unavailable/empty. They are NOT real context, so the greeting must not
+# splice them in as if they were.
+_DEGRADED_CONTEXT_PREFIXES = (
+    "No recent memories found.",
+    "Couldn't check memory",
+    "Memory lookup timed out.",
+)
+
+
+def build_greeting_instructions(context: str | None) -> str:
+    """Assemble the on_enter greeting instructions from recent context.
+
+    Pure function so the branching (usable context vs degraded/empty) is
+    unit-testable without a live session. Shared by every BaseRealtimeAgent
+    subclass. Usable context is appended as *background awareness only* — the
+    opener stays a natural greeting, never a formulaic recall.
+    """
+    has_context = bool(context) and not any(
+        context.startswith(p) for p in _DEGRADED_CONTEXT_PREFIXES
+    )
+    if not has_context:
+        return _GREETING_BASE
+    return (
+        _GREETING_BASE + " The recent context below is for your awareness — only "
+        "mention something from it if it's genuinely notable (high importance, or "
+        "Eric has been calling a lot recently). Don't lead with a recall as a "
+        f"formula.\n\nRecent context (background, not a script):\n{context}"
+    )
+
+
 # --- agent class ---------------------------------------------------------
 
 
@@ -72,45 +113,17 @@ class BaseRealtimeAgent(
         self._caller_from: str | None = caller_from
 
     async def on_enter(self) -> None:
-        # Prefetch recent context as background awareness — NOT as the
-        # spine of the greeting. Eric's feedback (2026-04-27): formulaic
-        # callbacks to recent rows make her feel calculated. Default is
-        # a natural, varied opener like a friend; recent context is only
-        # for noticing genuinely notable things (high-importance row, or
-        # call-frequency cue), not for deciding what to say.
+        # Prefetch recent context as background awareness — NOT as the spine of
+        # the greeting. Eric's feedback (2026-04-27): formulaic callbacks to
+        # recent rows read as calculated. The instruction assembly lives in the
+        # pure `build_greeting_instructions` below so it's unit-testable without
+        # a live session.
         try:
             context = await self.fetch_recent_context(limit=10)
         except Exception as err:
             logger.warning("on_enter: startup context fetch failed: %s", err)
             context = ""
-
-        degraded_prefixes = (
-            "No recent memories found.",
-            "Couldn't check memory",
-            "Memory lookup timed out.",
-        )
-        has_context = context and not any(context.startswith(p) for p in degraded_prefixes)
-
-        base_instructions = (
-            "Open the call like a friend would, not an assistant. Be natural, "
-            "varied, sometimes playful, sometimes quick. A short 'oh hey Eric, "
-            "what's up?' is fine — so is a warm comment, a tease, or just 'hey.' "
-            "Vary your openers across calls; don't lock into one shape. Keep "
-            "it under two sentences."
-        )
-
-        if has_context:
-            instructions = (
-                base_instructions + " The recent context below is for your awareness — only "
-                "mention something from it if it's genuinely notable (high "
-                "importance, or Eric has been calling a lot recently). Don't "
-                "lead with a recall as a formula.\n\n"
-                f"Recent context (background, not a script):\n{context}"
-            )
-        else:
-            instructions = base_instructions
-
-        await self.session.generate_reply(instructions=instructions)
+        await self.session.generate_reply(instructions=build_greeting_instructions(context))
 
 
 # --- model + tools (shared) ---------------------------------------------
