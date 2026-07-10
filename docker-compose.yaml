@@ -16,12 +16,14 @@
 #        brew services stop redis
 #      (compose redis listens on the same 127.0.0.1:6379 port)
 #   2. Make sure ./config/ has the three config files this compose
-#      bind-mounts in (livekit.yaml, livekit-sip.yaml). Use
-#      scripts/bootstrap.sh to copy templates into place, or point at a
+#      bind-mounts in (livekit.yaml, livekit-sip.yaml, livekit-egress.yaml).
+#      Use scripts/bootstrap.sh to copy templates into place, or point at a
 #      different directory via `LIVEKIT_CONFIG_DIR=/abs/path`.
-#   3. On macOS: enable host networking in Docker Desktop (Settings > Resources
-#      > Network). livekit-sip needs it to advertise the host's real IP in SDP
-#      and to forward RTP on 10000-20000/udp.
+#   3. Host networking for livekit-sip: native on Linux (the mizuki prod
+#      host), where `network_mode: host` binds directly. On macOS dev,
+#      enable host networking in Docker Desktop (Settings > Resources >
+#      Network) — sip needs it to advertise the host's real IP in SDP and
+#      forward RTP on 10000-20000/udp.
 #
 # Bring up:  docker compose up -d
 # Bring down: docker compose down

@@ -8,10 +8,12 @@ operator-specific infrastructure.
 
 `voice` is a monorepo for a local LiveKit voice stack:
 
-- Docker Compose runs the infrastructure tier: `livekit-server`,
-  `livekit-sip`, `livekit-egress`, and Redis.
-- `launchd` runs the Python agent tier on macOS: `phone-nyla`,
-  `phone-aoi`, `phone-yua`, and `phone-party`.
+- Docker Compose runs the infrastructure tier (`livekit-server`,
+  `livekit-sip`, `livekit-egress`, Redis) via `docker-compose.yaml`.
+- Docker Compose also runs the Python agent tier as containers
+  (`voice-agent-{nyla,aoi,yua,party}`) from the `voice-agent:latest`
+  image, via `docker-compose.agents.yaml`. Production host is
+  `mizuki.mey.house` (Ubuntu); the macOS `launchd` path is retired.
 - SIP routing is represented as JSON examples in `config/`; real
   routing files are local-only and gitignored.
 - Agent logs, transcripts, per-call JSON telemetry, post-call reviews,

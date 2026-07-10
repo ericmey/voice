@@ -1,7 +1,8 @@
 """Tests for MusubiToolsMixin — canonical agent-tools surface.
 
-Covers musubi_recent, musubi_search, musubi_remember, musubi_think,
-the fetch_recent_context helper. Also asserts the
+Covers musubi_recent, musubi_search, musubi_remember, the retained
+think_impl body (musubi_think is no longer LLM-exposed), and the
+fetch_recent_context helper. Also asserts the
 ``MusubiToolsMixin`` deprecation alias still resolves to the canonical
 class for one release.
 """
