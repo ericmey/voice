@@ -136,14 +136,21 @@ For a full-repo rollback, `git revert` the offending commit on main.
 ## Monitoring (current + future)
 
 ### Current
-- `make health` on demand — intentionally minimal, exits non-zero.
+- **Container healthchecks** on redis + livekit-server (`docker ps` shows
+  health); the four agents gate their start on livekit-server being healthy.
+- **Cronned `scripts/health-check.sh --quiet`** every 5 min on mizuki →
+  `~/.local/state/voice/health-check.log` (writes only on failure). Covers
+  the agent-registration liveness the container healthchecks can't (agents
+  have no self-probe endpoint).
+- `make health` on demand — the same check, full output.
 - `scripts/tail-logs.sh` for live watching with `--grep` filtering.
 - `docker compose logs -f` for the infrastructure tier.
 - [OBSERVABILITY.md](OBSERVABILITY.md) for OTel tracing, logs, metrics,
   dashboard import, host collector, and audio recording links.
 
 ### Future (not yet wired)
-- Cronned `scripts/health-check.sh --json` → Discord webhook on failure.
+- Route the cron's failure output to a Discord webhook (currently
+  file-only — a human/`/morning` reads the log).
 - Prometheus exporter on the agent worker count + livekit-sip call stats.
 - Drift detection cron that re-reads `config/*.json` and diffs.
 
