@@ -57,13 +57,22 @@ services:
       - redis_data:/data
     ports:
       - "127.0.0.1:6379:6379"
+    # Docker-native liveness. redis-cli ships in the image; PONG means the
+    # routing store (sip_dispatch_rule / sip_inbound_trunk) is reachable.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   livekit-server:
     image: livekit/livekit-server:v1.13.3
     container_name: voice-livekit-server
     restart: unless-stopped
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     # Bridge networking + explicit port forwards. WebRTC clients connect
     # through 7880 (WebSocket signaling) and 7882 (UDP TURN); the TCP TURN
     # fallback is 7881.
@@ -74,14 +83,24 @@ services:
     volumes:
       - ${LIVEKIT_CONFIG_DIR:-./config}/livekit.yaml:/etc/livekit.yaml:ro
     command: ["--config", "/etc/livekit.yaml"]
+    # livekit-server answers "OK" on GET :7880/ once signaling is up; wget
+    # ships in the image. Agents gate their start on this being healthy.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7880/"]
+      interval: 30s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
 
   livekit-sip:
     image: livekit/sip:v1.6.0
     container_name: voice-livekit-sip
     restart: unless-stopped
     depends_on:
-      - redis
-      - livekit-server
+      redis:
+        condition: service_healthy
+      livekit-server:
+        condition: service_healthy
     # Host networking is required — see the top-of-file preflight note.
     # Bridge mode can't forward the 10k-port RTP range cleanly and SDP
     # advertisement gets mangled.
@@ -95,8 +114,10 @@ services:
     container_name: voice-livekit-egress
     restart: unless-stopped
     depends_on:
-      - redis
-      - livekit-server
+      redis:
+        condition: service_healthy
+      livekit-server:
+        condition: service_healthy
     cap_add:
       - SYS_ADMIN
     shm_size: "1gb"
