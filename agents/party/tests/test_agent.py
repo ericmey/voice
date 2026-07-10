@@ -80,8 +80,12 @@ class TestAgentClass:
         for tool in expected:
             assert hasattr(agent, tool), f"Missing tool: {tool}"
 
-    def test_chained_llm_model_is_current_gemini_lite(self, agent_module):
-        assert agent_module._CHAINED_LLM_MODEL == "gemini-3.1-flash-lite-preview"
+    def test_sumi_local_endpoints_configured(self, agent_module):
+        """Sumi's chain points at the fully-local inference services on mizuki:
+        Riva ASR (:50051), Nemo/llama.cpp (:8090), Orpheus TTS (:5005)."""
+        assert agent_module._RIVA_ASR_SERVER.endswith(":50051")
+        assert "8090" in agent_module._NEMO_BASE_URL
+        assert "5005" in agent_module._ORPHEUS_BASE_URL
 
     def test_retired_gateway_tools_absent(self, agent_module):
         """The OpenClaw gateway is gone. A prompt that promises a tool the
@@ -166,15 +170,10 @@ class TestProviderImports:
 
         assert silero_plugin is not None
 
-    def test_import_google_llm(self):
-        from livekit.plugins import google as google_plugin
+    def test_import_nvidia_stt(self):
+        from livekit.plugins import nvidia as nvidia_plugin
 
-        assert google_plugin is not None
-
-    def test_import_elevenlabs_tts(self):
-        from livekit.plugins import elevenlabs as elevenlabs_plugin
-
-        assert elevenlabs_plugin is not None
+        assert nvidia_plugin is not None
 
     def test_import_end_call_tool(self):
         from livekit.agents.beta import EndCallTool

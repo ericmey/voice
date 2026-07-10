@@ -23,8 +23,7 @@ from pathlib import Path
 from livekit.agents import Agent, AgentSession, JobContext, cli
 from livekit.agents.beta import EndCallTool
 from livekit.agents.worker import AgentServer
-from livekit.plugins import elevenlabs as elevenlabs_plugin
-from livekit.plugins import google as google_plugin
+from livekit.plugins import nvidia as nvidia_plugin
 from livekit.plugins import openai as openai_plugin
 from livekit.plugins import silero as silero_plugin
 from sdk.audio_recording import (
@@ -50,12 +49,12 @@ load_env()
 
 logger = logging.getLogger("voice.agent")
 
-# ElevenLabs voice ID (Harem World default — Nyla's voice for now).
-_ELEVENLABS_VOICE_ID = "AEW6JTgnyoPaoB9zlK3S"
-_ELEVENLABS_MODEL = (
-    "eleven_flash_v2_5"  # streaming-compatible; eleven_v3 doesn't support multi-stream WS
-)
-_CHAINED_LLM_MODEL = "gemini-3.1-flash-lite-preview"
+# Sumi's fully-local inference services, all on mizuki's Blackwell card, reached
+# from the agent container via the host's LAN IP.
+_SUMI_HOST = "10.0.20.25"
+_RIVA_ASR_SERVER = f"{_SUMI_HOST}:50051"  # Riva Parakeet ASR (gRPC)
+_NEMO_BASE_URL = f"http://{_SUMI_HOST}:8090/v1"  # Mistral Nemo via llama.cpp
+_ORPHEUS_BASE_URL = f"http://{_SUMI_HOST}:5005/v1"  # Orpheus TTS (OpenAI-compatible)
 
 # --- persona -----------------------------------------------------------
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
@@ -149,7 +148,9 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     trace(f"caller source={caller.source} from={caller_from!r} call_id={call_sid!r}")
 
-    stt = openai_plugin.STT(model="whisper-1", language="en")
+    # Sumi's fully-local chained pipeline (all on mizuki's Blackwell card):
+    # Riva ASR (STT) -> Mistral Nemo / llama.cpp (LLM) -> Orpheus (TTS).
+    stt = nvidia_plugin.STT(server=_RIVA_ASR_SERVER, use_ssl=False, language_code="en-US")
 
     vad = silero_plugin.VAD.load(
         min_speech_duration=0.1,
@@ -157,12 +158,14 @@ async def entrypoint(ctx: JobContext) -> None:
         prefix_padding_duration=0.4,
     )
 
-    llm = google_plugin.LLM(model=_CHAINED_LLM_MODEL, temperature=0.8)
+    llm = openai_plugin.LLM(model="nemo", base_url=_NEMO_BASE_URL, api_key="sk-local")
 
-    tts = elevenlabs_plugin.TTS(
-        voice_id=_ELEVENLABS_VOICE_ID,
-        model=_ELEVENLABS_MODEL,
-        language="en",
+    tts = openai_plugin.TTS(
+        model="orpheus",
+        voice="tara",
+        base_url=_ORPHEUS_BASE_URL,
+        api_key="sk-local",
+        response_format="wav",
     )
 
     extra_tools = [
