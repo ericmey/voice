@@ -1,33 +1,31 @@
 #!/usr/bin/env bash
 #
 # Exit-non-zero if anything in the voice stack is unhealthy. Meant to be
-# cron-runnable or wired into a Discord webhook later.
+# cron-runnable or wired into a Discord webhook.
+#
+# Deployment reality (2026-07-10): the stack runs as Docker Compose on
+# mizuki (Ubuntu). The four voice agents are containers (voice-agent-<name>),
+# not launchd jobs, and their "registered worker" signal is on container
+# stdout (docker logs), not a log file. This script keys off Docker state
+# and Redis, so it works on the host it actually runs on.
 #
 # Checks:
-#   1. redis  — reachable on 127.0.0.1:6379
-#   2. livekit-server — container up + /rtc/validate responds
-#   3. livekit-sip    — container up + listening on 5060
-#   4. livekit-egress — container up for local audio recordings
-#   5. agents — PID live, registered-worker line in log
-#   6. SIP routing — trunk and dispatch rules present
+#   1. docker         — the daemon is reachable
+#   2. redis          — voice-redis answers PING
+#   3. livekit-server — container up + :7880 responds
+#   4. livekit-sip    — container up (network_mode: host, no docker port map)
+#   5. livekit-egress — container up
+#   6. agents         — each voice-agent-<name> up, low restart count,
+#                       and a "registered worker" line in its logs
+#   7. SIP routing     — sip_inbound_trunk + sip_dispatch_rule present in Redis
 #
-# Exits 0 if all green, 1 if any check failed. Writes a summary line per
-# check so you can eyeball output or pipe to alertmanager.
+# Exits 0 if all green, 1 if any check failed.
 #
 # Usage:
 #   scripts/health-check.sh              # normal
-#   scripts/health-check.sh --quiet      # only emit on failure
+#   scripts/health-check.sh --quiet      # only emit on failure (cron-friendly)
 #   scripts/health-check.sh --json       # machine-readable output
-
 set -u  # no -e: we want to run every check
-
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOG_DIR="${LIVEKIT_VOICE_LOGS:-${REPO_ROOT}/logs/voice}"
-SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
-
-# shellcheck source=scripts/lib/livekit-env.sh
-source "${REPO_ROOT}/scripts/lib/livekit-env.sh"
-livekit_reexec_with_1password_if_needed "${REPO_ROOT}" "${SCRIPT_PATH}" "$@"
 
 QUIET=false
 FORMAT=text
@@ -41,6 +39,22 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+AGENTS=(nyla aoi yua party)
+# On mizuki the health-check user may not be in the docker group; fall back
+# to sudo (cron typically runs as root or a docker-group user, where the
+# bare docker works and this branch is never taken).
+if docker ps >/dev/null 2>&1; then
+  DOCKER=(docker)
+elif sudo -n docker ps >/dev/null 2>&1; then
+  DOCKER=(sudo docker)
+else
+  DOCKER=(docker)  # let the first real call surface the permission error
+fi
+
+# Bounded: a wedged agent that restarted a handful of times across a long
+# uptime is fine; a crash-loop is not. Flag above this.
+MAX_RESTARTS="${VOICE_HEALTH_MAX_RESTARTS:-5}"
+
 failed=0
 declare -a RESULTS
 
@@ -50,27 +64,32 @@ record() {
   [[ "$status" == "ok" ]] || failed=$((failed + 1))
 }
 
-launchd_pid() {
-  local agent="$1"
-  launchctl list 2>/dev/null \
-    | awk -v lbl="ai.voice.livekit-agent-${agent}" '$3 == lbl {print $1; exit}'
-}
+_container_up() { [[ "$("${DOCKER[@]}" inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" == "true" ]]; }
+_restart_count() { "${DOCKER[@]}" inspect -f '{{.RestartCount}}' "$1" 2>/dev/null || echo "?"; }
 
-# ---- redis ---------------------------------------------------------
-if command -v redis-cli >/dev/null 2>&1 \
-  && redis-cli -h 127.0.0.1 -p 6379 ping 2>/dev/null | grep -q PONG; then
-  record "redis" ok "PONG via host redis-cli"
-elif command -v docker >/dev/null 2>&1 \
-  && docker exec voice-redis redis-cli ping 2>/dev/null | grep -q PONG; then
-  record "redis" ok "PONG via voice-redis container"
+# ---- docker daemon -------------------------------------------------
+if "${DOCKER[@]}" ps >/dev/null 2>&1; then
+  record "docker" ok "daemon reachable"
 else
-  record "redis" fail "no PONG via host redis-cli or voice-redis container"
+  record "docker" fail "cannot reach docker daemon (permission or daemon down)"
+  # Nothing else is checkable without docker — emit and bail.
+  printf '%-18s %-6s %s\n' CHECK STATUS DETAIL
+  for r in "${RESULTS[@]}"; do IFS='|' read -r n s d <<<"$r"; printf '%-18s %-6s %s\n' "$n" "$s" "$d"; done
+  exit 1
 fi
 
-# ---- livekit-server -----------------------------------------------
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx voice-livekit-server; then
-  if curl -fsS --max-time 3 http://127.0.0.1:7880/ >/dev/null 2>&1; then
-    record "livekit-server" ok "container up, :7880 responding"
+# ---- redis ---------------------------------------------------------
+if [[ "$("${DOCKER[@]}" exec voice-redis redis-cli ping 2>/dev/null)" == "PONG" ]]; then
+  record "redis" ok "PONG"
+else
+  record "redis" fail "no PONG from voice-redis"
+fi
+
+# ---- livekit-server ------------------------------------------------
+if _container_up voice-livekit-server; then
+  if "${DOCKER[@]}" exec voice-livekit-server wget -q -O /dev/null --timeout=3 http://127.0.0.1:7880/ 2>/dev/null \
+    || curl -fsS --max-time 3 http://127.0.0.1:7880/ >/dev/null 2>&1; then
+    record "livekit-server" ok "up, :7880 responding"
   else
     record "livekit-server" fail "container up but :7880 not responding"
   fi
@@ -78,67 +97,44 @@ else
   record "livekit-server" fail "container not running"
 fi
 
-# ---- livekit-sip --------------------------------------------------
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx voice-livekit-sip; then
-  record "livekit-sip" ok "container up"
-else
-  record "livekit-sip" fail "container not running"
-fi
-
-# ---- livekit-egress -----------------------------------------------
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx voice-livekit-egress; then
-  record "livekit-egress" ok "container up"
-else
-  record "livekit-egress" fail "container not running"
-fi
-
-# ---- agents -------------------------------------------------------
-# Accept multiple log signatures so the check survives log-format drift.
-_agent_ok_patterns='registered worker|worker started|connected to server|session started'
-for a in nyla aoi yua party; do
-  pid_line="$(launchd_pid "$a")"
-  if [[ -n "${pid_line}" && "${pid_line}" != "-" ]]; then
-    log_file="${LOG_DIR}/agent-${a}.log"
-    if [[ -f "${log_file}" ]]; then
-      last_write_age="$(($(date +%s) - $(stat -f '%m' "${log_file}" 2>/dev/null || echo 0)))"
-      reg_line="$(grep -E "${_agent_ok_patterns}" "${log_file}" 2>/dev/null | tail -1 || true)"
-      if [[ -n "${reg_line}" ]]; then
-        worker_id="$(echo "${reg_line}" | grep -oE '"id": "[^"]+"' | head -1 | cut -d'"' -f4)"
-        record "agent-${a}" ok "pid=${pid_line} worker=${worker_id:-unknown} log_age=${last_write_age}s"
-      else
-        record "agent-${a}" fail "pid=${pid_line} but no worker-registration line in log"
-      fi
-    else
-      record "agent-${a}" fail "pid=${pid_line} but no log file"
-    fi
+# ---- livekit-sip / egress ------------------------------------------
+for svc in livekit-sip livekit-egress; do
+  if _container_up "voice-${svc}"; then
+    record "${svc}" ok "container up"
   else
-    record "agent-${a}" fail "not running under launchd"
+    record "${svc}" fail "container not running"
   fi
 done
 
-# ---- SIP routing --------------------------------------------------
-if command -v lk >/dev/null 2>&1; then
-  trunk_count="$(lk sip inbound list --json 2>/dev/null | jq '.items | length' 2>/dev/null || echo 0)"
-  dispatch_json="$(lk sip dispatch list --json 2>/dev/null || printf '{"items":[]}')"
-  if [[ "${trunk_count}" -ge 1 ]]; then
-    record "sip-trunk"  ok "${trunk_count} inbound trunk(s)"
-  else
-    record "sip-trunk"  fail "no inbound trunks registered"
+# ---- agents --------------------------------------------------------
+_agent_ok_patterns='registered worker|worker started|connected to server'
+for a in "${AGENTS[@]}"; do
+  c="voice-agent-${a}"
+  if ! _container_up "$c"; then
+    record "agent-${a}" fail "container not running"
+    continue
   fi
-  for a in nyla aoi yua party; do
-    rule_name="twilio-to-phone-${a}"
-    if printf '%s\n' "${dispatch_json}" \
-      | jq -e --arg name "${rule_name}" '.items[]? | select(.name == $name)' >/dev/null 2>&1; then
-      record "sip-rule-${a}" ok "${rule_name} registered"
-    else
-      record "sip-rule-${a}" fail "${rule_name} not registered"
-    fi
-  done
+  restarts="$(_restart_count "$c")"
+  reg_line="$("${DOCKER[@]}" logs "$c" 2>&1 | grep -E "${_agent_ok_patterns}" | tail -1)"
+  if [[ -z "${reg_line}" ]]; then
+    record "agent-${a}" fail "up (restarts=${restarts}) but no worker-registration line in logs"
+  elif [[ "${restarts}" =~ ^[0-9]+$ ]] && (( restarts > MAX_RESTARTS )); then
+    record "agent-${a}" fail "registered but restarts=${restarts} > ${MAX_RESTARTS} (crash-loop?)"
+  else
+    worker_id="$(echo "${reg_line}" | grep -oE '"id": "[^"]+"' | head -1 | cut -d'"' -f4)"
+    record "agent-${a}" ok "up, registered worker=${worker_id:-unknown} restarts=${restarts}"
+  fi
+done
+
+# ---- SIP routing (persisted in Redis) ------------------------------
+present="$("${DOCKER[@]}" exec voice-redis redis-cli exists sip_inbound_trunk sip_dispatch_rule 2>/dev/null | tr -d '[:space:]')"
+if [[ "${present}" == "2" ]]; then
+  record "sip-routing" ok "sip_inbound_trunk + sip_dispatch_rule present"
 else
-  record "sip-routing" fail "lk (livekit-cli) not found"
+  record "sip-routing" fail "routing state missing in Redis (present=${present}/2); inbound calls will fail — run scripts/register-sip-routing.sh"
 fi
 
-# ---- emit --------------------------------------------------------
+# ---- emit ----------------------------------------------------------
 if [[ "$FORMAT" == "json" ]]; then
   items_json="["
   first=true
