@@ -6,10 +6,10 @@ Registers as "phone-party" with LiveKit. Uses separate components:
   - LLM: Gemini 3.1 Flash-Lite Preview (text model, not multimodal)
   - TTS: ElevenLabs Flash v2.5
 
-Inherits the voice tool set (Core, Memory).
-memory_agent_tag defaults to ``"nyla-voice"`` because the
-Harem World line is Nyla-on-chained-pipeline — same person, different
-voice engine. Override when/if Party gets its own identity.
+Inherits the voice tool set (Core, Memory). Its persona is still
+Nyla-on-the-chained-pipeline until it graduates into Sumi, but its
+MEMORY is its own (``party/voice`` / ``party-voice``) so Party's calls
+no longer land in Nyla's bucket.
 
 Greeting uses session.say() — Gemini text LLM rejects generate_reply()
 at session start (sends tools without a preceding user turn).
@@ -32,7 +32,7 @@ from sdk.audio_recording import (
     start_call_audio_recording,
     wire_call_audio_attachment,
 )
-from sdk.config import AgentConfig
+from sdk.config import AgentConfig, assert_agent_identity
 from sdk.env import load_env
 from sdk.musubi_v2_client import wire_musubi_v2_shutdown
 from sdk.postcall import wire_postcall_review
@@ -72,18 +72,22 @@ def _load_persona() -> str:
 
 # --- agent class -------------------------------------------------------
 
-#: Party's operational identity. The Harem World line is Nyla on the
-#: chained STT/LLM/TTS pipeline, so the config mirrors Nyla's — same
-#: Musubi namespace (``nyla/voice``) and same bearer token. If the
-#: Party line ever gets its own identity, fork this config, give it
-#: a distinct ``<agent>/voice`` prefix, and mint a dedicated token.
-#:
+#: Party's operational identity. The Harem World line runs the chained
+#: STT/LLM/TTS pipeline; its *persona/voice* is still Nyla-on-that-pipeline
+#: until it graduates into Sumi. Its *memory* is now its own — ``party/voice``
+#: namespace, ``party-voice`` tag, and a dedicated ``MUSUBI_V2_TOKEN_PARTY``
+#: bearer (entrypoint maps it) — so Party's calls no longer bleed into Nyla's
+#: memory bucket or her greeting hook. When it becomes Sumi, rename
+#: ``party`` → ``sumi`` across this config, the entrypoint token map, and the
+#: persona in lockstep.
 PARTY_CONFIG = AgentConfig(
-    agent_name="nyla",
-    memory_agent_tag="nyla-voice",
-    musubi_v2_namespace="nyla/voice",
-    musubi_v2_presence="nyla/voice",
+    agent_name="party",
+    memory_agent_tag="party-voice",
+    musubi_v2_namespace="party/voice",
 )
+
+# Fail loud at startup if $AGENT / VOICE_AGENT_NAME disagrees with the config.
+assert_agent_identity(PARTY_CONFIG)
 
 
 class PartyAgent(
@@ -93,8 +97,8 @@ class PartyAgent(
 ):
     """Harem World agent — core + Musubi memory tools.
 
-    Config matches Nyla's because the Harem World line is Nyla on the
-    chained pipeline — same person, different voice engine.
+    Persona is Nyla-on-the-chained-pipeline until Sumi; memory identity is
+    Party's own (``party/voice``).
     """
 
     config = PARTY_CONFIG
@@ -125,9 +129,10 @@ class PartyAgent(
 server = AgentServer(port=8083)
 
 
-@server.rtc_session(agent_name="phone-party")
+@server.rtc_session(agent_name=PARTY_CONFIG.registration_name)
 async def entrypoint(ctx: JobContext) -> None:
-    logger.info("phone-party entrypoint: room=%s", ctx.room.name)
+    reg = PARTY_CONFIG.registration_name
+    logger.info("%s entrypoint: room=%s", reg, ctx.room.name)
     trace(f"entrypoint room={ctx.room.name}")
 
     await ctx.connect()
@@ -136,7 +141,8 @@ async def entrypoint(ctx: JobContext) -> None:
     caller_from = caller.caller_from
     call_sid = caller.call_id
     logger.info(
-        "phone-party caller resolved: from=%s call_id=%s source=%s",
+        "%s caller resolved: from=%s call_id=%s source=%s",
+        reg,
         caller_from,
         call_sid,
         caller.source,
@@ -181,15 +187,13 @@ async def entrypoint(ctx: JobContext) -> None:
     if not transcript_sid and ctx.room.name.startswith("phone-"):
         transcript_sid = ctx.room.name.removeprefix("phone-")
 
-    audio_recording = await start_call_audio_recording(
-        ctx, call_sid=transcript_sid, agent_name="phone-party"
-    )
+    audio_recording = await start_call_audio_recording(ctx, call_sid=transcript_sid, agent_name=reg)
     wire_call_audio_attachment(ctx, audio_recording)
 
     session = AgentSession(stt=stt, vad=vad, llm=llm, tts=tts)
-    wire_transcript_logging(session, transcript_sid, agent_name="phone-party")
-    wire_telemetry_capture(session, transcript_sid, agent_name="phone-party")
-    wire_postcall_review(session, transcript_sid, agent_name="phone-party")
+    wire_transcript_logging(session, transcript_sid, agent_name=reg)
+    wire_telemetry_capture(session, transcript_sid, agent_name=reg)
+    wire_postcall_review(session, transcript_sid, agent_name=reg)
     wire_postcall_memory(
         session,
         call_sid=transcript_sid,

@@ -40,7 +40,6 @@ YUA_CONFIG = AgentConfig(
     # Canonical Musubi under agent-as-tenant (ADR 0030): Yua writes to her own
     # ``<agent>/voice/*`` namespace.
     musubi_v2_namespace="yua/voice",
-    musubi_v2_presence="yua/voice",
 )
 
 

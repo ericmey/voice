@@ -100,7 +100,7 @@ class TestAgentClass:
     def test_config_uses_yua_musubi_namespace(self, agent_module):
         cfg = agent_module.YuaAgent.config
         assert cfg.musubi_v2_namespace == "yua/voice"
-        assert cfg.musubi_v2_presence == "yua/voice"
+        assert cfg.registration_name == "phone-yua"
 
     def test_voice_is_leda(self):
         from _shared import YUA_VOICE

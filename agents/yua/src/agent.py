@@ -16,6 +16,7 @@ from sdk.audio_recording import (
     start_call_audio_recording,
     wire_call_audio_attachment,
 )
+from sdk.config import assert_agent_identity
 from sdk.musubi_v2_client import wire_musubi_v2_shutdown
 from sdk.postcall import wire_postcall_review
 from sdk.postcall_memory import wire_postcall_memory
@@ -27,6 +28,8 @@ from sdk.transcript import wire_transcript_logging
 
 # --- env ---------------------------------------------------------------
 load_env_once()
+# Fail loud at startup if $AGENT / VOICE_AGENT_NAME disagrees with the config.
+assert_agent_identity(YUA_CONFIG)
 
 logger = logging.getLogger("voice.agent")
 
@@ -34,9 +37,10 @@ logger = logging.getLogger("voice.agent")
 server = AgentServer(port=8085)
 
 
-@server.rtc_session(agent_name="phone-yua")
+@server.rtc_session(agent_name=YUA_CONFIG.registration_name)
 async def entrypoint(ctx: JobContext) -> None:
-    logger.info("phone-yua entrypoint: room=%s", ctx.room.name)
+    reg = YUA_CONFIG.registration_name
+    logger.info("%s entrypoint: room=%s", reg, ctx.room.name)
     trace(f"entrypoint room={ctx.room.name}")
 
     await ctx.connect()
@@ -45,7 +49,8 @@ async def entrypoint(ctx: JobContext) -> None:
     caller_from = caller.caller_from
     call_sid = caller.call_id
     logger.info(
-        "phone-yua caller resolved: from=%s call_id=%s source=%s",
+        "%s caller resolved: from=%s call_id=%s source=%s",
+        reg,
         caller_from,
         call_sid,
         caller.source,
@@ -62,15 +67,13 @@ async def entrypoint(ctx: JobContext) -> None:
     if not transcript_sid and ctx.room.name.startswith("phone-"):
         transcript_sid = ctx.room.name.removeprefix("phone-")
 
-    audio_recording = await start_call_audio_recording(
-        ctx, call_sid=transcript_sid, agent_name="phone-yua"
-    )
+    audio_recording = await start_call_audio_recording(ctx, call_sid=transcript_sid, agent_name=reg)
     wire_call_audio_attachment(ctx, audio_recording)
 
     session = AgentSession(llm=build_model())
-    wire_transcript_logging(session, transcript_sid, agent_name="phone-yua")
-    wire_telemetry_capture(session, transcript_sid, agent_name="phone-yua")
-    wire_postcall_review(session, transcript_sid, agent_name="phone-yua")
+    wire_transcript_logging(session, transcript_sid, agent_name=reg)
+    wire_telemetry_capture(session, transcript_sid, agent_name=reg)
+    wire_postcall_review(session, transcript_sid, agent_name=reg)
     wire_postcall_memory(
         session,
         call_sid=transcript_sid,

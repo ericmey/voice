@@ -14,7 +14,7 @@ from livekit.agents import Agent
 from livekit.agents.beta import EndCallTool
 from livekit.plugins import google as google_plugin
 from livekit.plugins.google.tools import GoogleSearch
-from sdk.config import NYLA_DEFAULT_CONFIG, AgentConfig
+from sdk.config import UNCONFIGURED_CONFIG, AgentConfig
 from sdk.env import load_env
 
 from tools.core import CoreToolsMixin
@@ -59,7 +59,7 @@ class BaseRealtimeAgent(
     override ``build_model`` if you need a different voice or VAD tuning.
     """
 
-    config: AgentConfig = NYLA_DEFAULT_CONFIG
+    config: AgentConfig = UNCONFIGURED_CONFIG
 
     def __init__(
         self,

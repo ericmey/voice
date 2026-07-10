@@ -14,16 +14,19 @@ set -eu
 case "$AGENT" in
 	aoi) token_var=MUSUBI_V2_TOKEN_AOI ;;
 	yua) token_var=MUSUBI_V2_TOKEN_YUA ;;
-	# party mirrors nyla's AgentConfig namespace, so it shares her bearer.
-	nyla | party) token_var=MUSUBI_V2_TOKEN_NYLA ;;
+	nyla) token_var=MUSUBI_V2_TOKEN_NYLA ;;
+	# Party writes to its own party/voice namespace now, so it carries its own
+	# bearer (no longer shared with Nyla). Its persona is still Nyla-cloned
+	# until it graduates into Sumi, but its memory is separated.
+	party) token_var=MUSUBI_V2_TOKEN_PARTY ;;
 	*)
 		echo "agent-entrypoint: no Musubi token mapping for AGENT=$AGENT" >&2
 		exit 64
 		;;
 esac
 
-# Indirect expansion, so the error below can name the variable that is actually
-# required (party needs NYLA's bearer, not a nonexistent MUSUBI_V2_TOKEN_PARTY).
+# Indirect expansion, so the error below names the variable that is actually
+# required for this agent.
 eval "musubi_token=\${${token_var}:-}"
 
 # Refuse to start on an empty bearer. Musubi answers 401 "missing bearer token",

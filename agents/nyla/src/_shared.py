@@ -44,7 +44,6 @@ NYLA_CONFIG = AgentConfig(
     agent_name="nyla",
     memory_agent_tag="nyla-voice",
     musubi_v2_namespace="nyla/voice",
-    musubi_v2_presence="nyla/voice",
 )
 
 

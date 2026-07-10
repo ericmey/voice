@@ -38,7 +38,6 @@ AOI_CONFIG = AgentConfig(
     # Canonical Musubi under agent-as-tenant (ADR 0030): Aoi writes to her own
     # ``<agent>/voice/*`` namespace.
     musubi_v2_namespace="aoi/voice",
-    musubi_v2_presence="aoi/voice",
 )
 
 

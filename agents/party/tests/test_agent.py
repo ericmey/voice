@@ -50,12 +50,15 @@ class TestAgentClass:
         with pytest.raises(ModuleNotFoundError):
             importlib.import_module("tools.sessions")
 
-    def test_config_is_nyla_identity(self, agent_module):
-        """Harem World line uses Nyla's operational identity — same person,
-        different voice engine."""
+    def test_config_has_own_memory_identity(self, agent_module):
+        """Party's memory identity is now its own (party/voice / party-voice),
+        no longer folded into Nyla's bucket. Persona stays Nyla-cloned until
+        Party graduates into Sumi."""
         cfg = agent_module.PartyAgent.config
-        assert cfg.agent_name == "nyla"
-        assert cfg.memory_agent_tag == "nyla-voice"
+        assert cfg.agent_name == "party"
+        assert cfg.memory_agent_tag == "party-voice"
+        assert cfg.musubi_v2_namespace == "party/voice"
+        assert cfg.registration_name == "phone-party"
 
     def test_construction_with_defaults(self, agent_module):
         agent = agent_module.PartyAgent(instructions="test")

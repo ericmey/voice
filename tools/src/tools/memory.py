@@ -30,7 +30,7 @@ import uuid
 from typing import Any
 
 from livekit.agents import Agent, function_tool
-from sdk.config import NYLA_DEFAULT_CONFIG, AgentConfig
+from sdk.config import UNCONFIGURED_CONFIG, AgentConfig
 from sdk.musubi_v2_client import (
     MusubiV2AuthError,
     MusubiV2Client,
@@ -77,104 +77,68 @@ class MusubiToolsMixin(Agent):
     (``musubi_search``) fan via ``<agent>/*/episodic``.
 
     Reads:
-      - ``self.config.musubi_v2_namespace`` (or ``musubi_v2_presence``
-        for back-compat) — resolves the 3-segment namespace
-        ``<agent>/<channel>/<plane>``. Falls back to
-        ``eric/<agent_name>`` when unset (legacy human-as-tenant
-        compatibility; live configs use the canonical agent-as-tenant
-        form).
+      - ``self.config.musubi_v2_namespace`` — the ``<agent>/<channel>``
+        prefix; the plane segment (``/episodic`` etc.) is appended per
+        call. Unset/malformed degrades to "memory unavailable" — there is
+        no ``eric/<agent>`` fabrication fallback (see ``_namespace_prefix``).
       - ``MUSUBI_V2_BASE_URL`` / ``MUSUBI_V2_TOKEN`` env.
     """
 
-    config: AgentConfig = NYLA_DEFAULT_CONFIG
+    config: AgentConfig = UNCONFIGURED_CONFIG
 
     def _musubi_v2_client(self) -> MusubiV2Client:
         """One place to construct the client so tests can monkeypatch."""
         return MusubiV2Client(config=MusubiV2ClientConfig.from_env())
 
-    def _own_episodic_namespace(self) -> str | None:
-        """Resolve this agent's own episodic namespace.
+    def _namespace_prefix(self) -> str | None:
+        """The validated ``<agent>/<channel>`` prefix, or ``None`` to degrade.
 
-        Uses ``config.musubi_v2_namespace`` (documented as the
-        namespace-scoping field) and appends ``/episodic``. Falls
-        back to ``config.musubi_v2_presence`` for backward compat
-        with configs that set presence but not namespace, then to
-        ``eric/<agent_name>/episodic``.
-
-        Returns ``None`` when the config prefix is malformed (not
-        2-segment), matching ``MusubiVoiceToolsMixin._ns()``
-        degradation behavior.
+        Single source for every namespace the mixin builds. Returns ``None``
+        — degrading the memory op to "unavailable" — when the agent has no
+        ``musubi_v2_namespace`` or it isn't the canonical 2-segment
+        agent-as-tenant form (ADR 0030). There is deliberately no
+        ``eric/<agent>`` fabrication fallback: an unconfigured agent must not
+        silently write into a real tenant — that was the misattribution bug.
         """
-        prefix = self.config.musubi_v2_namespace or self.config.musubi_v2_presence
+        prefix = self.config.musubi_v2_namespace
         if not prefix:
-            prefix = f"eric/{self.config.agent_name}"
-        segments = prefix.split("/")
-        if len(segments) != 2:
             logger.warning(
-                "musubi_v2_namespace/presence %r is not 2-segment; episodic namespace will degrade",
+                "musubi_v2_namespace unset (agent=%r); memory degrades to unavailable",
+                self.config.agent_name,
+            )
+            return None
+        if len(prefix.split("/")) != 2:
+            logger.warning(
+                "musubi_v2_namespace %r is not <agent>/<channel>; memory degrades",
                 prefix,
             )
             return None
-        return f"{prefix}/episodic"
-
-    def _own_thought_namespace(self) -> str | None:
-        """Resolve this agent's own thought namespace for ``musubi_think`` sends.
-
-        Same prefix-resolution path as :meth:`_own_episodic_namespace`,
-        but the trailing plane is ``thought`` instead of ``episodic``.
-        Returns ``None`` when the prefix is malformed (degrades the
-        tool to a friendly error).
-        """
-        prefix = self.config.musubi_v2_namespace or self.config.musubi_v2_presence
-        if not prefix:
-            prefix = f"eric/{self.config.agent_name}"
-        segments = prefix.split("/")
-        if len(segments) != 2:
-            logger.warning(
-                "musubi_v2_namespace/presence %r is not 2-segment; thought namespace will degrade",
-                prefix,
-            )
-            return None
-        return f"{prefix}/thought"
-
-    def _own_presence(self) -> str:
-        """Resolve a ``<agent>/<channel>`` presence string for ``from_presence`` claims.
-
-        Prefers the explicit 2-segment namespace prefix; falls back to
-        ``eric/<agent_name>`` legacy form when unset (matches the
-        episodic-namespace fallback so behaviour is consistent across
-        the mixin).
-        """
-        prefix = self.config.musubi_v2_namespace or self.config.musubi_v2_presence
-        if not prefix:
-            prefix = f"eric/{self.config.agent_name}"
         return prefix
 
+    def _own_episodic_namespace(self) -> str | None:
+        """This agent's own ``<agent>/<channel>/episodic`` namespace, or None."""
+        prefix = self._namespace_prefix()
+        return f"{prefix}/episodic" if prefix else None
+
+    def _own_thought_namespace(self) -> str | None:
+        """This agent's own ``<agent>/<channel>/thought`` namespace, or None."""
+        prefix = self._namespace_prefix()
+        return f"{prefix}/thought" if prefix else None
+
+    def _own_presence(self) -> str | None:
+        """This agent's ``<agent>/<channel>`` presence for ``from_presence``, or None."""
+        return self._namespace_prefix()
+
     def _tenant_wildcard_episodic_namespace(self) -> str | None:
-        """Resolve a tenant-wide wildcard namespace for cross-channel search.
+        """Tenant-wide ``<tenant>/*/episodic`` for cross-channel search (ADR 0031).
 
-        Per Musubi ADR 0031: ``<tenant>/*/episodic`` fans an episodic
-        retrieve across every channel the tenant has captured into. For
-        Nyla on the voice channel that means voice + discord
-        + any future surface — all read in one call. The agent still
-        knows where each row came from because every result row carries
-        its concrete stored namespace.
-
-        Returns ``None`` when the agent's namespace is malformed (same
-        degradation path as :meth:`_own_episodic_namespace`).
+        Fans an episodic retrieve across every channel the tenant captured
+        into; each result row still carries its concrete stored namespace, so
+        provenance survives. ``None`` degrades when the prefix is unset or
+        malformed.
         """
-        prefix = self.config.musubi_v2_namespace or self.config.musubi_v2_presence
-        if not prefix:
-            prefix = f"eric/{self.config.agent_name}"
-        segments = prefix.split("/")
-        if len(segments) != 2:
-            logger.warning(
-                "musubi_v2_namespace/presence %r is not 2-segment; tenant-wide search will degrade",
-                prefix,
-            )
-            return None
-        tenant = segments[0]
-        return f"{tenant}/*/episodic"
+        prefix = self._namespace_prefix()
+        return f"{prefix.split('/')[0]}/*/episodic" if prefix else None
 
     async def _scroll_episodic_recent(
         self,
@@ -442,23 +406,21 @@ class MusubiToolsMixin(Agent):
         agents (see module docstring). Kept callable for programmatic use and
         so re-enabling the tool is a one-line wrapper away."""
         trace(f"tool=musubi_think to={to_presence!r} content={content[:60]!r} channel={channel!r}")
-        namespace = self._own_thought_namespace()
-        if namespace is None:
-            logger.debug("musubi_think: no v2 namespace configured; degrading")
+        prefix = self._namespace_prefix()
+        if prefix is None:
+            logger.debug("musubi_think: no namespace configured; degrading")
             return _DEGRADED_LOOKUP
         if not to_presence.strip():
             return "Error: to_presence is required."
         if not content.strip():
             return "Error: content is required."
 
-        from_presence = self._own_presence()
-        # Bare ``<agent>`` aliases resolve to ``<agent>/<this-channel>``
-        # (this adapter is the voice channel). Canonical agent-as-tenant
-        # form per ADR 0030 — distinct from the pre-v1.0 musubi_voice.py
-        # version which resolved to ``eric/<agent>``.
-        own_channel = (
-            self._own_presence().split("/", 1)[1] if "/" in self._own_presence() else "voice"
-        )
+        namespace = f"{prefix}/thought"
+        from_presence = prefix
+        # Bare ``<agent>`` aliases resolve to ``<agent>/<this-channel>``. The
+        # prefix is a validated 2-segment ``<agent>/<channel>`` (agent-as-tenant,
+        # ADR 0030), so the channel is always the second segment.
+        own_channel = prefix.split("/", 1)[1]
         resolved_to = to_presence if "/" in to_presence else f"{to_presence}/{own_channel}"
 
         try:

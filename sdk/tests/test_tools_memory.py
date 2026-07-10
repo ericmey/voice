@@ -11,7 +11,7 @@ import asyncio
 from typing import Any, cast
 
 import pytest
-from sdk.config import NYLA_DEFAULT_CONFIG, AgentConfig
+from sdk.config import UNCONFIGURED_CONFIG, AgentConfig
 from tools.memory import MusubiToolsMixin
 
 
@@ -53,10 +53,12 @@ def test_memory_mixin_exposes_fetch_recent_context_helper():
     assert callable(MusubiToolsMixin.fetch_recent_context)
 
 
-def test_memory_mixin_default_config_is_nyla():
-    """Absent an override, stored memories are tagged as Nyla's."""
-    assert MusubiToolsMixin.config is NYLA_DEFAULT_CONFIG
-    assert MusubiToolsMixin.config.memory_agent_tag == "nyla-voice"
+def test_memory_mixin_default_config_is_unconfigured():
+    """Absent an override the mixin defaults to the fail-loud sentinel — a
+    forgotten config degrades memory to 'unavailable', it does not silently
+    become Nyla (the old NYLA_DEFAULT_CONFIG footgun)."""
+    assert MusubiToolsMixin.config is UNCONFIGURED_CONFIG
+    assert MusubiToolsMixin.config.musubi_v2_namespace is None
 
 
 def test_memory_mixin_config_is_overridable():
@@ -70,8 +72,8 @@ def test_memory_mixin_config_is_overridable():
         config = aoi_cfg
 
     assert _AoiMemory.config.memory_agent_tag == "aoi-voice"
-    # Parent class unaffected.
-    assert MusubiToolsMixin.config.memory_agent_tag == "nyla-voice"
+    # Parent class unaffected — still the fail-loud sentinel default.
+    assert MusubiToolsMixin.config is UNCONFIGURED_CONFIG
 
 
 def test_composed_agent_has_memory_tools(agent):
@@ -151,7 +153,6 @@ async def test_musubi_search_uses_tenant_wildcard_namespace(agent):
         agent_name="nyla",
         memory_agent_tag="nyla-voice",
         musubi_v2_namespace="nyla/voice",
-        musubi_v2_presence="nyla/voice",
     )
 
     await _unwrap(MusubiToolsMixin.musubi_search)(agent, query="prank", limit=5)
@@ -173,7 +174,6 @@ async def test_musubi_search_passes_state_filter_for_fresh_save_recall(agent):
         agent_name="nyla",
         memory_agent_tag="nyla-voice",
         musubi_v2_namespace="nyla/voice",
-        musubi_v2_presence="nyla/voice",
     )
 
     await _unwrap(MusubiToolsMixin.musubi_search)(agent, query="anything", limit=5)
@@ -208,7 +208,6 @@ async def test_musubi_search_returns_origin_channel_in_each_row(agent):
         agent_name="nyla",
         memory_agent_tag="nyla-voice",
         musubi_v2_namespace="nyla/voice",
-        musubi_v2_presence="nyla/voice",
     )
 
     rendered = await _unwrap(MusubiToolsMixin.musubi_search)(agent, query="prank")
@@ -278,7 +277,6 @@ async def test_musubi_think_uses_own_thought_namespace(agent) -> None:
         agent_name="aoi",
         memory_agent_tag="aoi-voice",
         musubi_v2_namespace="aoi/voice",
-        musubi_v2_presence="aoi/voice",
     )
 
     await MusubiToolsMixin.think_impl(agent, to_presence="nyla/voice", content="hey")
@@ -300,7 +298,6 @@ async def test_musubi_think_resolves_bare_recipient_to_own_channel(agent) -> Non
         agent_name="aoi",
         memory_agent_tag="aoi-voice",
         musubi_v2_namespace="aoi/voice",
-        musubi_v2_presence="aoi/voice",
     )
 
     await MusubiToolsMixin.think_impl(agent, to_presence="nyla", content="ping")
@@ -318,7 +315,6 @@ async def test_musubi_think_rejects_empty_recipient_or_content(agent) -> None:
         agent_name="aoi",
         memory_agent_tag="aoi-voice",
         musubi_v2_namespace="aoi/voice",
-        musubi_v2_presence="aoi/voice",
     )
 
     empty_recipient = await MusubiToolsMixin.think_impl(agent, to_presence="", content="hi")
@@ -339,7 +335,6 @@ async def test_musubi_think_returns_object_id_in_ack(agent) -> None:
         agent_name="aoi",
         memory_agent_tag="aoi-voice",
         musubi_v2_namespace="aoi/voice",
-        musubi_v2_presence="aoi/voice",
     )
 
     rendered = await MusubiToolsMixin.think_impl(

@@ -27,6 +27,7 @@ TOKENS = {
     "MUSUBI_V2_TOKEN_AOI": "tok-aoi",
     "MUSUBI_V2_TOKEN_NYLA": "tok-nyla",
     "MUSUBI_V2_TOKEN_YUA": "tok-yua",
+    "MUSUBI_V2_TOKEN_PARTY": "tok-party",
 }
 
 
@@ -65,8 +66,8 @@ def _parsed(result) -> dict[str, str]:
         ("aoi", "tok-aoi"),
         ("yua", "tok-yua"),
         ("nyla", "tok-nyla"),
-        # party mirrors nyla's AgentConfig namespace, so it shares her bearer.
-        ("party", "tok-nyla"),
+        # party carries its own bearer now — its memory is party/voice, not Nyla's.
+        ("party", "tok-party"),
     ],
 )
 def test_resolves_the_per_agent_musubi_bearer(agent, expected_token):
@@ -104,12 +105,11 @@ def test_refuses_to_start_on_an_empty_bearer():
 
 
 def test_empty_bearer_error_names_the_variable_actually_required():
-    """party needs NYLA's bearer. Naming MUSUBI_V2_TOKEN_PARTY would send an
-    operator hunting for a variable that does not exist."""
-    result = _run("party", {"MUSUBI_V2_TOKEN_NYLA": ""})
+    """party needs its own MUSUBI_V2_TOKEN_PARTY now. The error must name the
+    variable the operator actually has to set."""
+    result = _run("party", {"MUSUBI_V2_TOKEN_PARTY": ""})
     assert result.returncode == EX_CONFIG
-    assert "MUSUBI_V2_TOKEN_NYLA is empty" in result.stderr
-    assert "MUSUBI_V2_TOKEN_PARTY" not in result.stderr
+    assert "MUSUBI_V2_TOKEN_PARTY is empty" in result.stderr
 
 
 def test_unknown_agent_is_rejected():
