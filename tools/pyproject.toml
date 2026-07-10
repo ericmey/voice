@@ -22,6 +22,10 @@ dev = [
     "pytest-asyncio>=1",
 ]
 
+# Tool tests live in ../sdk/tests (test_tools_core.py, test_tools_memory.py,
+# test_composition.py) — they exercise this package across the workspace
+# boundary via the shared venv. There is no in-package suite yet, so
+# `cd tools && pytest` reports "no tests ran" (exit 5), not a green pass.
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
 

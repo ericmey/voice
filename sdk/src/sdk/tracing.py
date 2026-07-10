@@ -395,7 +395,7 @@ def _install_http_instrumentation(provider: Any) -> None:
 
     * **httpx** — openai plugin, google.genai SDK
     * **aiohttp-client** — elevenlabs plugin
-    * **requests** — Twilio SDK and gateway HTTP calls
+    * **requests** — Twilio SDK HTTP calls
     """
     try:
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
