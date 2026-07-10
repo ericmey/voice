@@ -11,11 +11,11 @@ via agent-bridge (TUI inject), not a Musubi thought-inbox scroll — no
 presence subscribes to ``/v1/thoughts/stream`` for these four agents — so a
 phone-side send would land in a plane nobody checks, and a persona that says
 "never say you passed something along" cannot truthfully offer it. ``think_impl``
-and ``MusubiV2Client.send_thought`` stay ready; re-add the ``@function_tool``
+and ``MusubiClient.send_thought`` stay ready; re-add the ``@function_tool``
 wrapper if a real consumer is wired. See the deleted ``musubi_think`` tool below.
 
 ``musubi_get`` was removed 2026-07-09. It was registered as a tool but
-returned a "not yet available" message, because the Python MusubiV2Client
+returned a "not yet available" message, because the Python MusubiClient
 never gained per-plane ``get(object_id)`` accessors. A prompt-visible tool
 the runtime cannot fulfil is a fabrication generator — the same defect that
 took ``openclaw_delegate`` down. Reserving a name is not worth teaching the
@@ -31,14 +31,14 @@ from typing import Any
 
 from livekit.agents import Agent, function_tool
 from sdk.config import UNCONFIGURED_CONFIG, AgentConfig
-from sdk.musubi_v2_client import (
-    MusubiV2AuthError,
-    MusubiV2Client,
-    MusubiV2ClientConfig,
-    MusubiV2ClientError,
-    MusubiV2Error,
-    MusubiV2ServerError,
-    MusubiV2TimeoutError,
+from sdk.musubi_client import (
+    MusubiAuthError,
+    MusubiClient,
+    MusubiClientConfig,
+    MusubiClientError,
+    MusubiError,
+    MusubiServerError,
+    MusubiTimeoutError,
 )
 from sdk.trace import trace
 
@@ -86,9 +86,9 @@ class MusubiToolsMixin(Agent):
 
     config: AgentConfig = UNCONFIGURED_CONFIG
 
-    def _musubi_v2_client(self) -> MusubiV2Client:
+    def _musubi_client(self) -> MusubiClient:
         """One place to construct the client so tests can monkeypatch."""
-        return MusubiV2Client(config=MusubiV2ClientConfig.from_env())
+        return MusubiClient(config=MusubiClientConfig.from_env())
 
     def _namespace_prefix(self) -> str | None:
         """The validated ``<agent>/<channel>`` prefix, or ``None`` to degrade.
@@ -161,7 +161,7 @@ class MusubiToolsMixin(Agent):
         """
         rows: list[dict[str, Any]] = []
         cursor: str | None = None
-        client = self._musubi_v2_client()
+        client = self._musubi_client()
         page_size = min(need * _SCROLL_MULTIPLIER, 500)
 
         for _ in range(max_pages):
@@ -215,16 +215,16 @@ class MusubiToolsMixin(Agent):
                 _RECENT_CONTEXT_TIMEOUT_S,
             )
             return _DEGRADED_LOOKUP
-        except (MusubiV2TimeoutError, MusubiV2ServerError) as err:
+        except (MusubiTimeoutError, MusubiServerError) as err:
             logger.warning("fetch_recent_context: transient %s", err)
             return _DEGRADED_LOOKUP
-        except MusubiV2AuthError as err:
+        except MusubiAuthError as err:
             logger.error("fetch_recent_context: auth failure: %s", err)
             return _DEGRADED_LOOKUP
-        except MusubiV2ClientError as err:
+        except MusubiClientError as err:
             logger.error("fetch_recent_context: bad request: %s", err)
             return _DEGRADED_LOOKUP
-        except MusubiV2Error as err:
+        except MusubiError as err:
             logger.warning("fetch_recent_context: %s", err)
             return _DEGRADED_LOOKUP
 
@@ -290,23 +290,23 @@ class MusubiToolsMixin(Agent):
             return _DEGRADED_LOOKUP
 
         try:
-            response = await self._musubi_v2_client().retrieve(
+            response = await self._musubi_client().retrieve(
                 namespace=namespace,
                 query_text=query,
                 mode="deep",
                 limit=limit,
                 state_filter=_SEARCH_STATE_FILTER,
             )
-        except (MusubiV2TimeoutError, MusubiV2ServerError) as err:
+        except (MusubiTimeoutError, MusubiServerError) as err:
             logger.warning("musubi_search: transient %s", err)
             return _DEGRADED_LOOKUP
-        except MusubiV2AuthError as err:
+        except MusubiAuthError as err:
             logger.error("musubi_search: auth failure: %s", err)
             return _DEGRADED_LOOKUP
-        except MusubiV2ClientError as err:
+        except MusubiClientError as err:
             logger.error("musubi_search: bad request: %s", err)
             return _DEGRADED_LOOKUP
-        except MusubiV2Error as err:
+        except MusubiError as err:
             logger.warning("musubi_search: %s", err)
             return _DEGRADED_LOOKUP
 
@@ -365,23 +365,23 @@ class MusubiToolsMixin(Agent):
         idem = f"livekit-musubi-remember:{uuid.uuid4().hex}"
 
         try:
-            ack = await self._musubi_v2_client().capture_memory(
+            ack = await self._musubi_client().capture_memory(
                 namespace=namespace,
                 content=content,
                 tags=topic_list,
                 importance=importance,
                 idempotency_key=idem,
             )
-        except (MusubiV2TimeoutError, MusubiV2ServerError) as err:
+        except (MusubiTimeoutError, MusubiServerError) as err:
             logger.warning("musubi_remember: transient %s", err)
             return _DEGRADED_STORE
-        except MusubiV2AuthError as err:
+        except MusubiAuthError as err:
             logger.error("musubi_remember: auth failure: %s", err)
             return "Memory didn't save — auth failed."
-        except MusubiV2ClientError as err:
+        except MusubiClientError as err:
             logger.error("musubi_remember: bad request: %s", err)
             return "Memory didn't save — request rejected."
-        except MusubiV2Error as err:
+        except MusubiError as err:
             logger.warning("musubi_remember: %s", err)
             return "Memory didn't save — unknown error."
 
@@ -424,7 +424,7 @@ class MusubiToolsMixin(Agent):
         resolved_to = to_presence if "/" in to_presence else f"{to_presence}/{own_channel}"
 
         try:
-            ack = await self._musubi_v2_client().send_thought(
+            ack = await self._musubi_client().send_thought(
                 namespace=namespace,
                 from_presence=from_presence,
                 to_presence=resolved_to,
@@ -432,16 +432,16 @@ class MusubiToolsMixin(Agent):
                 channel=channel,
                 importance=importance,
             )
-        except (MusubiV2TimeoutError, MusubiV2ServerError) as err:
+        except (MusubiTimeoutError, MusubiServerError) as err:
             logger.warning("musubi_think: transient %s", err)
             return "Thought didn't deliver — Musubi is unavailable."
-        except MusubiV2AuthError as err:
+        except MusubiAuthError as err:
             logger.error("musubi_think: auth failure: %s", err)
             return "Thought didn't deliver — auth failed."
-        except MusubiV2ClientError as err:
+        except MusubiClientError as err:
             logger.error("musubi_think: bad request: %s", err)
             return "Thought didn't deliver — request rejected."
-        except MusubiV2Error as err:
+        except MusubiError as err:
             logger.warning("musubi_think: %s", err)
             return "Thought didn't deliver — unknown error."
 

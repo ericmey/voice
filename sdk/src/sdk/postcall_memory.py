@@ -45,10 +45,10 @@ import google.genai as genai
 from google.genai import types as genai_types
 from livekit.agents import AgentSession
 
-from .musubi_v2_client import (
-    MusubiV2Client,
-    MusubiV2ClientConfig,
-    MusubiV2Error,
+from .musubi_client import (
+    MusubiClient,
+    MusubiClientConfig,
+    MusubiError,
 )
 from .trace import trace
 
@@ -344,7 +344,7 @@ async def _extract_memories(transcript: str) -> ExtractionResult:
 
 async def _capture_one(
     *,
-    client: MusubiV2Client,
+    client: MusubiClient,
     namespace: str,
     memory: ExtractedMemory,
     speaker_tag: str | None,
@@ -372,7 +372,7 @@ async def _capture_one(
             importance=5,
             idempotency_key=idem,
         )
-    except MusubiV2Error as exc:
+    except MusubiError as exc:
         logger.warning(
             "postcall_memory: capture failed for call_sid=%s: %s",
             call_sid,
@@ -393,7 +393,7 @@ async def run_extraction(
     call_sid: str,
     namespace: str,
     speaker_tag: str | None,
-    client: MusubiV2Client | None = None,
+    client: MusubiClient | None = None,
 ) -> int:
     """Read the transcript, extract memories, capture them all.
 
@@ -403,7 +403,7 @@ async def run_extraction(
     blocks the caller.
 
     If ``client`` is None, builds one from environment via
-    :meth:`MusubiV2ClientConfig.from_env`.
+    :meth:`MusubiClientConfig.from_env`.
     """
     started = time.monotonic()
 
@@ -455,8 +455,8 @@ async def run_extraction(
         return _complete(result.status)
 
     if client is None:
-        cfg = MusubiV2ClientConfig.from_env()
-        client = MusubiV2Client(cfg)
+        cfg = MusubiClientConfig.from_env()
+        client = MusubiClient(cfg)
 
     captured = 0
     for memory in result.memories:

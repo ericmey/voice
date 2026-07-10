@@ -28,10 +28,10 @@ import uuid
 
 import pytest
 from sdk.config import AgentConfig
-from sdk.musubi_v2_client import (
-    MusubiV2AuthError,
-    MusubiV2Client,
-    MusubiV2ClientConfig,
+from sdk.musubi_client import (
+    MusubiAuthError,
+    MusubiClient,
+    MusubiClientConfig,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -46,9 +46,9 @@ _skip_reason = "set MUSUBI_LIVE_BASE_URL + MUSUBI_LIVE_TOKEN to run"
 skip_unless_live = pytest.mark.skipif(not _live_enabled, reason=_skip_reason)
 
 
-def _live_client() -> MusubiV2Client:
-    return MusubiV2Client(
-        config=MusubiV2ClientConfig(
+def _live_client() -> MusubiClient:
+    return MusubiClient(
+        config=MusubiClientConfig(
             base_url=_BASE_URL or "",
             token=_TOKEN or "",
             timeout_s=10.0,
@@ -107,10 +107,10 @@ async def test_live_send_thought_accepts_three_segment_namespace() -> None:
 @skip_unless_live
 async def test_live_scope_violation_raises_auth_error() -> None:
     """Writing to a namespace outside the token's scope must surface
-    as `MusubiV2AuthError` so the voice tool's catch path can degrade
+    as `MusubiAuthError` so the voice tool's catch path can degrade
     gracefully rather than blowing up the turn."""
     client = _live_client()
-    with pytest.raises(MusubiV2AuthError):
+    with pytest.raises(MusubiAuthError):
         await client.capture_memory(
             namespace="eric/claude-code/episodic",
             content="should-be-403",
@@ -139,7 +139,7 @@ async def test_live_canonical_search_against_wildcard_namespace() -> None:
 
     inst = MusubiToolsMixin.__new__(MusubiToolsMixin)
     inst.config = cfg  # type: ignore[misc]
-    inst._musubi_v2_client = lambda: _live_client()  # type: ignore[method-assign]
+    inst._musubi_client = lambda: _live_client()  # type: ignore[method-assign]
 
     # Bypass the @function_tool descriptor to drive the coroutine
     # directly (same pattern as the unit tests).

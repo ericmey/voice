@@ -25,7 +25,7 @@ whole stack.
 | SIP trunk + dispatch rules | Yes for phone calls | `config/sip-*.json`, `docs/twilio-trunk.md` | Twilio, Telnyx, carrier SBC, or any LiveKit SIP-compatible provider |
 | Agents/personas | Yes | `agents/*/src/agent.py`, `agents/*/prompts/system.md` | Your own agent packages, names, voices, prompts, model choices |
 | Tools | Optional but useful | `tools/src/tools/`, `tools/README.md` | Your own LiveKit `@function_tool` mixins |
-| Musubi memory | Optional | `MUSUBI_V2_*`, `sdk/src/sdk/musubi_v2_client.py`, `tools/src/tools/memory.py` | Another memory API, local store, or remove memory tools |
+| Musubi memory | Optional | `MUSUBI_V2_*`, `sdk/src/sdk/musubi_client.py`, `tools/src/tools/memory.py` | Another memory API, local store, or remove memory tools |
 | Observability | Recommended | `VOICE_OTLP_*`, `docs/OBSERVABILITY.md` | Grafana, Honeycomb, Datadog, New Relic, or any OTLP/HTTP backend |
 | Agent lifecycle | Yes | `docker-compose.agents.yaml`, `Dockerfile.agent` | systemd, Nomad, Kubernetes, or another container/process supervisor |
 
@@ -72,7 +72,7 @@ surface of your own.
 
 Musubi is used for episodic memory and presence-to-presence delivery. If
 you do not run Musubi, remove `MusubiToolsMixin` from agent inheritance or
-replace `sdk/src/sdk/musubi_v2_client.py` with your memory client.
+replace `sdk/src/sdk/musubi_client.py` with your memory client.
 
 Memory tools are optional. The core phone stack can still answer calls,
 log transcripts, and export telemetry without Musubi.

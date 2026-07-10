@@ -17,7 +17,7 @@ from sdk.audio_recording import (
     wire_call_audio_attachment,
 )
 from sdk.config import assert_agent_identity
-from sdk.musubi_v2_client import wire_musubi_v2_shutdown
+from sdk.musubi_client import wire_musubi_shutdown
 from sdk.postcall import wire_postcall_review
 from sdk.postcall_memory import wire_postcall_memory
 from sdk.telemetry import wire_telemetry_capture
@@ -83,7 +83,7 @@ async def entrypoint(ctx: JobContext) -> None:
         speaker_tag=YUA_CONFIG.memory_agent_tag,
     )
     wire_otel_shutdown_flush(ctx)
-    wire_musubi_v2_shutdown(ctx)
+    wire_musubi_shutdown(ctx)
     await session.start(agent=agent, room=ctx.room)
     attach_current_span_metadata(
         session_id=transcript_sid,

@@ -1,28 +1,24 @@
-"""Musubi v2 — async HTTP client for the new canonical API.
+"""Musubi client — async HTTP client for the canonical Musubi API.
 
-This is the client for the Musubi v2 HTTP API.
-to Musubi's canonical API (HTTP/JSON at ``/v1/*``) with bearer auth.
-Both co-exist so voice agents can migrate one at a time per
-`AgentConfig` — see ``tools/src/tools/memory.py``.
+Talks to Musubi's HTTP/JSON API at ``/v1/*`` with bearer auth. This is the
+*only* Musubi client in the repo; the earlier v1 client was deleted. The
+``MUSUBI_V2_*`` env and namespace strings are kept for deploy-config
+compatibility (the live host and compose supply them) — the "v2" now lives
+only in those strings, not in the code surface, which is plain ``MusubiClient``.
 
 Scope: just enough surface for the canonical agent-tools mixin
-(``musubi_search`` / ``musubi_recent`` / ``musubi_remember`` /
-``musubi_think``.
-``.get()`` accessors). The full Musubi SDK lives upstream in the
-Musubi monorepo under
-``src/musubi/sdk/`` and will be publishable as a ``musubi-client`` wheel
-once `slice-ops-workspace-packaging` ships. Until a second consumer
-creates demand for that workspace split, a thin local client here is
-cheaper than a new package.
+(``musubi_search`` / ``musubi_recent`` / ``musubi_remember``, plus the
+retained ``think_impl`` send). The full Musubi SDK lives upstream in the
+Musubi monorepo under ``src/musubi/sdk/``; a thin local client here is
+cheaper than taking that dependency until a second consumer needs it.
 
-No embedding is done client-side. The v2 API embeds server-side (TEI +
-BGE-M3), so the client's job is just to shape requests + handle auth +
-translate errors into typed exceptions the tool layer can reason about.
+No embedding is done client-side. The API embeds server-side (TEI + BGE-M3),
+so the client's job is to shape requests, handle auth, and translate errors
+into typed exceptions the tool layer can reason about.
 
-Transport: aiohttp to match the rest of this repo's async HTTP posture
-Per-call timeout defaults
-to `MUSUBI_V2_TIMEOUT_S` (2s) — a voice tool can't wait longer and still
-feel responsive; the tool layer catches the timeout and degrades.
+Transport: aiohttp, matching the repo's async HTTP posture. Per-call timeout
+defaults to ``MUSUBI_V2_TIMEOUT_S`` (2s) — a voice tool can't wait longer and
+still feel responsive; the tool layer catches the timeout and degrades.
 """
 
 from __future__ import annotations
@@ -38,10 +34,10 @@ import aiohttp
 
 logger = logging.getLogger("voice.musubi-v2")
 
-# Environment-driven so the same wheel runs against local/dev/prod
-# Musubi instances without code changes. `MUSUBI_V2_*` namespace keeps
-# these from colliding with other `MUSUBI_*` vars the
-# legacy client reads.
+# Environment-driven so the same client runs against local/dev/prod Musubi
+# instances without code changes. The ``MUSUBI_V2_*`` env names are historical
+# (kept for deploy-config compatibility) — there is no other Musubi client to
+# collide with anymore.
 MUSUBI_V2_BASE_URL_ENV = "MUSUBI_V2_BASE_URL"
 MUSUBI_V2_TOKEN_ENV = "MUSUBI_V2_TOKEN"
 DEFAULT_BASE_URL = "http://localhost:8100/v1"
@@ -84,7 +80,7 @@ async def close_shared_sessions() -> None:
             logger.warning("Musubi v2 session close failed: %s", exc)
 
 
-def wire_musubi_v2_shutdown(ctx: Any) -> None:
+def wire_musubi_shutdown(ctx: Any) -> None:
     """Register a LiveKit job shutdown hook for Musubi v2 HTTP sessions."""
     add_shutdown_callback = getattr(ctx, "add_shutdown_callback", None)
     if add_shutdown_callback is None:
@@ -100,7 +96,7 @@ def wire_musubi_v2_shutdown(ctx: Any) -> None:
 
 
 @dataclass(frozen=True)
-class MusubiV2ClientConfig:
+class MusubiClientConfig:
     """Client-level config. Resolved from env by default; tests pass
     explicit values to avoid env leakage."""
 
@@ -109,7 +105,7 @@ class MusubiV2ClientConfig:
     timeout_s: float = MUSUBI_V2_TIMEOUT_S
 
     @classmethod
-    def from_env(cls, *, timeout_s: float | None = None) -> MusubiV2ClientConfig:
+    def from_env(cls, *, timeout_s: float | None = None) -> MusubiClientConfig:
         base_url = os.environ.get(MUSUBI_V2_BASE_URL_ENV, DEFAULT_BASE_URL).rstrip("/")
         token = os.environ.get(MUSUBI_V2_TOKEN_ENV, "")
         return cls(
@@ -119,33 +115,33 @@ class MusubiV2ClientConfig:
         )
 
 
-class MusubiV2Error(Exception):
+class MusubiError(Exception):
     """Parent for every error the v2 client raises — tool layer catches
     this to present a single degraded-mode message to the voice."""
 
 
-class MusubiV2AuthError(MusubiV2Error):
+class MusubiAuthError(MusubiError):
     """401/403 from Musubi. Token is missing, expired, or out of scope.
     Distinct so the tool layer can log at ERROR (not WARN) — auth
     failures are not transient."""
 
 
-class MusubiV2TimeoutError(MusubiV2Error):
+class MusubiTimeoutError(MusubiError):
     """Request didn't complete inside `timeout_s`. Voice tools degrade
     to a "couldn't check memory" response without blocking the call."""
 
 
-class MusubiV2ServerError(MusubiV2Error):
+class MusubiServerError(MusubiError):
     """5xx from Musubi. Transient — the next tool call might succeed."""
 
 
-class MusubiV2ClientError(MusubiV2Error):
+class MusubiClientError(MusubiError):
     """4xx other than auth — caller gave us a bad payload. Bug, not
     runtime transient. Log loudly."""
 
 
 async def capture_memory(
-    config: MusubiV2ClientConfig,
+    config: MusubiClientConfig,
     *,
     namespace: str,
     content: str,
@@ -183,7 +179,7 @@ async def capture_memory(
 
 
 async def retrieve(
-    config: MusubiV2ClientConfig,
+    config: MusubiClientConfig,
     *,
     namespace: str,
     query_text: str,
@@ -224,7 +220,7 @@ async def retrieve(
 
 
 async def send_thought(
-    config: MusubiV2ClientConfig,
+    config: MusubiClientConfig,
     *,
     namespace: str,
     from_presence: str,
@@ -253,7 +249,7 @@ async def send_thought(
 
 
 async def list_episodic(
-    config: MusubiV2ClientConfig,
+    config: MusubiClientConfig,
     *,
     namespace: str,
     limit: int = 50,
@@ -275,7 +271,7 @@ async def list_episodic(
 
 
 async def _get(
-    config: MusubiV2ClientConfig,
+    config: MusubiClientConfig,
     *,
     path: str,
     params: dict[str, str] | None = None,
@@ -293,22 +289,22 @@ async def _get(
             async with http.get(url, params=params, headers=headers) as resp:
                 text = await resp.text()
                 if resp.status == 401 or resp.status == 403:
-                    raise MusubiV2AuthError(f"{resp.status} on {path}: {text[:200]}")
+                    raise MusubiAuthError(f"{resp.status} on {path}: {text[:200]}")
                 if 400 <= resp.status < 500:
-                    raise MusubiV2ClientError(f"{resp.status} on {path}: {text[:200]}")
+                    raise MusubiClientError(f"{resp.status} on {path}: {text[:200]}")
                 if resp.status >= 500:
-                    raise MusubiV2ServerError(f"{resp.status} on {path}: {text[:200]}")
+                    raise MusubiServerError(f"{resp.status} on {path}: {text[:200]}")
                 if not text:
                     return {}
                 try:
                     data = await resp.json(content_type=None)
                 except Exception as exc:
-                    raise MusubiV2ServerError(f"non-JSON response on {path}: {exc}") from exc
+                    raise MusubiServerError(f"non-JSON response on {path}: {exc}") from exc
                 if not isinstance(data, dict):
-                    raise MusubiV2ServerError(f"expected JSON object on {path}, got {type(data)!r}")
+                    raise MusubiServerError(f"expected JSON object on {path}, got {type(data)!r}")
                 return data
         except TimeoutError as exc:
-            raise MusubiV2TimeoutError(f"timeout on {path} after {config.timeout_s}s") from exc
+            raise MusubiTimeoutError(f"timeout on {path} after {config.timeout_s}s") from exc
 
     if session is not None:
         return await _do(session)
@@ -317,7 +313,7 @@ async def _get(
 
 
 async def _post(
-    config: MusubiV2ClientConfig,
+    config: MusubiClientConfig,
     *,
     path: str,
     body: dict[str, Any],
@@ -339,22 +335,22 @@ async def _post(
             async with http.post(url, json=body, headers=headers) as resp:
                 text = await resp.text()
                 if resp.status == 401 or resp.status == 403:
-                    raise MusubiV2AuthError(f"{resp.status} on {path}: {text[:200]}")
+                    raise MusubiAuthError(f"{resp.status} on {path}: {text[:200]}")
                 if 400 <= resp.status < 500:
-                    raise MusubiV2ClientError(f"{resp.status} on {path}: {text[:200]}")
+                    raise MusubiClientError(f"{resp.status} on {path}: {text[:200]}")
                 if resp.status >= 500:
-                    raise MusubiV2ServerError(f"{resp.status} on {path}: {text[:200]}")
+                    raise MusubiServerError(f"{resp.status} on {path}: {text[:200]}")
                 if not text:
                     return {}
                 try:
                     data = await resp.json(content_type=None)
                 except Exception as exc:
-                    raise MusubiV2ServerError(f"non-JSON response on {path}: {exc}") from exc
+                    raise MusubiServerError(f"non-JSON response on {path}: {exc}") from exc
                 if not isinstance(data, dict):
-                    raise MusubiV2ServerError(f"expected JSON object on {path}, got {type(data)!r}")
+                    raise MusubiServerError(f"expected JSON object on {path}, got {type(data)!r}")
                 return data
         except TimeoutError as exc:
-            raise MusubiV2TimeoutError(f"timeout on {path} after {config.timeout_s}s") from exc
+            raise MusubiTimeoutError(f"timeout on {path} after {config.timeout_s}s") from exc
 
     if session is not None:
         return await _do(session)
@@ -363,7 +359,7 @@ async def _post(
 
 
 @dataclass(frozen=True)
-class MusubiV2Client:
+class MusubiClient:
     """Small convenience facade — binds a config + optional shared
     session and offers the three canonical actions as methods so the
     tool layer can spin up one client per mixin and reuse it.
@@ -373,7 +369,7 @@ class MusubiV2Client:
     that don't want to thread `config` through every call.
     """
 
-    config: MusubiV2ClientConfig
+    config: MusubiClientConfig
 
     async def capture_memory(
         self,
@@ -463,17 +459,17 @@ __all__ = [
     "MUSUBI_V2_BASE_URL_ENV",
     "MUSUBI_V2_TIMEOUT_S",
     "MUSUBI_V2_TOKEN_ENV",
-    "MusubiV2AuthError",
-    "MusubiV2Client",
-    "MusubiV2ClientConfig",
-    "MusubiV2ClientError",
-    "MusubiV2Error",
-    "MusubiV2ServerError",
-    "MusubiV2TimeoutError",
+    "MusubiAuthError",
+    "MusubiClient",
+    "MusubiClientConfig",
+    "MusubiClientError",
+    "MusubiError",
+    "MusubiServerError",
+    "MusubiTimeoutError",
     "capture_memory",
     "close_shared_sessions",
     "list_episodic",
     "retrieve",
     "send_thought",
-    "wire_musubi_v2_shutdown",
+    "wire_musubi_shutdown",
 ]

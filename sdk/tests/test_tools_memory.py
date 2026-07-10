@@ -107,7 +107,7 @@ async def test_fetch_recent_context_has_aggregate_timeout(agent, monkeypatch):
 
 class _StubClient:
     """Records a single retrieve() call so tests can assert the wire shape
-    without standing up a real Musubi server. Mirrors `MusubiV2Client.retrieve`
+    without standing up a real Musubi server. Mirrors `MusubiClient.retrieve`
     keyword arguments exactly so signature drift breaks the test."""
 
     def __init__(self, response: dict[str, Any] | None = None) -> None:
@@ -147,7 +147,7 @@ async def test_musubi_search_uses_tenant_wildcard_namespace(agent):
     channel breaks the multimodality contract — phone Nyla would stop
     seeing Discord-Nyla's deliberate stores."""
     stub = _StubClient(response={"results": []})
-    agent._musubi_v2_client = lambda: stub
+    agent._musubi_client = lambda: stub
     # Force a known 2-segment presence so the test isn't sensitive to fixture defaults.
     agent.config = AgentConfig(
         agent_name="nyla",
@@ -169,7 +169,7 @@ async def test_musubi_search_passes_state_filter_for_fresh_save_recall(agent):
     can't remember what Discord-Nyla just saved). Asserts state_filter
     explicitly includes `provisional` so fresh stores are visible."""
     stub = _StubClient(response={"results": []})
-    agent._musubi_v2_client = lambda: stub
+    agent._musubi_client = lambda: stub
     agent.config = AgentConfig(
         agent_name="nyla",
         memory_agent_tag="nyla-voice",
@@ -203,7 +203,7 @@ async def test_musubi_search_returns_origin_channel_in_each_row(agent):
             ],
         },
     )
-    agent._musubi_v2_client = lambda: stub
+    agent._musubi_client = lambda: stub
     agent.config = AgentConfig(
         agent_name="nyla",
         memory_agent_tag="nyla-voice",
@@ -272,7 +272,7 @@ async def test_musubi_think_uses_own_thought_namespace(agent) -> None:
     ADR 0030 agent-as-tenant form. Regression to legacy ``eric/<agent>``
     breaks scope-token validation on the live server."""
     stub = _ThoughtStub()
-    agent._musubi_v2_client = lambda: stub
+    agent._musubi_client = lambda: stub
     agent.config = AgentConfig(
         agent_name="aoi",
         memory_agent_tag="aoi-voice",
@@ -293,7 +293,7 @@ async def test_musubi_think_resolves_bare_recipient_to_own_channel(agent) -> Non
     """A bare ``<agent>`` recipient must be resolved to ``<agent>/<own-channel>``
     so the model doesn't have to know channel topology to page a peer."""
     stub = _ThoughtStub()
-    agent._musubi_v2_client = lambda: stub
+    agent._musubi_client = lambda: stub
     agent.config = AgentConfig(
         agent_name="aoi",
         memory_agent_tag="aoi-voice",
@@ -310,7 +310,7 @@ async def test_musubi_think_rejects_empty_recipient_or_content(agent) -> None:
     """Validation lives in ``think_impl`` so an empty arg degrades to a
     user-readable error instead of a 400 from the server."""
     stub = _ThoughtStub()
-    agent._musubi_v2_client = lambda: stub
+    agent._musubi_client = lambda: stub
     agent.config = AgentConfig(
         agent_name="aoi",
         memory_agent_tag="aoi-voice",
@@ -330,7 +330,7 @@ async def test_musubi_think_returns_object_id_in_ack(agent) -> None:
     """The ack rendering must surface the resolved recipient + the
     object_id so the LLM can confirm delivery in its reply."""
     stub = _ThoughtStub(ack={"object_id": "thought-abc123", "state": "delivered"})
-    agent._musubi_v2_client = lambda: stub
+    agent._musubi_client = lambda: stub
     agent.config = AgentConfig(
         agent_name="aoi",
         memory_agent_tag="aoi-voice",

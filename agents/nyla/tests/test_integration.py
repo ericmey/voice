@@ -85,7 +85,7 @@ def agent():
 
 # NOTE: there is no automated cleanup. The old fixture deleted test memories by
 # POSTing straight to Qdrant through the retired v1 client — an alpha stack that no
-# longer exists and is not reachable. MusubiV2Client has no retract/delete, so these
+# longer exists and is not reachable. MusubiClient has no retract/delete, so these
 # tests write REAL rows into nyla/voice/episodic. Run them against a scratch presence,
 # or clean up with `aoi-memory-data musubi retract`.
 

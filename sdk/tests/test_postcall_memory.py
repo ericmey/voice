@@ -346,10 +346,10 @@ async def test_capture_one_attaches_required_tags() -> None:
 
 @pytest.mark.asyncio
 async def test_capture_one_returns_false_on_musubi_error() -> None:
-    from sdk.musubi_v2_client import MusubiV2ServerError
+    from sdk.musubi_client import MusubiServerError
 
     async def fake_capture(**_: Any) -> dict[str, Any]:
-        raise MusubiV2ServerError("boom")
+        raise MusubiServerError("boom")
 
     mock_client = MagicMock()
     mock_client.capture_memory = fake_capture

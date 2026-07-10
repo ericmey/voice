@@ -52,7 +52,7 @@ Shared Python package imported by the agents. Contains:
   capabilities to the voice model.
 - **`telephony.py`** — `resolve_caller()` reads the SIP participant's
   attributes from a connected room. One hop behind the agent entrypoint.
-- **`musubi_v2_client.py`** — async HTTP client for the canonical Musubi API.
+- **`musubi_client.py`** — async HTTP client for the canonical Musubi API.
 - **`trace.py`**, **`transcript.py`**, **`env.py`** — ancillary.
 
 ### `agents/nyla/`

@@ -1,4 +1,4 @@
-"""Tests for `sdk.musubi_v2_client` — the new-stack Musubi client.
+"""Tests for `sdk.musubi_client` — the new-stack Musubi client.
 
 Structural + behavioral. Behavioral tests monkeypatch `aiohttp.ClientSession`
 via a tiny fake so no real HTTP flies, and so the tests run without a live
@@ -12,23 +12,23 @@ import json
 from typing import Any
 
 import pytest
-from sdk.musubi_v2_client import (
+from sdk.musubi_client import (
     DEFAULT_BASE_URL,
     MUSUBI_V2_BASE_URL_ENV,
     MUSUBI_V2_TOKEN_ENV,
-    MusubiV2AuthError,
-    MusubiV2Client,
-    MusubiV2ClientConfig,
-    MusubiV2ClientError,
-    MusubiV2ServerError,
-    MusubiV2TimeoutError,
+    MusubiAuthError,
+    MusubiClient,
+    MusubiClientConfig,
+    MusubiClientError,
+    MusubiServerError,
+    MusubiTimeoutError,
     capture_memory,
     list_episodic,
     retrieve,
     send_thought,
 )
 
-from sdk import musubi_v2_client
+from sdk import musubi_client
 
 # ---------------------------------------------------------------------------
 # Fake aiohttp session — records calls, returns scripted responses.
@@ -102,8 +102,8 @@ class _RaisingCtx:
         return None
 
 
-def _cfg(token: str = "test-token") -> MusubiV2ClientConfig:
-    return MusubiV2ClientConfig(base_url="http://musubi.test/v1", token=token, timeout_s=1.0)
+def _cfg(token: str = "test-token") -> MusubiClientConfig:
+    return MusubiClientConfig(base_url="http://musubi.test/v1", token=token, timeout_s=1.0)
 
 
 def _run(coro: Any) -> Any:
@@ -122,7 +122,7 @@ def test_default_base_url_exported() -> None:
 def test_from_env_reads_both_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(MUSUBI_V2_BASE_URL_ENV, "https://musubi.example.com/v1/")
     monkeypatch.setenv(MUSUBI_V2_TOKEN_ENV, "real-token")
-    cfg = MusubiV2ClientConfig.from_env()
+    cfg = MusubiClientConfig.from_env()
     # Trailing slash stripped.
     assert cfg.base_url == "https://musubi.example.com/v1"
     assert cfg.token == "real-token"
@@ -131,7 +131,7 @@ def test_from_env_reads_both_vars(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_from_env_applies_defaults_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(MUSUBI_V2_BASE_URL_ENV, raising=False)
     monkeypatch.delenv(MUSUBI_V2_TOKEN_ENV, raising=False)
-    cfg = MusubiV2ClientConfig.from_env()
+    cfg = MusubiClientConfig.from_env()
     assert cfg.base_url == DEFAULT_BASE_URL.rstrip("/")
     assert cfg.token == ""
 
@@ -153,12 +153,12 @@ async def test_shared_session_reuses_keepalive_session(monkeypatch: pytest.Monke
         async def close(self) -> None:
             self.closed = True
 
-    monkeypatch.setattr(musubi_v2_client.aiohttp, "TCPConnector", FakeConnector)
-    monkeypatch.setattr(musubi_v2_client.aiohttp, "ClientSession", FakeClientSession)
-    musubi_v2_client._shared_sessions.clear()
+    monkeypatch.setattr(musubi_client.aiohttp, "TCPConnector", FakeConnector)
+    monkeypatch.setattr(musubi_client.aiohttp, "ClientSession", FakeClientSession)
+    musubi_client._shared_sessions.clear()
 
-    first = musubi_v2_client._shared_session_for(2.0)
-    second = musubi_v2_client._shared_session_for(2.0)
+    first = musubi_client._shared_session_for(2.0)
+    second = musubi_client._shared_session_for(2.0)
 
     assert first is second
     assert FakeClientSession.created == 1
@@ -183,20 +183,20 @@ async def test_close_shared_sessions_closes_and_clears(monkeypatch: pytest.Monke
         async def close(self) -> None:
             self.closed = True
 
-    monkeypatch.setattr(musubi_v2_client.aiohttp, "TCPConnector", FakeConnector)
-    monkeypatch.setattr(musubi_v2_client.aiohttp, "ClientSession", FakeClientSession)
-    musubi_v2_client._shared_sessions.clear()
+    monkeypatch.setattr(musubi_client.aiohttp, "TCPConnector", FakeConnector)
+    monkeypatch.setattr(musubi_client.aiohttp, "ClientSession", FakeClientSession)
+    musubi_client._shared_sessions.clear()
 
-    session = musubi_v2_client._shared_session_for(2.0)
-    await musubi_v2_client.close_shared_sessions()
+    session = musubi_client._shared_session_for(2.0)
+    await musubi_client.close_shared_sessions()
 
     assert isinstance(session, FakeClientSession)
     assert session.closed is True
-    assert musubi_v2_client._shared_sessions == {}
+    assert musubi_client._shared_sessions == {}
 
 
 @pytest.mark.asyncio
-async def test_wire_musubi_v2_shutdown_registers_job_callback(
+async def test_wire_musubi_shutdown_registers_job_callback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     called = False
@@ -211,10 +211,10 @@ async def test_wire_musubi_v2_shutdown_registers_job_callback(
         def add_shutdown_callback(self, callback: Any) -> None:
             self.callback = callback
 
-    monkeypatch.setattr(musubi_v2_client, "close_shared_sessions", fake_close_shared_sessions)
+    monkeypatch.setattr(musubi_client, "close_shared_sessions", fake_close_shared_sessions)
     ctx = _Ctx()
 
-    musubi_v2_client.wire_musubi_v2_shutdown(ctx)
+    musubi_client.wire_musubi_shutdown(ctx)
     await ctx.callback("job_shutdown")
 
     assert called is True
@@ -275,7 +275,7 @@ async def test_capture_memory_generates_idempotency_when_absent() -> None:
 @pytest.mark.asyncio
 async def test_401_raises_auth_error() -> None:
     session = _FakeSession([_FakeResponse(401, {"detail": "bad token"})])
-    with pytest.raises(MusubiV2AuthError):
+    with pytest.raises(MusubiAuthError):
         await capture_memory(
             _cfg(),
             namespace="ns",
@@ -287,7 +287,7 @@ async def test_401_raises_auth_error() -> None:
 @pytest.mark.asyncio
 async def test_403_raises_auth_error() -> None:
     session = _FakeSession([_FakeResponse(403, {"detail": "out of scope"})])
-    with pytest.raises(MusubiV2AuthError):
+    with pytest.raises(MusubiAuthError):
         await capture_memory(
             _cfg(),
             namespace="ns",
@@ -299,7 +299,7 @@ async def test_403_raises_auth_error() -> None:
 @pytest.mark.asyncio
 async def test_4xx_other_raises_client_error() -> None:
     session = _FakeSession([_FakeResponse(422, {"detail": "invalid"})])
-    with pytest.raises(MusubiV2ClientError):
+    with pytest.raises(MusubiClientError):
         await capture_memory(
             _cfg(),
             namespace="ns",
@@ -311,7 +311,7 @@ async def test_4xx_other_raises_client_error() -> None:
 @pytest.mark.asyncio
 async def test_5xx_raises_server_error() -> None:
     session = _FakeSession([_FakeResponse(503, "boom")])
-    with pytest.raises(MusubiV2ServerError):
+    with pytest.raises(MusubiServerError):
         await capture_memory(
             _cfg(),
             namespace="ns",
@@ -323,7 +323,7 @@ async def test_5xx_raises_server_error() -> None:
 @pytest.mark.asyncio
 async def test_timeout_raises_timeout_error() -> None:
     session = _FakeSession([TimeoutError("no response")])
-    with pytest.raises(MusubiV2TimeoutError):
+    with pytest.raises(MusubiTimeoutError):
         await capture_memory(
             _cfg(),
             namespace="ns",
@@ -489,7 +489,7 @@ async def test_list_episodic_passes_cursor_when_set() -> None:
 @pytest.mark.asyncio
 async def test_get_401_raises_auth_error() -> None:
     session = _FakeSession([_FakeResponse(401, {"detail": "bad token"})])
-    with pytest.raises(MusubiV2AuthError):
+    with pytest.raises(MusubiAuthError):
         await list_episodic(
             _cfg(),
             namespace="ns",
@@ -500,7 +500,7 @@ async def test_get_401_raises_auth_error() -> None:
 @pytest.mark.asyncio
 async def test_get_403_raises_auth_error() -> None:
     session = _FakeSession([_FakeResponse(403, {"detail": "out of scope"})])
-    with pytest.raises(MusubiV2AuthError):
+    with pytest.raises(MusubiAuthError):
         await list_episodic(
             _cfg(),
             namespace="ns",
@@ -511,7 +511,7 @@ async def test_get_403_raises_auth_error() -> None:
 @pytest.mark.asyncio
 async def test_get_4xx_raises_client_error() -> None:
     session = _FakeSession([_FakeResponse(422, {"detail": "invalid namespace"})])
-    with pytest.raises(MusubiV2ClientError):
+    with pytest.raises(MusubiClientError):
         await list_episodic(
             _cfg(),
             namespace="ns",
@@ -522,7 +522,7 @@ async def test_get_4xx_raises_client_error() -> None:
 @pytest.mark.asyncio
 async def test_get_5xx_raises_server_error() -> None:
     session = _FakeSession([_FakeResponse(503, "boom")])
-    with pytest.raises(MusubiV2ServerError):
+    with pytest.raises(MusubiServerError):
         await list_episodic(
             _cfg(),
             namespace="ns",
@@ -533,7 +533,7 @@ async def test_get_5xx_raises_server_error() -> None:
 @pytest.mark.asyncio
 async def test_get_timeout_raises_timeout_error() -> None:
     session = _FakeSession([TimeoutError("no response")])
-    with pytest.raises(MusubiV2TimeoutError):
+    with pytest.raises(MusubiTimeoutError):
         await list_episodic(
             _cfg(),
             namespace="ns",
@@ -547,7 +547,7 @@ async def test_get_timeout_raises_timeout_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_musubi_v2_client_facade_proxies_each_action() -> None:
+async def test_musubi_client_facade_proxies_each_action() -> None:
     session = _FakeSession(
         [
             _FakeResponse(200, {"object_id": "m" * 27}),
@@ -556,7 +556,7 @@ async def test_musubi_v2_client_facade_proxies_each_action() -> None:
             _FakeResponse(200, {"items": []}),
         ]
     )
-    client = MusubiV2Client(config=_cfg())
+    client = MusubiClient(config=_cfg())
     ack1 = await client.capture_memory(
         namespace="n",
         content="c",

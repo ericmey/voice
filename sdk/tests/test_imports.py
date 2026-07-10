@@ -28,7 +28,6 @@ def test_import_transcript():
         "sdk.cli_spawner",
         "sdk.openclaw_hooks",
         "tools.sessions",
-        "sdk.musubi_client",  # v1 client, unused
         "sdk.constants",  # only held Discord constants nothing read
     ],
 )
