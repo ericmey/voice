@@ -122,15 +122,11 @@ class SumiAgent(
         # the opener — they read as calculated. Sumi opens bright and glad to
         # hear him — a warm, chipper hello, then she's all his.
         #
-        # add_to_chat_ctx=False is load-bearing: Mistral Nemo's chat template
-        # requires the first message after `system` to be `user`, and raises
-        # ("roles must alternate user/assistant") on a leading assistant turn.
-        # Keeping the spoken greeting OUT of the LLM history means the first
-        # LLM call is [system, user] — valid — so every turn doesn't 400.
-        await self.session.say(
-            "Eric! Hi hi~ there you are — what can I do for you?",
-            add_to_chat_ctx=False,
-        )
+        # The greeting is a normal assistant turn (in chat ctx). Mistral Nemo's
+        # leading-assistant / alternation constraints are handled server-side
+        # by the lenient chat template on llama-nemo (--chat-template-file), so
+        # no client-side add_to_chat_ctx workaround is needed here.
+        await self.session.say("Eric! Hi hi~ there you are — what can I do for you?")
 
 
 # --- server + session --------------------------------------------------
