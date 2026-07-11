@@ -14,7 +14,6 @@ means traces won't flow.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -23,12 +22,14 @@ from sdk.tracing import setup_otel_tracing
 
 
 def load_env() -> None:
-    """Load agent-local ``./.env``, alias provider-specific keys, wire tracing."""
-    load_dotenv(Path.cwd() / ".env")
+    """Load agent-local ``./.env`` and wire tracing.
 
-    # ElevenLabs plugin reads ELEVEN_API_KEY. Alias from ELEVENLABS_API_KEY.
-    if not os.environ.get("ELEVEN_API_KEY") and os.environ.get("ELEVENLABS_API_KEY"):
-        os.environ["ELEVEN_API_KEY"] = os.environ["ELEVENLABS_API_KEY"]
+    The ElevenLabs key alias (``ELEVENLABS_API_KEY`` -> ``ELEVEN_API_KEY``) lived here and
+    was removed 2026-07-11: no agent depends on the ElevenLabs plugin. aoi/nyla/yua are
+    ``livekit-agents[google]``; sumi is ``[openai,silero]`` + nvidia. The alias was
+    forwarding a credential to a plugin that is not installed.
+    """
+    load_dotenv(Path.cwd() / ".env")
 
     # No-op when VOICE_OTEL_ENABLED is unset or false — keeps unit
     # tests and CI hermetic. Idempotent across re-imports.

@@ -71,7 +71,7 @@ set of eyes, and Aoi's development partner; also surveys the household.
 ### `agents/sumi/`
 Sumi Tachibana's fully-local chained STT/LLM/TTS line. Riva Parakeet ASR →
 Silero VAD → Mistral Nemo (llama.cpp) → Orpheus TTS — every leg on mizuki's
-Blackwell card, nothing leaving the box. Sumi's own persona (archivist/maid)
+Blackwell card, nothing leaving the box. Sumi's own persona (the household's keeper — bright, warm, chipper)
 and her own memory channel (`sumi/voice`, distinct from `sumi/hermes`).
 
 ### `tools/`

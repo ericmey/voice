@@ -71,7 +71,9 @@ class OrpheusTTS(tts.TTS):
 
 
 class OrpheusChunkedStream(tts.ChunkedStream):
-    def __init__(self, *, tts: OrpheusTTS, input_text: str, conn_options: APIConnectOptions) -> None:
+    def __init__(
+        self, *, tts: OrpheusTTS, input_text: str, conn_options: APIConnectOptions
+    ) -> None:
         super().__init__(tts=tts, input_text=input_text, conn_options=conn_options)
         self._tts: OrpheusTTS = tts
 

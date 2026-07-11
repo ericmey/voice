@@ -27,7 +27,24 @@ RUN chmod +x ./scripts/agent-entrypoint.sh
 ARG VOICE_SERVICE_VERSION=dev
 ENV VOICE_SERVICE_VERSION=${VOICE_SERVICE_VERSION}
 
-# AGENT selects which agent dir runs (aoi|nyla|yua|sumi). The entrypoint maps
-# that to the per-agent Musubi bearer and sets LIVEKIT_VOICE_LOGS before exec.
-ENV AGENT=aoi
+# AGENT selects which agent dir runs (aoi|nyla|yua|sumi). The entrypoint maps that to the
+# per-agent Musubi bearer and sets LIVEKIT_VOICE_LOGS before exec.
+#
+# DELIBERATELY NOT SET HERE. This image must never answer the identity question.
+#
+# It used to read `ENV AGENT=aoi`, which disarmed both of the entrypoint's guards: the
+# `${AGENT:?}` check can never fire when the image has already set AGENT, and the `*)`
+# fallthrough can never be reached. A container started without an explicit AGENT did not
+# fail — it silently BECAME AOI: registered as `phone-aoi`, read MUSUBI_V2_TOKEN_AOI, and
+# wrote its memories into `aoi/voice`. `assert_agent_identity` could not catch it either,
+# because VOICE_AGENT_NAME derives from the same $AGENT, so the cross-check compared the
+# default against itself and passed.
+#
+# That is `NYLA_DEFAULT_CONFIG` reincarnated one layer down — the precise bug
+# sdk/src/sdk/config.py exists to prevent. It was dormant only because all four compose
+# services happen to pass AGENT. Dormant is not fixed.
+#
+# An identity default is never a convenience. It is a silent misattribution waiting for the
+# first container someone starts by hand. AGENT is supplied by the caller (see
+# docker-compose.agents.yaml), and its absence is a hard failure by design.
 ENTRYPOINT ["/app/scripts/agent-entrypoint.sh"]

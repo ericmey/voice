@@ -122,3 +122,56 @@ def test_missing_agent_is_rejected():
     result = _run(None)
     assert result.returncode != 0
     assert "AGENT" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# The image must not pre-answer the identity question.
+#
+# `scripts/agent-entrypoint.sh` is built to fail loud on a missing AGENT: it has a
+# `${AGENT:?}` guard AND a `*)` fallthrough that exits 64. Both are correct.
+#
+# `Dockerfile.agent` then set `ENV AGENT=aoi`, which DISARMS BOTH. AGENT is always
+# "set", so the guard can never fire — and a container started without an explicit
+# AGENT does not fail: it silently BECOMES AOI. It registers as `phone-aoi`, reads
+# MUSUBI_V2_TOKEN_AOI, and writes its memories to `aoi/voice`.
+#
+# This is `NYLA_DEFAULT_CONFIG` reincarnated one layer down — the exact bug the whole
+# config module exists to prevent (see sdk/src/sdk/config.py). And `assert_agent_identity`
+# cannot catch it either: VOICE_AGENT_NAME is derived from the same $AGENT, so the
+# cross-check compares the default against itself and passes.
+#
+# It was dormant only because all four compose services happen to pass AGENT. Dormant is
+# not fixed. An identity default is never a convenience; it is a silent misattribution
+# waiting for the one container someone starts by hand.
+# ---------------------------------------------------------------------------
+
+
+def test_dockerfile_does_not_default_the_agent_identity() -> None:
+    """The image must NOT bake in an AGENT default — that disarms the entrypoint guard."""
+    dockerfile = (REPO_ROOT / "Dockerfile.agent").read_text()
+    offending = [
+        line
+        for line in dockerfile.splitlines()
+        if line.strip().startswith("ENV ") and "AGENT=" in line and "VOICE_AGENT" not in line
+    ]
+    assert not offending, (
+        "Dockerfile.agent bakes an AGENT default: "
+        f"{offending!r}. This disarms the `${{AGENT:?}}` guard in agent-entrypoint.sh — a "
+        "container started without AGENT would silently become that agent, register under "
+        "its name, and write to its Musubi namespace. Identity must never have a default."
+    )
+
+
+def test_missing_agent_fails_loud() -> None:
+    """With no AGENT in the environment, the entrypoint must REFUSE — not pick someone.
+
+    This is the guard the Dockerfile default was disarming. `_run(None)` omits AGENT
+    entirely, which is what a container started without `-e AGENT=...` actually sees once
+    the image stops answering the question for it.
+    """
+    result = _run(None)
+    assert result.returncode != 0, (
+        "entrypoint started with no AGENT set. It must fail rather than default to an "
+        "identity — a silent default here means registering under someone else's name and "
+        "writing to their Musubi namespace."
+    )
