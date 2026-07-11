@@ -57,8 +57,20 @@ log()  { printf "\033[1;34m[sip-routing]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[warn]\033[0m        %s\n" "$*"; }
 die()  { printf "\033[1;31m[fatal]\033[0m       %s\n" "$*" >&2; exit 1; }
 
-command -v lk >/dev/null 2>&1 || die "lk (livekit-cli) not found — brew install livekit-cli"
-command -v jq >/dev/null 2>&1 || die "jq not found — brew install jq"
+# Install hints must match the host this actually runs on. It runs on mizuki (Ubuntu) — the
+# old `brew install` hints were fossils from the retired macOS deploy and could not be
+# followed. `make up` calls this script, so a fatal here means `make up` fails; it has been
+# failing on the host, because `lk` is not installed there (SIP routing survives only because
+# LiveKit persists dispatch rules from a previous registration).
+_install_hint() {
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    printf 'brew install %s' "$1"
+  else
+    printf 'see https://docs.livekit.io/home/cli/cli-setup/  (or: apt install %s)' "$1"
+  fi
+}
+command -v lk >/dev/null 2>&1 || die "lk (livekit-cli) not found — $(_install_hint livekit-cli)"
+command -v jq >/dev/null 2>&1 || die "jq not found — $(_install_hint jq)"
 
 declare -a TMP_FILES=()
 cleanup() {
