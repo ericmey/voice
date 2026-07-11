@@ -42,17 +42,49 @@ caches the tracer provider at server-construction time.
 
 from __future__ import annotations
 
+import asyncio
 import atexit
 import logging
 import os
 import platform
 import socket
+import threading
+import time
 import uuid
 from typing import Any
 
 from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor
 
 logger = logging.getLogger("voice.tracing")
+
+# --------------------------------------------------------------------------------------
+# The shutdown-flush budget. This is the `-10` bug's home, so the numbers are explained.
+#
+# LiveKit's parent worker gives a job process `AgentServer.shutdown_process_timeout` to
+# exit after it sends `ShuttingDown`. Overrun and the parent sends SIGUSR1 — which is what
+# exit code -10 IS. The library default is 10.0 s.
+#
+# The OTel flush is ONE of several shutdown callbacks LiveKit gathers concurrently (audio
+# finalize, Musubi close, delete_room). It does not get the whole budget; it gets a slice.
+# The old code took a 10 000 ms ceiling — numerically identical to the entire kill budget,
+# and, because the timeout was applied PER PROVIDER rather than as a total, reachable at
+# 30 s. That is not a slice. That is the whole meal, three times over.
+#
+# 3 s is generous for a healthy OTLP/HTTP export to shiori on the LAN, and leaves 7 s of the
+# parent's budget for everything else. If the collector is down, we abandon the flush and
+# exit clean — losing spans for one call is strictly better than being shot mid-teardown
+# and losing the call's memory write too.
+LIVEKIT_SHUTDOWN_BUDGET_S = 10.0
+"""LiveKit's `shutdown_process_timeout` default. Kept here so the relationship is visible:
+if this ever rises, FLUSH_BUDGET_MS may rise with it — never above it."""
+
+FLUSH_BUDGET_MS = 3000
+"""TOTAL flush budget across tracing + logs + metrics. MUST stay well under
+LIVEKIT_SHUTDOWN_BUDGET_S; `test_flush_budget_cannot_exceed_the_kill_deadline` enforces it."""
+
+FLUSH_GRACE_S = 0.5
+"""Slack on the asyncio ceiling above the thread's own deadline, so the normal path is the
+thread returning — not us abandoning a thread that was about to finish."""
 
 _initialized = False
 _provider: Any | None = None
@@ -174,26 +206,45 @@ def setup_otel_tracing() -> None:
     logger.info("OTel tracing enabled (OTLP/HTTP)")
 
 
-def force_flush_otel_tracing(timeout_millis: int = 10000) -> bool:
-    """Flush pending spans + log records + metric points before exit."""
+def force_flush_otel_tracing(timeout_millis: int = FLUSH_BUDGET_MS) -> bool:
+    """Flush pending spans + log records + metric points before exit.
+
+    ``timeout_millis`` is a **TOTAL** budget across all three providers, not a per-provider
+    one. That distinction is the bug this signature used to have: each of the three
+    ``force_flush(timeout_millis)`` calls received the full timeout, so a caller asking for
+    10 s could block for **30 s**. Against LiveKit's 10 s ``shutdown_process_timeout`` that
+    is a guaranteed kill.
+
+    **This function BLOCKS the calling thread.** OTel's ``force_flush`` waits on a condition
+    variable until the exporter drains or the deadline expires; the OTLP/HTTP exporter is a
+    synchronous network call to the collector on shiori. Never call it directly from an
+    asyncio callback — use :func:`wire_otel_shutdown_flush`, which offloads it.
+    """
+    deadline = time.monotonic() + (timeout_millis / 1000.0)
+
+    def _remaining_ms() -> int:
+        """Whatever is left of the TOTAL budget. Never negative, never zero-as-infinite."""
+        left = deadline - time.monotonic()
+        # OTel treats a non-positive timeout as "no deadline" in some exporters, which is
+        # exactly the unbounded block we are defending against. Floor at 1 ms.
+        return max(1, int(left * 1000))
+
     ok = True
-    if _provider is not None:
-        try:
-            ok = bool(_provider.force_flush(timeout_millis))
-        except Exception as exc:
-            logger.warning("OTel tracing force_flush failed: %s", exc)
+    for label, provider in (
+        ("tracing", _provider),
+        ("logs", _logger_provider),
+        ("metrics", _meter_provider),
+    ):
+        if provider is None:
+            continue
+        if time.monotonic() >= deadline:
+            logger.warning("OTel %s force_flush skipped: flush budget exhausted", label)
             ok = False
-    if _logger_provider is not None:
+            continue
         try:
-            ok = bool(_logger_provider.force_flush(timeout_millis)) and ok
+            ok = bool(provider.force_flush(_remaining_ms())) and ok
         except Exception as exc:
-            logger.warning("OTel logs force_flush failed: %s", exc)
-            ok = False
-    if _meter_provider is not None:
-        try:
-            ok = bool(_meter_provider.force_flush(timeout_millis)) and ok
-        except Exception as exc:
-            logger.warning("OTel metrics force_flush failed: %s", exc)
+            logger.warning("OTel %s force_flush failed: %s", label, exc)
             ok = False
     return ok
 
@@ -217,14 +268,101 @@ def shutdown_otel_tracing() -> None:
             logger.warning("OTel metrics shutdown failed: %s", exc)
 
 
-def wire_otel_shutdown_flush(ctx: Any, timeout_millis: int = 10000) -> None:
-    """Flush pending spans when LiveKit tears down a job."""
+def wire_otel_shutdown_flush(ctx: Any, timeout_millis: int = FLUSH_BUDGET_MS) -> None:
+    """Flush pending spans when LiveKit tears down a job — WITHOUT blocking the event loop.
+
+    THIS IS THE ``-10`` BUG. The old body was::
+
+        async def _flush_otel(_reason: str = "") -> None:
+            force_flush_otel_tracing(timeout_millis)   # sync. no await. no thread.
+
+    It is declared ``async def``, so it *looks* like a coroutine and reads as correct — but
+    it performs a **synchronous network export** to the collector on shiori, on the event
+    loop, inside a shutdown callback.
+
+    What that costs, against ``livekit-agents==1.6.5``:
+
+    - LiveKit gathers every shutdown callback as a task (``ipc/job_proc_lazy_main.py``).
+      Blocking the loop inside one starves ALL of them — the audio finalizer, the Musubi
+      close, ``delete_room`` — *and* the IPC read/ping tasks, so the child can no longer
+      answer its parent.
+    - The parent's budget is ``AgentServer.shutdown_process_timeout = 10.0`` s. On expiry it
+      logs "process did not exit in time, killing process" and sends ``SIGUSR1``.
+    - **Exit ``-10`` is SIGUSR1.** The process was killed; it did not crash.
+
+    And the old default made it deterministic: the flush's ceiling (10 000 ms) was
+    *numerically identical* to the parent's kill budget (10.0 s) — and, because the timeout
+    was per-provider rather than total, could reach 30 s. One slow export to shiori consumed
+    the entire budget every time.
+
+    Note this also corrects the root cause recorded in ``docs/OPERATIONS.md``: the hang was
+    attributed to the Gemini realtime close after ``delete_room``. That is
+    ordering-impossible in 1.6.5 — ``session.aclose()`` runs with its own 60 s budget
+    *before* ``ShuttingDown`` starts the 10 s kill clock, and ``delete_room`` (an EndCallTool
+    shutdown callback) runs *after* ``room.disconnect()``. ``delete_room=True`` is the
+    library default and is correct; do not "fix" it.
+
+    The fix: run the blocking flush on an explicit **daemon** thread so the loop stays
+    responsive, and bound the wait well under the kill deadline.
+
+    **Why a hand-rolled daemon thread and not ``asyncio.to_thread``.** ``to_thread`` runs on
+    the loop's default ``ThreadPoolExecutor``, whose threads are **non-daemon** (CPython 3.9+)
+    — and ``concurrent.futures`` registers an ``atexit`` hook that JOINS them at interpreter
+    shutdown. So abandoning a wedged ``to_thread`` flush would not abandon it at all: the
+    process would still hang at exit, waiting on the very same export. That moves the ``-10``
+    to a different line rather than fixing it. ``test_the_flush_thread_is_a_daemon`` pins this
+    down, because it is invisible at the call site and the first draft of this fix got it
+    wrong.
+
+    A daemon thread is genuinely abandonable. If the collector never answers we log, hand
+    control back to the loop, and the thread dies with the process. Spans for that one call
+    are lost — strictly better than being SIGUSR1'd mid-teardown, which loses the call's
+    memory write too.
+    """
     add_shutdown_callback = getattr(ctx, "add_shutdown_callback", None)
     if add_shutdown_callback is None:
         return
 
     async def _flush_otel(_reason: str = "") -> None:
-        force_flush_otel_tracing(timeout_millis)
+        loop = asyncio.get_running_loop()
+        done: asyncio.Future[bool] = loop.create_future()
+
+        def _settle(setter: Any, value: Any) -> None:
+            # The loop may already be tearing down by the time the thread finishes. Delivering
+            # a result into a dead loop must never raise out of a daemon thread.
+            try:
+                if not done.done():
+                    setter(value)
+            except Exception:  # pragma: no cover - loop already gone
+                pass
+
+        def _run() -> None:
+            try:
+                ok = force_flush_otel_tracing(timeout_millis)
+            except Exception as exc:  # pragma: no cover - defensive
+                loop.call_soon_threadsafe(_settle, done.set_exception, exc)
+                return
+            loop.call_soon_threadsafe(_settle, done.set_result, ok)
+
+        # daemon=True is load-bearing. See the docstring: a non-daemon thread would be joined
+        # at interpreter exit and re-create the hang this whole function exists to remove.
+        threading.Thread(target=_run, name="otel-shutdown-flush", daemon=True).start()
+
+        try:
+            # shield: the wait times out, but the future itself is not cancelled — the daemon
+            # thread is free to finish and settle it harmlessly if it ever comes back.
+            await asyncio.wait_for(
+                asyncio.shield(done), timeout=(timeout_millis / 1000.0) + FLUSH_GRACE_S
+            )
+        except TimeoutError:
+            logger.warning(
+                "OTel shutdown flush exceeded %sms; abandoning it so the job can exit "
+                "cleanly. Spans for this call may be incomplete — strictly better than the "
+                "process being SIGUSR1'd mid-teardown, which would also lose the memory write.",
+                timeout_millis,
+            )
+        except Exception as exc:
+            logger.warning("OTel shutdown flush failed: %s", exc)
 
     try:
         add_shutdown_callback(_flush_otel)

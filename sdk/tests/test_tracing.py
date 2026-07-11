@@ -296,13 +296,30 @@ def test_attach_is_noop_when_span_not_recording() -> None:
 
 
 def test_force_flush_uses_configured_provider() -> None:
+    """The provider gets the REMAINING budget, not the full timeout.
+
+    This previously asserted `force_flush.assert_called_once_with(1234)` — an exact
+    pass-through. That encoded the bug: `timeout_millis` was handed IN FULL to each of the
+    three providers (traces, logs, metrics), so a 10s request could block for 30s, against
+    LiveKit's 10s kill deadline. It is now a TOTAL budget that each provider draws down.
+
+    So the assertion is a bound, not an equality: the provider is called once, with at most
+    what was asked for.
+    """
     provider = MagicMock()
     provider.force_flush.return_value = True
     tracing._provider = provider
 
     assert tracing.force_flush_otel_tracing(timeout_millis=1234) is True
 
-    provider.force_flush.assert_called_once_with(1234)
+    provider.force_flush.assert_called_once()
+    (passed,) = provider.force_flush.call_args.args
+    assert 0 < passed <= 1234, (
+        f"provider was handed {passed}ms against a 1234ms TOTAL budget. It must receive the "
+        f"remaining budget — never more than the total, and never a non-positive value "
+        f"(some OTel exporters read <=0 as 'no deadline', which is the unbounded block we "
+        f"are defending against)."
+    )
 
 
 def test_wire_shutdown_flush_registers_job_callback() -> None:

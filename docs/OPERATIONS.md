@@ -176,16 +176,47 @@ cost is `ERROR`-level log lines on otherwise-healthy calls, which put a
 false-positive floor under any error-rate alerting — the reason this is worth
 fixing before wiring alerts, not just cosmetic.
 
-**Root cause.** livekit-agents' `WorkerOptions.shutdown_process_timeout`
-defaults to 10.0s. The job process doesn't exit within it because the Gemini
-realtime session's close hangs after `EndCallTool(delete_room=True)` tears the
-room down out from under it. The SIGUSR1 is livekit-agents asking the stuck
-process to dump stack traces before killing it.
+**Root cause — CORRECTED 2026-07-11. The earlier diagnosis was wrong.**
 
-**Fix — validate before shipping.** Candidate approaches: (a) an explicit
-session/realtime close in a shutdown hook before room deletion, (b) revisit
-`delete_room=True` timing, (c) a larger `shutdown_process_timeout` *only if*
-the close actually completes given more time. All of these change call
-teardown and must be proven on a **real test call**, not assumed — bumping the
-timeout blindly just delays the kill and masks the signal. Tracked as a
-deploy-session validation item.
+This page previously blamed the Gemini realtime session's close hanging after
+`EndCallTool(delete_room=True)` "tearing the room down out from under it". That is
+**ordering-impossible** against the pinned `livekit-agents==1.6.5`, and it pointed the next
+reader at `delete_room`. The actual teardown order in the shipped wheel:
+
+| step | budget |
+| --- | --- |
+| `session.aclose()` — closes the Gemini realtime WS | **60s** |
+| `session_end_fnc` | 300s |
+| send `ShuttingDown` — **the parent's 10s kill clock starts here** | — |
+| `room.disconnect()` | — |
+| shutdown callbacks, incl. `delete_room` **and the OTel flush** | **10s (parent)** |
+
+A hanging realtime close therefore cannot cause this: it runs *before* the clock starts,
+with its own 60s budget, and would log `AgentSession.aclose() timed out after 60.0s` — which
+the symptom never showed. And `delete_room` runs *after* `room.disconnect()`, when the
+session is already closed. **`delete_room=True` is the library default and is correct. Do
+not "fix" it.**
+
+**The real cause: a synchronous OTel flush on the event loop.**
+`sdk/tracing.py::wire_otel_shutdown_flush` registered a shutdown callback that *looked*
+async but called `force_flush_otel_tracing()` **synchronously** — a blocking network export
+to the collector on shiori, on the event loop. That starves every sibling shutdown callback
+LiveKit gathers concurrently **and the IPC read/ping tasks**, so the child can no longer
+answer its parent. At `shutdown_process_timeout` the parent sends SIGUSR1 — and **exit `-10`
+IS SIGUSR1**. The process was shot; it never crashed.
+
+Two details made it deterministic rather than occasional: the flush ceiling (10 000 ms) was
+numerically identical to the kill budget (10.0 s), and the timeout was applied **per
+provider** (traces, logs, metrics) rather than as a total — so a 10 s request could block
+for **30 s**.
+
+**Fixed** (`sdk/tracing.py`): the flush now runs on an explicit **daemon** thread with a
+**total** 3 s budget, bounded well under the kill deadline. `asyncio.to_thread` is
+deliberately *not* used — its ThreadPoolExecutor threads are non-daemon and the interpreter
+joins them at exit, so abandoning a wedged flush would not actually abandon it; the hang
+would simply move to a line nobody is watching. Covered by
+`sdk/tests/test_shutdown_flush_does_not_block.py`, whose load-bearing test asserts the event
+loop keeps ticking while the flush is wedged (it goes red against the old code).
+
+**Still to validate on a real call.** Proven in tests; not yet reproduced-then-absent on
+live telephony. That validation remains a deploy-session item.
