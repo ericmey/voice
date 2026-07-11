@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent-party"
+name = "agent-sumi"
 version = "0.1.0"
-description = "Party voice agent — chained STT/LLM/TTS baseline for multi-agent room"
+description = "Sumi voice agent — fully-local chained STT/LLM/TTS (Riva/Nemo/Orpheus)"
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "sdk",

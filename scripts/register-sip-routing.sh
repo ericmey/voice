@@ -7,7 +7,7 @@
 #   sip-dispatch-nyla.json
 #   sip-dispatch-aoi.json
 #   sip-dispatch-yua.json
-#   sip-dispatch-party.json
+#   sip-dispatch-sumi.json
 #
 # For each record:
 #   1. Look up live state via `lk sip {inbound,dispatch} list --json`.

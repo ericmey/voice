@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-AGENTS=(nyla aoi yua party)
+AGENTS=(nyla aoi yua sumi)
 # On mizuki the health-check user may not be in the docker group; fall back
 # to sudo (cron typically runs as root or a docker-group user, where the
 # bare docker works and this branch is never taken).

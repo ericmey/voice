@@ -88,7 +88,7 @@ make cycle
 
 # Still broken? Stop the agents, then bring them back up.
 docker compose -f docker-compose.yaml -f docker-compose.agents.yaml \
-  stop agent-aoi agent-nyla agent-yua agent-party
+  stop agent-aoi agent-nyla agent-yua agent-sumi
 make deploy
 ```
 

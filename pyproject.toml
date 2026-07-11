@@ -69,7 +69,7 @@ root = "agents/aoi/src"
 root = "agents/yua/src"
 
 [[tool.pyright.executionEnvironments]]
-root = "agents/party/src"
+root = "agents/sumi/src"
 
 # Test files live one level up from src/. Their conftest.py does
 # `sys.path.insert(0, "../src")` at runtime; mirror that for pyright.
@@ -86,5 +86,5 @@ root = "agents/yua/tests"
 extraPaths = ["agents/yua/src"]
 
 [[tool.pyright.executionEnvironments]]
-root = "agents/party/tests"
-extraPaths = ["agents/party/src"]
+root = "agents/sumi/tests"
+extraPaths = ["agents/sumi/src"]

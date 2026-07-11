@@ -47,9 +47,9 @@ def test_assert_agent_identity_matches(monkeypatch):
 
 
 def test_assert_agent_identity_mismatch_raises(monkeypatch):
-    """The exact check that would have caught Party registering as phone-party
-    while its config claimed to be Nyla."""
-    monkeypatch.setenv("VOICE_AGENT_NAME", "party")
+    """The exact check that would have caught an agent registering under one
+    name while its config claimed to be someone else."""
+    monkeypatch.setenv("VOICE_AGENT_NAME", "sumi")
     with pytest.raises(RuntimeError, match="identity mismatch"):
         assert_agent_identity(AgentConfig(agent_name="nyla", memory_agent_tag="nyla-voice"))
 

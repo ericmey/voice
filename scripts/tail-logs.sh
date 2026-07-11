@@ -19,12 +19,12 @@ agents=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --grep) FILTER="$2"; shift 2 ;;
-    nyla | aoi | yua | party) agents+=("$1"); shift ;;
+    nyla | aoi | yua | sumi) agents+=("$1"); shift ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
   esac
 done
 if [[ ${#agents[@]} -eq 0 ]]; then
-  agents=(nyla aoi yua party)
+  agents=(nyla aoi yua sumi)
 fi
 
 # docker may need sudo if the caller isn't in the docker group.
@@ -35,7 +35,7 @@ agent_color() {
     nyla) printf '\033[1;35m' ;;  # magenta
     aoi) printf '\033[1;36m' ;;   # cyan
     yua) printf '\033[1;32m' ;;   # green
-    party) printf '\033[1;33m' ;; # yellow
+    sumi) printf '\033[1;33m' ;; # yellow
     *) printf '\033[0m' ;;
   esac
 }

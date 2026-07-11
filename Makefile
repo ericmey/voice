@@ -92,7 +92,7 @@ loki-smoke: ## Query Grafana/Loki for post-smoke-test failures (requires GRAFANA
 # ---- tests ---------------------------------------------------------
 
 test: ## Run pytest across all workspace members (sdk + tools + agents)
-	@for d in sdk tools agents/nyla agents/aoi agents/yua agents/party; do \
+	@for d in sdk tools agents/nyla agents/aoi agents/yua agents/sumi; do \
 	  echo ">> $$d"; \
 	  (cd $$d && uv run pytest -q) || { code=$$?; [[ $$code == 5 ]] && echo "  (no tests)" || exit $$code; }; \
 	done

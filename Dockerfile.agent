@@ -27,7 +27,7 @@ RUN chmod +x ./scripts/agent-entrypoint.sh
 ARG VOICE_SERVICE_VERSION=dev
 ENV VOICE_SERVICE_VERSION=${VOICE_SERVICE_VERSION}
 
-# AGENT selects which agent dir runs (aoi|nyla|yua|party). The entrypoint maps
+# AGENT selects which agent dir runs (aoi|nyla|yua|sumi). The entrypoint maps
 # that to the per-agent Musubi bearer and sets LIVEKIT_VOICE_LOGS before exec.
 ENV AGENT=aoi
 ENTRYPOINT ["/app/scripts/agent-entrypoint.sh"]

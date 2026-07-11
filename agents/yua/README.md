@@ -29,7 +29,7 @@ integration, and the required environment variables.
 - [`../../sdk`](../../sdk) — shared runtime
 - [`../aoi`](../aoi) — senior technical partner
 - [`../nyla`](../nyla) — household router
-- [`../party`](../party) — chained-pipeline variant
+- [`../sumi`](../sumi) — chained-pipeline variant
 
 ## License
 

@@ -56,9 +56,9 @@ services:
       <<: *agent-env
       AGENT: yua
 
-  agent-party:
+  agent-sumi:
     <<: *agent-common
-    container_name: voice-agent-party
+    container_name: voice-agent-sumi
     environment:
       <<: *agent-env
-      AGENT: party
+      AGENT: sumi

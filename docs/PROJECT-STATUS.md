@@ -11,7 +11,7 @@ operator-specific infrastructure.
 - Docker Compose runs the infrastructure tier (`livekit-server`,
   `livekit-sip`, `livekit-egress`, Redis) via `docker-compose.yaml`.
 - Docker Compose also runs the Python agent tier as containers
-  (`voice-agent-{nyla,aoi,yua,party}`) from the `voice-agent:latest`
+  (`voice-agent-{nyla,aoi,yua,sumi}`) from the `voice-agent:latest`
   image, via `docker-compose.agents.yaml`. Production host is
   `mizuki.mey.house` (Ubuntu); the macOS `launchd` path is retired.
 - SIP routing is represented as JSON examples in `config/`; real

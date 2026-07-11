@@ -1,4 +1,4 @@
-"""Tests for the Party voice agent (chained STT/LLM/TTS, Harem World line)."""
+"""Tests for the Sumi voice agent (chained STT/LLM/TTS, Harem World line)."""
 
 import importlib
 from pathlib import Path
@@ -22,7 +22,7 @@ class TestModuleExports:
         assert callable(agent_module.entrypoint)
 
     def test_agent_class_exists(self, agent_module):
-        assert hasattr(agent_module, "PartyAgent")
+        assert hasattr(agent_module, "SumiAgent")
 
     def test_server_is_agent_server(self, agent_module):
         from livekit.agents.worker import AgentServer
@@ -31,17 +31,17 @@ class TestModuleExports:
 
 
 class TestAgentClass:
-    """Verify the PartyAgent class composition."""
+    """Verify the SumiAgent class composition."""
 
     def test_inherits_core_tools(self, agent_module):
         from tools.core import CoreToolsMixin
 
-        assert issubclass(agent_module.PartyAgent, CoreToolsMixin)
+        assert issubclass(agent_module.SumiAgent, CoreToolsMixin)
 
     def test_inherits_memory_tools(self, agent_module):
         from tools.memory import MusubiToolsMixin
 
-        assert issubclass(agent_module.PartyAgent, MusubiToolsMixin)
+        assert issubclass(agent_module.SumiAgent, MusubiToolsMixin)
 
     def test_does_not_inherit_sessions_tools(self, agent_module):
         """Retired with the OpenClaw gateway."""
@@ -51,26 +51,26 @@ class TestAgentClass:
             importlib.import_module("tools.sessions")
 
     def test_config_has_own_memory_identity(self, agent_module):
-        """Party's memory identity is now its own (party/voice / party-voice),
-        no longer folded into Nyla's bucket. Persona stays Nyla-cloned until
-        Party graduates into Sumi."""
-        cfg = agent_module.PartyAgent.config
-        assert cfg.agent_name == "party"
-        assert cfg.memory_agent_tag == "party-voice"
-        assert cfg.musubi_v2_namespace == "party/voice"
-        assert cfg.registration_name == "phone-party"
+        """Sumi's voice memory is her own channel (sumi/voice / sumi-voice),
+        distinct from her fleet presence (sumi/hermes). One Sumi, two
+        channels."""
+        cfg = agent_module.SumiAgent.config
+        assert cfg.agent_name == "sumi"
+        assert cfg.memory_agent_tag == "sumi-voice"
+        assert cfg.musubi_v2_namespace == "sumi/voice"
+        assert cfg.registration_name == "phone-sumi"
 
     def test_construction_with_defaults(self, agent_module):
-        agent = agent_module.PartyAgent(instructions="test")
+        agent = agent_module.SumiAgent(instructions="test")
         assert agent._caller_from is None
 
     def test_household_status_absent(self, agent_module):
-        agent = agent_module.PartyAgent(instructions="test")
+        agent = agent_module.SumiAgent(instructions="test")
         assert not hasattr(agent, "household_status")
 
     def test_active_tools_present(self, agent_module):
         """Tools currently exposed to the voice model."""
-        agent = agent_module.PartyAgent(instructions="test")
+        agent = agent_module.SumiAgent(instructions="test")
         expected = [
             "get_current_time",
             "get_weather",
@@ -90,7 +90,7 @@ class TestAgentClass:
     def test_retired_gateway_tools_absent(self, agent_module):
         """The OpenClaw gateway is gone. A prompt that promises a tool the
         runtime does not register is a fabrication generator."""
-        agent = agent_module.PartyAgent(instructions="test")
+        agent = agent_module.SumiAgent(instructions="test")
         for name in (
             "openclaw_request",
             "openclaw_delegate",
@@ -119,7 +119,7 @@ class TestPersona:
         prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "system.md"
         content = prompt_path.read_text(encoding="utf-8")
         assert "household_status()" not in content, (
-            "Party prompt must not reference household_status"
+            "Sumi prompt must not reference household_status"
         )
 
     def test_prompt_keeps_musubi_recent(self):

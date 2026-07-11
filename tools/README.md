@@ -29,14 +29,14 @@ exposes them to the voice model as callable tools.
 
 | Mixin | Agents that compose it |
 |---|---|
-| `CoreToolsMixin` | nyla, aoi, yua, party |
-| `MusubiToolsMixin` | nyla, aoi, yua, party |
+| `CoreToolsMixin` | nyla, aoi, yua, sumi |
+| `MusubiToolsMixin` | nyla, aoi, yua, sumi |
 | `MemoryToolsMixin` | Back-compat alias for `MusubiToolsMixin` |
 | `HouseholdToolsMixin` | nyla, aoi, yua |
 
 Nyla, Aoi, and Yua subclass `BaseRealtimeAgent` (which already composes
 `CoreToolsMixin` + `MusubiToolsMixin`) and add `HouseholdToolsMixin`.
-Party composes `CoreToolsMixin` + `MusubiToolsMixin` directly and does
+Sumi composes `CoreToolsMixin` + `MusubiToolsMixin` directly and does
 not survey the household.
 
 ## Musubi Canonical API
@@ -71,7 +71,7 @@ side effect a tool has is a direct Musubi call (or, for
 Each tool reads `self.config` (an `AgentConfig` instance set by the
 concrete agent class) for per-agent behavior:
 
-- `config.agent_name` — "nyla" | "aoi" | "yua" | "party" — used for
+- `config.agent_name` — "nyla" | "aoi" | "yua" | "sumi" — used for
   self-reference in prompts and memory tagging.
 - `config.memory_agent_tag` — tag used when storing memories so recall
   can filter per-agent.

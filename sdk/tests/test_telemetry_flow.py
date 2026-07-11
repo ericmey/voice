@@ -39,7 +39,7 @@ def _setup_logs_dir(tmp_path: Path, monkeypatch) -> Path:
 
 
 def test_record_turn_captures_chained_pipeline_metrics() -> None:
-    c = telemetry.TelemetryCollector("call-1", "phone-party")
+    c = telemetry.TelemetryCollector("call-1", "phone-sumi")
 
     c.record_turn(
         {

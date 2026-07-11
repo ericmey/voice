@@ -5,7 +5,7 @@ worker bootstrap, telemetry / trace / transcript writers, tool mixins
 (time, weather, memory, household status), and the post-call review
 pipeline that feeds Rin's review queue.
 
-This is the common substrate the persona agents (Aoi, Nyla, Yua, Party) all
+This is the common substrate the persona agents (Aoi, Nyla, Yua, Sumi) all
 import from.
 
 ## Requirements
@@ -27,7 +27,7 @@ full workspace setup, deploy, and verification runbook.
 - [`../agents/aoi`](../agents/aoi) — Aoi persona (Gemini 2.5 realtime)
 - [`../agents/nyla`](../agents/nyla) — Nyla persona (Gemini 2.5 realtime)
 - [`../agents/yua`](../agents/yua) — Yua persona (Gemini 2.5 realtime)
-- [`../agents/party`](../agents/party) — chained STT/LLM/TTS baseline
+- [`../agents/sumi`](../agents/sumi) — chained STT/LLM/TTS baseline
 - [`../tools`](../tools) — shared LiveKit function-tool mixins
 
 ## License

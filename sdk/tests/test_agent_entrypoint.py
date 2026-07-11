@@ -27,7 +27,7 @@ TOKENS = {
     "MUSUBI_V2_TOKEN_AOI": "tok-aoi",
     "MUSUBI_V2_TOKEN_NYLA": "tok-nyla",
     "MUSUBI_V2_TOKEN_YUA": "tok-yua",
-    "MUSUBI_V2_TOKEN_PARTY": "tok-party",
+    "MUSUBI_V2_TOKEN_SUMI": "tok-sumi",
 }
 
 
@@ -66,8 +66,8 @@ def _parsed(result) -> dict[str, str]:
         ("aoi", "tok-aoi"),
         ("yua", "tok-yua"),
         ("nyla", "tok-nyla"),
-        # party carries its own bearer now — its memory is party/voice, not Nyla's.
-        ("party", "tok-party"),
+        # sumi's voice line carries its own bearer — memory is sumi/voice.
+        ("sumi", "tok-sumi"),
     ],
 )
 def test_resolves_the_per_agent_musubi_bearer(agent, expected_token):
@@ -76,7 +76,7 @@ def test_resolves_the_per_agent_musubi_bearer(agent, expected_token):
     assert _parsed(result)["MUSUBI_V2_TOKEN"] == expected_token
 
 
-@pytest.mark.parametrize("agent", ["aoi", "nyla", "yua", "party"])
+@pytest.mark.parametrize("agent", ["aoi", "nyla", "yua", "sumi"])
 def test_exports_voice_agent_name_so_service_name_is_per_agent(agent):
     """Unset, tracing.py collapses all four agents into service_name=voice and
     every `voice-.*` dashboard panel and alert selector matches nothing."""
@@ -105,11 +105,11 @@ def test_refuses_to_start_on_an_empty_bearer():
 
 
 def test_empty_bearer_error_names_the_variable_actually_required():
-    """party needs its own MUSUBI_V2_TOKEN_PARTY now. The error must name the
+    """sumi needs its own MUSUBI_V2_TOKEN_SUMI. The error must name the
     variable the operator actually has to set."""
-    result = _run("party", {"MUSUBI_V2_TOKEN_PARTY": ""})
+    result = _run("sumi", {"MUSUBI_V2_TOKEN_SUMI": ""})
     assert result.returncode == EX_CONFIG
-    assert "MUSUBI_V2_TOKEN_PARTY is empty" in result.stderr
+    assert "MUSUBI_V2_TOKEN_SUMI is empty" in result.stderr
 
 
 def test_unknown_agent_is_rejected():

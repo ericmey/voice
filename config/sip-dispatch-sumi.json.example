@@ -1,11 +1,11 @@
 {
   "_comment": [
-    "Dispatch rule for the phone-party agent (chained STT/LLM/TTS pipeline).",
+    "Dispatch rule for the phone-sumi agent (fully-local chained STT/LLM/TTS).",
     "See sip-dispatch-nyla.json.example for the full field explanation."
   ],
 
   "dispatch_rule": {
-    "name": "twilio-to-phone-party",
+    "name": "twilio-to-phone-sumi",
 
     "numbers": [
       "+15550000003"
@@ -20,8 +20,8 @@
     "room_config": {
       "agents": [
         {
-          "agentName": "phone-party",
-          "metadata": "{\"route\":\"party\",\"source\":\"sip\"}"
+          "agentName": "phone-sumi",
+          "metadata": "{\"route\":\"sumi\",\"source\":\"sip\"}"
         }
       ]
     }

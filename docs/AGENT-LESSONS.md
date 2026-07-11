@@ -33,14 +33,14 @@ or pre-exported secrets.
 them, and registration scripts that silently use dev credentials can report
 false routing failures after every reboot.
 
-## 2026-05-01 — Native-first for third-party integrations
+## 2026-05-01 — Native-first for third-sumi integrations
 
 **Trigger:** Asked to "implement OTel observability" for OTel observability, the
 agent extended an existing LangSmith-era custom telemetry layer instead
 of building only the gap between LiveKit-native spans and what the LGTM stack
 ingestion. Result was decorated legacy code, not an OTel integration.
 
-**Lesson:** Before touching code that integrates a third-party product,
+**Lesson:** Before touching code that integrates a third-sumi product,
 run this checklist in order:
 
 1. Read the destination tool's native ingestion contract.
@@ -274,7 +274,7 @@ aligned with the worker lifecycle.
 pre-Yua subset workflows that intentionally leave one of the four phone agents
 undeployed.
 
-**Lesson:** Treat Nyla, Aoi, Yua, and Party as the supported steady-state
+**Lesson:** Treat Nyla, Aoi, Yua, and Sumi as the supported steady-state
 voice stack. It is still fine for deploy scripts to accept a subset for
 targeted repair, but `make health` should fail when any steady-state agent or
 its SIP rule is missing.

@@ -4,7 +4,7 @@
 # TURN), livekit-sip (SIP trunk to Twilio, room dispatch), livekit-egress
 # (audio-only call recordings), and redis (shared state between them).
 #
-# NOT in this compose file: the Python voice agents (nyla, aoi, yua, party).
+# NOT in this compose file: the Python voice agents (nyla, aoi, yua, sumi).
 # The agents live in docker-compose.agents.yaml and run as their own
 # containers (voice-agent-<name>) from the voice-agent:latest image. Bring
 # up the full stack — infra + agents — with:

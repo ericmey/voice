@@ -30,7 +30,7 @@
                                 ▼
                       ┌───────────────────────────────┐
                       │  Python voice agents          │  Docker containers
-                      │  (nyla, aoi, yua, party)      │  voice-agent-<name>
+                      │  (nyla, aoi, yua, sumi)      │  voice-agent-<name>
                       │                               │
                       │  Each exposes @function_tool  │
                       │  methods for memory, household │
@@ -68,9 +68,11 @@ Realtime voice persona. Same model family as Nyla and Aoi, Leda voice,
 Yua-specific prompt and memory namespace. Coding and QA partner, second
 set of eyes, and Aoi's development partner; also surveys the household.
 
-### `agents/party/`
-Chained STT/LLM/TTS variant. Whisper → Silero VAD → Gemini text LLM →
-ElevenLabs TTS. Same persona/tools as Nyla; different voice engine for A/B.
+### `agents/sumi/`
+Sumi Tachibana's fully-local chained STT/LLM/TTS line. Riva Parakeet ASR →
+Silero VAD → Mistral Nemo (llama.cpp) → Orpheus TTS — every leg on mizuki's
+Blackwell card, nothing leaving the box. Sumi's own persona (archivist/maid)
+and her own memory channel (`sumi/voice`, distinct from `sumi/hermes`).
 
 ### `tools/`
 Shared LiveKit `@function_tool` mixins composed by the agents. See
@@ -102,7 +104,7 @@ Shared LiveKit `@function_tool` mixins composed by the agents. See
 
 The agents run as Docker containers on host `mizuki.mey.house`, defined
 in `docker-compose.agents.yaml` (services `agent-aoi`, `agent-nyla`,
-`agent-yua`, `agent-party`; containers `voice-agent-<name>`). All four
+`agent-yua`, `agent-sumi`; containers `voice-agent-<name>`). All four
 share one image, `voice-agent:latest`, built from `Dockerfile.agent`.
 `scripts/agent-entrypoint.sh` selects the per-agent Musubi token, sets
 `VOICE_AGENT_NAME`, and execs `agents/<name>/src/agent.py`. Docker

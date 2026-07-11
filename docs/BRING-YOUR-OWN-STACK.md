@@ -34,7 +34,7 @@ whole stack.
 The checked-in agents are samples:
 
 - `nyla`, `aoi`, and `yua` use Gemini native audio through LiveKit Agents.
-- `party` uses a chained STT/LLM/TTS pipeline.
+- `sumi` uses a fully-local chained STT/LLM/TTS pipeline (Riva/Nemo/Orpheus).
 
 To add your own:
 
@@ -46,7 +46,7 @@ To add your own:
    agent needs different tokens or environment.
 5. Add a SIP dispatch JSON example if it should receive phone calls.
 
-For a fully generic template, replace the `nyla`, `aoi`, `yua`, and `party`
+For a fully generic template, replace the `nyla`, `aoi`, `yua`, and `sumi`
 names across `agents/`, `config/sip-dispatch-*.json.example`, and
 `docker-compose.agents.yaml`.
 

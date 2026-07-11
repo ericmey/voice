@@ -80,7 +80,7 @@ enough at structured-output extraction over a 4-8k token transcript.
 Bump to Pro if quality drifts."""
 
 
-_EXTRACTION_PROMPT = """You are processing a transcript from a phone call between Eric and one of his AI partners (Nyla, Aoi, Yua, or Party).
+_EXTRACTION_PROMPT = """You are processing a transcript from a phone call between Eric and one of his AI partners (Nyla, Aoi, Yua, or Sumi).
 
 **STT transcription notes — important.** Phone STT systems struggle with the assistants' names because they're not common English words. When you see the user addressing the assistant in the transcript, the name may have been corrupted by speech recognition. Common substitutions:
 - "Nyla" may appear as "Inla", "Milo", "Niala", "Nila", "Nyla", or similar phonetic neighbors.
@@ -88,7 +88,7 @@ _EXTRACTION_PROMPT = """You are processing a transcript from a phone call betwee
 - "Yua" may appear as "Youa", "Yuwa", "Yua", "Yuma", "Yuna", or similar.
 - Other agent names (Hana, Yumi, Rin, Tama, Sumi, Momo, Mizuki, Reika, Yua, Nana, Shiori) may be transcribed inconsistently too.
 
-When extracting memories, **always render assistant names in their canonical spelling** (Nyla, Aoi, Hana, Yumi, Rin, Tama, Sumi, Momo, Mizuki, Reika, Yua, Nana, Shiori, Party). This keeps memories searchable and consistent across calls regardless of STT quality on any given day.
+When extracting memories, **always render assistant names in their canonical spelling** (Nyla, Aoi, Hana, Yumi, Rin, Tama, Sumi, Momo, Mizuki, Reika, Yua, Nana, Shiori). This keeps memories searchable and consistent across calls regardless of STT quality on any given day.
 
 Extract distinct memories from this transcript. Each memory should preserve a coherent moment of the conversation as it actually happened. **Do NOT summarise.** Preserve the specific details, the texture, the why — what Eric was anxious about, excited about, the specific context.
 

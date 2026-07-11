@@ -36,7 +36,7 @@ voice/
     ├── nyla/                        realtime — Gemini 2.5 Native Audio, voice "Aoede"
     ├── aoi/                         realtime — Gemini 2.5 Native Audio, technical partner
     ├── yua/                         realtime — Gemini 2.5 Native Audio, coding and QA partner
-    └── party/                       chained STT/LLM/TTS — Whisper + Silero + Gemini + ElevenLabs
+    └── sumi/                        chained STT/LLM/TTS — Riva ASR + Silero + Mistral Nemo + Orpheus (fully local)
 ```
 
 Every Python package is a uv workspace member declared in the root
@@ -115,10 +115,10 @@ Workspace-wide (shared across every member):
 uv add <package>
 ```
 
-Single member (e.g., only the party agent needs a new codec):
+Single member (e.g., only the sumi agent needs a new codec):
 
 ```bash
-uv add --package agent-party <package>
+uv add --package agent-sumi <package>
 ```
 
 ## Adding a new tool
@@ -162,9 +162,8 @@ to the unsuffixed `MUSUBI_V2_TOKEN` the SDK reads, and exports
 |---|---|---|
 | `LIVEKIT_URL` | all | WebSocket URL of the LiveKit server (`ws://livekit-server:7880` in compose) |
 | `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | all | Must match `config/livekit.yaml` keys |
-| `GOOGLE_API_KEY` | nyla, aoi, yua, party | Gemini API access |
-| `OPENAI_API_KEY` | party | Whisper STT |
-| `ELEVEN_API_KEY` (alias `ELEVENLABS_API_KEY`) | party | ElevenLabs TTS |
+| `GOOGLE_API_KEY` | nyla, aoi, yua | Gemini API access (realtime agents) |
+| `MUSUBI_V2_TOKEN_SUMI` | sumi | `sumi/voice` memory bearer (no cloud STT/LLM/TTS keys — fully local) |
 | `MUSUBI_V2_BASE_URL` | all | Canonical Musubi API base URL |
 | `MUSUBI_V2_TOKEN_<AGENT>` | all | Per-agent Musubi bearer token; entrypoint maps it to `MUSUBI_V2_TOKEN` |
 | `VOICE_AGENT_NAME` | all | Agent id; set by `agent-entrypoint.sh`, drives `SERVICE_NAME=voice-<agent>` |

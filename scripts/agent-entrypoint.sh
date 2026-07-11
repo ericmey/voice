@@ -9,16 +9,16 @@
 # selection happens here, once, at container start.
 set -eu
 
-: "${AGENT:?AGENT must be set (aoi|nyla|yua|party)}"
+: "${AGENT:?AGENT must be set (aoi|nyla|yua|sumi)}"
 
 case "$AGENT" in
 	aoi) token_var=MUSUBI_V2_TOKEN_AOI ;;
 	yua) token_var=MUSUBI_V2_TOKEN_YUA ;;
 	nyla) token_var=MUSUBI_V2_TOKEN_NYLA ;;
-	# Party writes to its own party/voice namespace now, so it carries its own
-	# bearer (no longer shared with Nyla). Its persona is still Nyla-cloned
-	# until it graduates into Sumi, but its memory is separated.
-	party) token_var=MUSUBI_V2_TOKEN_PARTY ;;
+	# Sumi's voice line writes to her own sumi/voice namespace, a distinct
+	# channel from her fleet presence (sumi/hermes), so it carries its own
+	# bearer.
+	sumi) token_var=MUSUBI_V2_TOKEN_SUMI ;;
 	*)
 		echo "agent-entrypoint: no Musubi token mapping for AGENT=$AGENT" >&2
 		exit 64

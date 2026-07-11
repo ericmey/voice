@@ -24,7 +24,7 @@ voice/
     ├── nyla/                      realtime persona (Gemini 2.5 native audio)
     ├── aoi/                       realtime persona, technical partner
     ├── yua/                       realtime persona, coding and QA partner
-    └── party/                     chained STT/LLM/TTS variant
+    └── sumi/                     chained STT/LLM/TTS variant
 ```
 
 Every Python package is a uv workspace member declared in the root
@@ -33,7 +33,7 @@ Every Python package is a uv workspace member declared in the root
 ## Bring Your Own Stack
 
 This repo is a working reference for one personal voice stack, not a
-drop-in product. The included agents (`nyla`, `aoi`, `yua`, `party`) and tools
+drop-in product. The included agents (`nyla`, `aoi`, `yua`, `sumi`) and tools
 are samples you can replace with your own personas, model choices, and
 tool mixins.
 

@@ -29,7 +29,7 @@ class AgentConfig:
     """Per-agent identity. One root (``agent_name``); everything derives.
 
     Attributes:
-        agent_name: Short canonical id ("nyla", "aoi", "yua", "party"). The
+        agent_name: Short canonical id ("nyla", "aoi", "yua", "sumi"). The
             root of every other identity axis. Also the ``$AGENT`` value the
             entrypoint resolves the per-agent secrets from, and the
             ``VOICE_AGENT_NAME`` that becomes the OTel ``service.name``
@@ -82,8 +82,8 @@ def assert_agent_identity(config: AgentConfig) -> None:
     """Fail loud at startup if the env ``$AGENT`` / ``VOICE_AGENT_NAME`` does
     not match ``config.agent_name``.
 
-    This is the cross-check that would have caught Party registering as
-    ``phone-party`` while its config claimed to be Nyla. Skipped when
+    This is the cross-check that would have caught an agent registering as
+    ``phone-<x>`` while its config claimed to be someone else. Skipped when
     ``VOICE_AGENT_NAME`` is unset (dev/test runs outside the entrypoint).
     """
     env_name = (os.environ.get("VOICE_AGENT_NAME") or "").strip().lower()

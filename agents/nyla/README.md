@@ -32,7 +32,7 @@ integration, and the required environment variables.
 
 - [`../../sdk`](../../sdk) — shared runtime
 - [`../aoi`](../aoi) — sister persona
-- [`../party`](../party) — chained-pipeline variant
+- [`../sumi`](../sumi) — chained-pipeline variant
 
 ## License
 

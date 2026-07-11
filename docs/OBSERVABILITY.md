@@ -50,7 +50,7 @@ LiveKit agents (Python)
   │                        └─ BatchSpanProcessor → OTLP/HTTP → traces backend
   ├─ OTel LoggerProvider ──── BatchLogRecordProcessor → OTLP/HTTP → logs backend
   └─ OTel MeterProvider ───── PeriodicExportingMetricReader → OTLP/HTTP → metrics backend
-                                  service.name=voice-{nyla,aoi,yua,party}
+                                  service.name=voice-{nyla,aoi,yua,sumi}
 ```
 
 The agent SDK relies on LiveKit Agents' native OTel spans and attributes.

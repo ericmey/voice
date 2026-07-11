@@ -1,18 +1,20 @@
-"""Party voice agent — chained STT/LLM/TTS, the Harem World line.
+"""Sumi voice agent — chained STT/LLM/TTS, the Harem World line.
 
-Registers as "phone-party" with LiveKit. Uses separate components:
-  - STT: OpenAI Whisper-1 (non-streaming, needs Silero VAD)
-  - VAD: Silero (segments caller audio into utterances for Whisper)
-  - LLM: Gemini 3.1 Flash-Lite Preview (text model, not multimodal)
-  - TTS: ElevenLabs Flash v2.5
+Registers as "phone-sumi" with LiveKit. Runs Sumi Tachibana's fully-local
+inference stack on mizuki's Blackwell card — separate components:
+  - STT: NVIDIA Riva Parakeet ASR (gRPC, needs Silero VAD)
+  - VAD: Silero (segments caller audio into utterances)
+  - LLM: Mistral Nemo via llama.cpp (OpenAI-compatible)
+  - TTS: Orpheus (OpenAI-compatible; voice ``tara`` is a placeholder
+    until Sumi's own low/dry voice is cloned)
 
-Inherits the voice tool set (Core, Memory). Its persona is still
-Nyla-on-the-chained-pipeline until it graduates into Sumi, but its
-MEMORY is its own (``party/voice`` / ``party-voice``) so Party's calls
-no longer land in Nyla's bucket.
+Inherits the voice tool set (Core, Memory). Persona is Sumi (the
+archivist/maid — composed, dry, care-through-action); memory is her own
+(``sumi/voice`` / ``sumi-voice``), distinct from her fleet presence
+(``sumi/hermes``) — one Sumi, two channels.
 
-Greeting uses session.say() — Gemini text LLM rejects generate_reply()
-at session start (sends tools without a preceding user turn).
+Greeting uses session.say() — the chained text LLM rejects
+generate_reply() at session start (tools without a preceding user turn).
 """
 
 from __future__ import annotations
@@ -71,36 +73,33 @@ def _load_persona() -> str:
 
 # --- agent class -------------------------------------------------------
 
-#: Party's operational identity. The Harem World line runs the chained
-#: STT/LLM/TTS pipeline; its *persona/voice* is still Nyla-on-that-pipeline
-#: until it graduates into Sumi. Its *memory* is now its own — ``party/voice``
-#: namespace, ``party-voice`` tag, and a dedicated ``MUSUBI_V2_TOKEN_PARTY``
-#: bearer (entrypoint maps it) — so Party's calls no longer bleed into Nyla's
-#: memory bucket or her greeting hook. When it becomes Sumi, rename
-#: ``party`` → ``sumi`` across this config, the entrypoint token map, and the
-#: persona in lockstep.
-PARTY_CONFIG = AgentConfig(
-    agent_name="party",
-    memory_agent_tag="party-voice",
-    musubi_v2_namespace="party/voice",
+#: Sumi's operational identity. The Harem World line runs her fully-local
+#: chained STT/LLM/TTS pipeline. Her *memory* is her own — ``sumi/voice``
+#: namespace, ``sumi-voice`` tag, and a dedicated ``MUSUBI_V2_TOKEN_SUMI``
+#: bearer (entrypoint maps it). This is her voice presence; her fleet
+#: presence (``sumi/hermes``) is a separate channel of the same Sumi.
+SUMI_CONFIG = AgentConfig(
+    agent_name="sumi",
+    memory_agent_tag="sumi-voice",
+    musubi_v2_namespace="sumi/voice",
 )
 
 # Fail loud at startup if $AGENT / VOICE_AGENT_NAME disagrees with the config.
-assert_agent_identity(PARTY_CONFIG)
+assert_agent_identity(SUMI_CONFIG)
 
 
-class PartyAgent(
+class SumiAgent(
     CoreToolsMixin,
     MusubiToolsMixin,
     Agent,
 ):
-    """Harem World agent — core + Musubi memory tools.
+    """Sumi Tachibana — core + Musubi memory tools on the chained voice line.
 
-    Persona is Nyla-on-the-chained-pipeline until Sumi; memory identity is
-    Party's own (``party/voice``).
+    Persona is Sumi (archivist/maid — composed, dry, care-through-action);
+    memory identity is her own (``sumi/voice``).
     """
 
-    config = PARTY_CONFIG
+    config = SUMI_CONFIG
 
     def __init__(
         self,
@@ -113,24 +112,24 @@ class PartyAgent(
         self._caller_from: str | None = caller_from
 
     async def on_enter(self) -> None:
-        # Party uses the chained text-LLM pipeline (Gemini text + Whisper STT
-        # + ElevenLabs TTS). generate_reply() is not supported at session
-        # start without a preceding user turn, so the greeting has to be a
-        # fixed string via session.say().
+        # Sumi uses the chained text-LLM pipeline (Nemo text + Riva STT +
+        # Orpheus TTS). generate_reply() is not supported at session start
+        # without a preceding user turn, so the greeting has to be a fixed
+        # string via session.say().
         #
         # Per Eric's feedback (2026-04-27): no formulaic recall callbacks in
-        # the opener — they read as calculated. Keep this one short, warm,
-        # and open-ended; let the conversation establish the texture.
-        await self.session.say("Hey Eric, what's going on?")
+        # the opener — they read as calculated. Sumi opens composed, not
+        # effusive: a quiet acknowledgement, then she waits for him.
+        await self.session.say("Eric. I'm here.")
 
 
 # --- server + session --------------------------------------------------
 server = AgentServer(port=8083)
 
 
-@server.rtc_session(agent_name=PARTY_CONFIG.registration_name)
+@server.rtc_session(agent_name=SUMI_CONFIG.registration_name)
 async def entrypoint(ctx: JobContext) -> None:
-    reg = PARTY_CONFIG.registration_name
+    reg = SUMI_CONFIG.registration_name
     logger.info("%s entrypoint: room=%s", reg, ctx.room.name)
     trace(f"entrypoint room={ctx.room.name}")
 
@@ -180,7 +179,7 @@ async def entrypoint(ctx: JobContext) -> None:
         ),
     ]
 
-    agent = PartyAgent(
+    agent = SumiAgent(
         instructions=_load_persona(),
         caller_from=caller_from,
         extra_tools=extra_tools,
@@ -200,10 +199,10 @@ async def entrypoint(ctx: JobContext) -> None:
     wire_postcall_memory(
         session,
         call_sid=transcript_sid,
-        namespace=f"{PARTY_CONFIG.musubi_v2_namespace}/episodic"
-        if PARTY_CONFIG.musubi_v2_namespace
+        namespace=f"{SUMI_CONFIG.musubi_v2_namespace}/episodic"
+        if SUMI_CONFIG.musubi_v2_namespace
         else None,
-        speaker_tag=PARTY_CONFIG.memory_agent_tag,
+        speaker_tag=SUMI_CONFIG.memory_agent_tag,
     )
     wire_otel_shutdown_flush(ctx)
     wire_musubi_shutdown(ctx)
@@ -216,9 +215,9 @@ async def entrypoint(ctx: JobContext) -> None:
         lk_job_id=getattr(ctx.job, "id", None),
     )
     annotate_call_audio_recording(audio_recording)
-    trace("party session: silero-vad -> whisper-1 -> gemini-3.1-flash-lite -> elevenlabs")
+    trace("sumi session: silero-vad -> riva-parakeet -> mistral-nemo -> orpheus")
 
-    trace("party: entrypoint complete, greeting scheduled via on_enter")
+    trace("sumi: entrypoint complete, greeting scheduled via on_enter")
 
 
 if __name__ == "__main__":

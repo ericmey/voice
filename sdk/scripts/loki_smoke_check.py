@@ -20,7 +20,7 @@ from typing import Any
 
 DEFAULT_GRAFANA_URL = "http://localhost:3000"
 DEFAULT_DATASOURCE_UID = "loki"
-DEFAULT_SERVICE_REGEX = "voice-nyla|voice-aoi|voice-yua|voice-party"
+DEFAULT_SERVICE_REGEX = "voice-nyla|voice-aoi|voice-yua|voice-sumi"
 FAILURE_REGEX = (
     "(?i)(error|exception|traceback|failed|rejected|denied|unauthorized|timeout|"
     "stalled session|active_work_without_progress)"
@@ -143,7 +143,7 @@ def _main() -> int:
     end_value = args.end if args.end is not None else int(time.time())
     start_value = args.start if args.start is not None else end_value - args.since
     service_selector = f'{{service_name=~"{args.service_regex}"}}'
-    agent_selector = '{service_name=~"voice-nyla|voice-aoi|voice-yua|voice-party"}'
+    agent_selector = '{service_name=~"voice-nyla|voice-aoi|voice-yua|voice-sumi"}'
     queries = [
         LokiQuery("voice_failures", f"{service_selector} |~ {json.dumps(FAILURE_REGEX)}"),
         LokiQuery(

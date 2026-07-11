@@ -10,7 +10,7 @@ resolution-markers = [
 members = [
     "agent-aoi",
     "agent-nyla",
-    "agent-party",
+    "agent-sumi",
     "agent-yua",
     "sdk",
     "tools",
@@ -81,9 +81,9 @@ dev = [
 ]
 
 [[package]]
-name = "agent-party"
+name = "agent-sumi"
 version = "0.1.0"
-source = { editable = "agents/party" }
+source = { editable = "agents/sumi" }
 dependencies = [
     { name = "livekit-agents", extra = ["openai", "silero"] },
     { name = "livekit-plugins-nvidia" },

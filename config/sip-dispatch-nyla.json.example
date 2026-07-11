@@ -1,7 +1,7 @@
 {
   "_comment": [
     "Dispatch rule — routes inbound calls for specific DIDs to the",
-    "phone-nyla agent. One file per agent; see sibling files for aoi and party.",
+    "phone-nyla agent. One file per agent; see sibling files for aoi and sumi.",
     "",
     "Copy to config/sip-dispatch-nyla.json (gitignored) and register via",
     "scripts/register-sip-routing.sh.",
