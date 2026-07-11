@@ -34,7 +34,32 @@ assert_agent_identity(YUA_CONFIG)
 logger = logging.getLogger("voice.agent")
 
 # --- server + session --------------------------------------------------
-server = AgentServer(port=8085)
+# Worker resource posture — set EXPLICITLY, not left to the library defaults.
+#
+# `num_idle_processes` defaults to 8 in prod. That is 8 pre-forked job processes PER AGENT —
+# 32 across the four of them, on one 12-core box. And `job_memory_limit_mb` defaults to 0,
+# i.e. DISABLED: a job that leaks has no ceiling and takes the host down with it, along with
+# the other three agents and the phone line.
+#
+# That was an unbounded posture before prewarm. It is worse WITH prewarm, and that is my
+# doing: `setup_fnc` runs per job PROCESS, so every idle process now loads its own copy of
+# the model. Eight idle Silero VADs per agent is not a warm pool, it is a memory leak with a
+# schedule.
+#
+# This is a personal phone line, not a call centre. ONE warm process per agent is the entire
+# point of prewarm — the next call is instant, and the pool refills behind it. The memory
+# ceiling is deliberately generous: it exists to kill a runaway, never to fire in normal
+# operation. Sumi is the heavy one (Riva + Silero + Orpheus) and idles around 800MB.
+#
+# WATCH ON THE FIRST CALL: if the pool of 1 is exhausted by back-to-back calls, a second
+# caller pays the prewarm cost. Raise it before raising the memory ceiling.
+IDLE_PROCESSES = 1
+JOB_MEMORY_LIMIT_MB = 4096
+server = AgentServer(
+    port=8085,
+    num_idle_processes=IDLE_PROCESSES,
+    job_memory_limit_mb=JOB_MEMORY_LIMIT_MB,
+)
 
 
 @server.rtc_session(
