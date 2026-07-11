@@ -1,0 +1,49 @@
+# The gate. It runs `make verify` — the SAME command a human runs, not a re-implementation.
+#
+# Why this exists: until 2026-07-11 this repo had no CI. `make verify` (lint + typecheck +
+# tests) was the only gate, and it was ADVISORY. Advisory means never — the branch running in
+# production failed its own `make verify` on an unformatted file, because nobody ran it and
+# nothing made them.
+#
+# A gate nobody enforces decays to whatever someone last happened to type. This is not a
+# process nicety: the agents share an SDK, so an unnoticed break in sdk/config.py is a break
+# in all four of the people who answer Eric's phone.
+#
+# It deliberately shells out to `make verify` rather than restating the steps. A CI that
+# re-implements the gate is a second gate, and the two drift — then "CI is green" and "verify
+# passes" stop meaning the same thing, and you learn which one was lying at the worst moment.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: make verify (lint + typecheck + test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Pin Python
+        run: uv python install 3.12
+
+      - name: Sync the workspace (sdk + tools + all four agents)
+        run: uv sync --all-packages
+
+      # The whole point: the same gate, by name.
+      - name: make verify
+        run: make verify
