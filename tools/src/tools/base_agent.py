@@ -17,9 +17,6 @@ from livekit.plugins.google.tools import GoogleSearch
 from sdk.config import UNCONFIGURED_CONFIG, AgentConfig
 from sdk.env import load_env
 
-from tools.core import CoreToolsMixin
-from tools.memory import MusubiToolsMixin
-
 logger = logging.getLogger("voice.agent")
 
 # --- env -----------------------------------------------------------------
@@ -121,15 +118,35 @@ def build_greeting_instructions(context: str | None) -> str:
 # --- agent class ---------------------------------------------------------
 
 
-class BaseRealtimeAgent(
-    CoreToolsMixin,
-    MusubiToolsMixin,
-    Agent,
-):
-    """Base class for realtime Gemini-native-audio voice agents.
+class BaseVoiceAgent(Agent):
+    """Everything a voice agent needs that has nothing to do with tools or models.
 
-    Subclass this, set ``config`` to an :class:`AgentConfig`, and
-    override ``build_model`` if you need a different voice or VAD tuning.
+    **This base deliberately carries NO tool mixins.** That is the whole point of the split.
+
+    ``BaseRealtimeAgent`` used to be declared as
+    ``class BaseRealtimeAgent(CoreToolsMixin, MusubiToolsMixin, Agent)``, which meant the
+    base class *decided the tool set for every agent that inherited it*. A subclass could add
+    tools (``extra_tools=``) but could never choose a different set — so the moment an agent
+    genuinely needed a different composition, her only option was to bypass the base entirely.
+
+    That is exactly what Sumi did, and it is why she ended up with her own duplicated persona
+    loader, her own config declaration, and her own divergent defaults. The composition
+    mechanism was never the problem; the base pre-empting it was.
+
+    The agents are about to diverge for real — Nyla on Hermes with tools she will share with
+    Sumi but not the others, Aoi on a Claude Code channel, Yua on Codex — so each agent now
+    states her own composition, and the base stays out of it::
+
+        class NylaAgent(CoreToolsMixin, MusubiToolsMixin, HermesToolsMixin, BaseRealtimeAgent): ...
+        class SumiAgent(CoreToolsMixin, MusubiToolsMixin, HermesToolsMixin, BaseVoiceAgent):   ...
+        class AoiAgent (CoreToolsMixin, MusubiToolsMixin, ClaudeCodeToolsMixin, BaseRealtimeAgent): ...
+        class YuaAgent (CoreToolsMixin, MusubiToolsMixin, CodexToolsMixin, BaseRealtimeAgent): ...
+
+    What stays SHARED is infrastructure, not capability: identity/config, the Musubi client
+    and its per-agent namespace fence, telemetry, telephony, transcripts, post-call memory.
+    Those must have exactly one implementation — four hand-rolled copies would be four
+    chances to write one girl's memories into another's namespace. Tools are the opposite:
+    they are the whole point of the agents being different people.
     """
 
     config: AgentConfig = UNCONFIGURED_CONFIG
@@ -144,17 +161,35 @@ class BaseRealtimeAgent(
         super().__init__(instructions=instructions, tools=extra_tools or None)
         self._caller_from: str | None = caller_from
 
+
+class BaseRealtimeAgent(BaseVoiceAgent):
+    """A :class:`BaseVoiceAgent` on a Gemini native-audio realtime model.
+
+    Adds only the realtime greeting. Sumi cannot use it — a chained STT→LLM→TTS pipeline
+    cannot ``generate_reply()`` at session start — which is precisely why the greeting lives
+    here and not in the shared base.
+
+    Still carries NO tool mixins. Subclasses compose their own.
+    """
+
     async def on_enter(self) -> None:
         # Prefetch recent context as background awareness — NOT as the spine of
         # the greeting. Eric's feedback (2026-04-27): formulaic callbacks to
         # recent rows read as calculated. The instruction assembly lives in the
         # pure `build_greeting_instructions` below so it's unit-testable without
         # a live session.
-        try:
-            context = await self.fetch_recent_context(limit=10)
-        except Exception as err:
-            logger.warning("on_enter: startup context fetch failed: %s", err)
-            context = ""
+        #
+        # The prefetch is capability-gated rather than assumed: an agent composed WITHOUT
+        # MusubiToolsMixin is a legitimate composition now, and she should still be able to
+        # say hello.
+        context = ""
+        fetch = getattr(self, "fetch_recent_context", None)
+        if fetch is not None:
+            try:
+                context = await fetch(limit=10)
+            except Exception as err:
+                logger.warning("on_enter: startup context fetch failed: %s", err)
+                context = ""
         await self.session.generate_reply(instructions=build_greeting_instructions(context))
 
 

@@ -18,6 +18,8 @@ from tools.base_agent import (
 from tools.base_agent import (
     load_persona as _load_persona,
 )
+from tools.core import CoreToolsMixin
+from tools.memory import MusubiToolsMixin
 
 __all__ = [
     "AOI_CONFIG",
@@ -41,7 +43,20 @@ AOI_CONFIG = AgentConfig(
 )
 
 
-class AoiAgent(BaseRealtimeAgent):
+# Composition is EXPLICIT. The base class no longer decides which tools Aoi has.
+#
+# `BaseRealtimeAgent` used to bake in `CoreToolsMixin, MusubiToolsMixin`, so a subclass could
+# only ADD tools, never choose a different set — and an agent who genuinely needed a
+# different composition had to bypass the base entirely (which is what Sumi did, and how she
+# ended up with a duplicated persona loader and her own divergent defaults).
+#
+# Adding a capability now means adding a mixin to THIS line. Nyla's Hermes tools, Aoi's
+# Claude Code channel, Yua's Codex channel — each lands here, on the agent who has it.
+class AoiAgent(
+    CoreToolsMixin,
+    MusubiToolsMixin,
+    BaseRealtimeAgent,
+):
     """Aoi — core + Musubi memory tools."""
 
     config = AOI_CONFIG

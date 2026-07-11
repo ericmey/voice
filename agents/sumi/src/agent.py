@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from livekit.agents import Agent, AgentSession, JobContext, JobProcess, cli
+from livekit.agents import AgentSession, JobContext, JobProcess, cli
 from livekit.agents.beta import EndCallTool
 from livekit.agents.worker import AgentServer
 from livekit.plugins import nvidia as nvidia_plugin
@@ -44,7 +44,7 @@ from sdk.telephony import resolve_caller
 from sdk.trace import trace
 from sdk.tracing import attach_current_span_metadata, wire_otel_shutdown_flush
 from sdk.transcript import wire_transcript_logging
-from tools.base_agent import load_persona
+from tools.base_agent import BaseVoiceAgent, load_persona
 from tools.core import CoreToolsMixin
 from tools.memory import MusubiToolsMixin
 
@@ -86,10 +86,21 @@ SUMI_CONFIG = AgentConfig(
 assert_agent_identity(SUMI_CONFIG)
 
 
+# Sumi composes exactly like her sisters — the tools she has are stated HERE, on her.
+#
+# She differs from them in ONE way that matters: she runs a chained STT->LLM->TTS pipeline
+# rather than a Gemini realtime model, so she cannot `generate_reply()` at session start and
+# needs her own greeting. That is why she inherits `BaseVoiceAgent` (model-agnostic) rather
+# than `BaseRealtimeAgent`.
+#
+# She used to inherit `Agent` directly and re-implement the base's `__init__` byte-for-byte,
+# plus her own persona loader and her own divergent defaults — not because she needed to, but
+# because `BaseRealtimeAgent` baked in a tool set she could not opt out of. Splitting the base
+# removed the reason. This is the correct amount of divergence: her pipeline and her greeting.
 class SumiAgent(
     CoreToolsMixin,
     MusubiToolsMixin,
-    Agent,
+    BaseVoiceAgent,
 ):
     """Sumi Tachibana — core + Musubi memory tools on the chained voice line.
 
@@ -98,16 +109,6 @@ class SumiAgent(
     """
 
     config = SUMI_CONFIG
-
-    def __init__(
-        self,
-        *,
-        caller_from: str | None = None,
-        instructions: str = "",
-        extra_tools: list | None = None,
-    ) -> None:
-        super().__init__(instructions=instructions, tools=extra_tools or None)
-        self._caller_from: str | None = caller_from
 
     async def on_enter(self) -> None:
         # Sumi uses the chained text-LLM pipeline (Nemo text + Riva STT +
