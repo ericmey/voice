@@ -68,19 +68,38 @@ TICK_S = 2.0
 class LivenessState:
     """What the watchdog knows. Exposed so tests can assert on it directly."""
 
-    last_activity: float
+    # THE CALLER'S CLOCK. Advanced ONLY by a real user turn.
+    #
+    # The first version had ONE clock, advanced by any activity — including the agent's own.
+    # So the re-engage prompt ("still there?") emitted agent thinking/speaking and an assistant
+    # conversation_item, which reset the clock, cleared `prompted`, and marked the call
+    # RECOVERED. A caller who had genuinely gone away would be prompted every 25 seconds
+    # FOREVER and never hung up: the watchdog kept certifying its own recovery with its own
+    # voice. My test passed only because FakeSession.generate_reply emitted none of the events
+    # the real one does — the mock was weaker than production, so it certified behaviour that
+    # did not exist. (Yua, reproduced.)
+    #
+    # Only the caller can prove the caller is there.
+    caller_last_seen: float
+
+    # THE AGENT'S CLOCK, kept separate and used for exactly one thing: never cut her off in
+    # the middle of a sentence. A long, legitimate monologue must not trip a hangup — but it
+    # must not count as the caller being present either.
+    agent_busy: bool = False
+
     prompted: bool = False
     hung_up: bool = False
 
-    # DETECTED / RECOVERED / TERMINATED must be distinguishable after the fact.
-    # "The call ended" and "the call ended because she stopped answering and we cut it" are
-    # different events, and a post-mortem that cannot tell them apart is how a wedge gets
-    # written off as a caller who hung up. (Yua, dead-air QA scope.)
+    # DETECTED / RECOVERED / TERMINATED must be distinguishable after the fact. "The call
+    # ended" and "the call ended because she stopped answering and we cut it" are different
+    # events, and a post-mortem that cannot tell them apart writes a wedge off as a caller who
+    # hung up. (Yua, dead-air QA scope.)
     outcome: str = "healthy"  # healthy | detected | recovered | terminated
+    prompts_sent: int = 0
+
     # THE BLEED COUNTER. Every time the session believes the USER started speaking while the
-    # AGENT was speaking, and no user turn ever materialises from it, that is her own voice
-    # arriving on the input path. On the 2026-07-11 call this fired for the entire 15 seconds
-    # of her final turn and nothing counted it. Now it is a number someone can look at.
+    # AGENT was speaking, that is her own voice arriving on the input path. On the 2026-07-11
+    # call this was true for the entire 15 seconds of her final turn and nothing counted it.
     suspected_echo_events: int = 0
     echo_windows: list[tuple[float, float]] = field(default_factory=list)
 
@@ -100,39 +119,34 @@ def wire_liveness_watchdog(
 
     Returns the ``LivenessState`` so callers (and tests) can inspect what happened.
     """
-    state = LivenessState(last_activity=now())
+    state = LivenessState(caller_last_seen=now())
 
-    agent_speaking = False
     user_speaking_since: float | None = None
 
-    def _mark_alive(why: str) -> None:
+    def _caller_spoke() -> None:
+        """The ONLY thing that proves the caller is there. Nothing the agent does counts."""
         if state.hung_up:
-            return  # the call is over; nothing revives it
-        state.last_activity = now()
+            return
+        state.caller_last_seen = now()
         if state.prompted:
-            # She came back. Re-arm, so a second silence later in the call is caught too.
             state.outcome = "recovered"
-            logger.info("liveness: RECOVERED after prompt (%s) call_sid=%s", why, call_sid)
-            trace(f"liveness: recovered after prompt ({why}) call_sid={call_sid}")
+            logger.info("liveness: RECOVERED — caller answered call_sid=%s", call_sid)
+            trace(f"liveness: recovered (caller turn) call_sid={call_sid}")
         state.prompted = False
 
     @session.on("conversation_item_added")
     def _on_item(event: Any) -> None:
-        # A REAL turn — text actually produced by, or for, a human. This is the only evidence
-        # that the pipeline is end-to-end alive. Audio-level VAD is NOT: on the failing call
-        # the VAD was firing happily on the agent's own echo the whole time.
         item = getattr(event, "item", None)
         role = getattr(item, "role", None)
-        if role in ("user", "assistant"):
-            _mark_alive(f"{role} turn")
+        # ONLY a user turn. An assistant item is the agent talking — very possibly the
+        # watchdog's own prompt — and it proves nothing about whether anyone is listening.
+        if role == "user":
+            _caller_spoke()
 
     @session.on("agent_state_changed")
     def _on_agent_state(event: Any) -> None:
-        nonlocal agent_speaking
-        new = str(getattr(event, "new_state", ""))
-        agent_speaking = new == "speaking"
-        if new in ("speaking", "thinking"):
-            _mark_alive(f"agent {new}")
+        # Tracks whether she is mid-sentence. Deliberately does NOT touch caller_last_seen.
+        state.agent_busy = str(getattr(event, "new_state", "")) in ("speaking", "thinking")
 
     @session.on("user_state_changed")
     def _on_user_state(event: Any) -> None:
@@ -140,14 +154,14 @@ def wire_liveness_watchdog(
         new = str(getattr(event, "new_state", ""))
 
         if new == "speaking":
-            # DO NOT mark the session alive here. This is exactly the signal that lied.
+            # DO NOT mark the caller alive here. This is exactly the signal that lied.
             #
             # On 2026-07-11 the session reported user_state=speaking for 57.69-73.54 — the
             # precise window the AGENT was speaking (58.08-73.55) — because her own audio was
-            # on the input path. If dead-air detection trusted VAD, the wedge would have kept
-            # the watchdog alive with the agent's own voice and the caller would still have
-            # been stranded. The monitor would have been fed by the very fault it was watching.
-            if agent_speaking:
+            # on the input path. A watchdog that trusted VAD would have been kept alive BY THE
+            # ECHO, fed by the very fault it exists to catch, and Eric would still have been
+            # stranded in silence.
+            if state.agent_busy:
                 state.suspected_echo_events += 1
                 user_speaking_since = now()
                 logger.warning(
@@ -159,18 +173,18 @@ def wire_liveness_watchdog(
                     state.suspected_echo_events,
                 )
                 trace(
-                    f"liveness: suspected echo (user VAD during agent speech) "
-                    f"call_sid={call_sid} count={state.suspected_echo_events}"
+                    f"liveness: suspected echo call_sid={call_sid} "
+                    f"count={state.suspected_echo_events}"
                 )
             return
 
         if new == "away":
             # LiveKit's own away signal. It fired at 88.5s on the failing call, was recorded,
-            # and was ignored. It is not proof of a wedge (a caller may simply be quiet), so
-            # it does not end the call by itself — but it is never again merely logged.
+            # and was ignored. Never again merely logged — though it does not end the call by
+            # itself, because a caller may simply be quiet.
             logger.warning(
-                "liveness: user marked AWAY (call_sid=%s agent=%s) — no caller input reaching "
-                "the session",
+                "liveness: user marked AWAY (call_sid=%s agent=%s) — no caller input is "
+                "reaching the session",
                 call_sid,
                 agent_name,
             )
@@ -180,8 +194,8 @@ def wire_liveness_watchdog(
             state.echo_windows.append((user_speaking_since, now()))
             user_speaking_since = None
 
-    async def _reengage() -> bool:
-        """Try to speak. Returns False if the session cannot — which proves the wedge."""
+    async def _reengage() -> None:
+        """Ask once whether he is still there. This does NOT reset the caller's clock."""
         try:
             await session.generate_reply(
                 instructions=(
@@ -189,7 +203,6 @@ def wire_liveness_watchdog(
                     "briefly — ask if they are still there. One short sentence."
                 )
             )
-            return True
         except Exception as exc:  # noqa: BLE001 — a wedged session can fail in any way
             logger.error(
                 "liveness: re-engage FAILED (call_sid=%s): %s — the session is not merely "
@@ -198,7 +211,6 @@ def wire_liveness_watchdog(
                 exc,
             )
             trace(f"liveness: re-engage failed call_sid={call_sid}: {exc}")
-            return False
 
     async def _hang_up(silent_for: float) -> None:
         if state.hung_up:
@@ -206,16 +218,16 @@ def wire_liveness_watchdog(
         state.hung_up = True
         state.outcome = "terminated"
         logger.error(
-            "liveness: ENDING CALL after %.0fs of dead air (call_sid=%s agent=%s echo_events=%d). "
-            "A live call that answers nothing is worse than a dropped one — the caller cannot "
-            "tell whether it is them.",
+            "liveness: ENDING CALL after %.0fs with no caller input (call_sid=%s agent=%s "
+            "echo_events=%d). A live call that answers nothing is worse than a dropped one — "
+            "the caller cannot tell whether it is them.",
             silent_for,
             call_sid,
             agent_name,
             state.suspected_echo_events,
         )
         trace(
-            f"liveness: hangup after {silent_for:.0f}s dead air call_sid={call_sid} "
+            f"liveness: hangup after {silent_for:.0f}s no-caller call_sid={call_sid} "
             f"echo_events={state.suspected_echo_events}"
         )
         try:
@@ -230,18 +242,30 @@ def wire_liveness_watchdog(
     async def _watch() -> None:
         while not state.hung_up:
             await asyncio.sleep(tick_s)
-            silent_for = now() - state.last_activity
+            silent_for = now() - state.caller_last_seen
 
             if silent_for >= hangup_after_s:
+                if state.agent_busy:
+                    # She is mid-sentence. Do not cut her off — a long legitimate turn is not
+                    # a dead call. Re-check on the next tick.
+                    continue
                 await _hang_up(silent_for)
                 return
 
+            if state.agent_busy:
+                # SHE IS SPEAKING, so the line is not silent. Dead air means SILENCE — and
+                # interrupting her own sentence to ask "are you still there?" is both absurd
+                # and, on the failing call's realtime path, a way to wedge her further.
+                # The caller's clock keeps running; we simply do not act while she talks.
+                continue
+
             if silent_for >= prompt_after_s and not state.prompted:
-                state.prompted = True  # exactly one prompt per silence
+                state.prompted = True  # exactly one prompt per silence; only a USER turn clears it
+                state.prompts_sent += 1
                 state.outcome = "detected"
                 logger.warning(
-                    "liveness: DEAD AIR %.0fs (call_sid=%s agent=%s) — no turn in either "
-                    "direction. Re-engaging.",
+                    "liveness: DEAD AIR %.0fs with no caller input (call_sid=%s agent=%s) — "
+                    "re-engaging once. The clock is NOT reset by my own voice.",
                     silent_for,
                     call_sid,
                     agent_name,

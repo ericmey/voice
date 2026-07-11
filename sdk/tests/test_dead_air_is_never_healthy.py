@@ -60,9 +60,24 @@ class FakeSession:
             fn(payload)
 
     async def generate_reply(self, *, instructions: str) -> None:
+        """Emits what the REAL AgentSession emits. This is the whole point.
+
+        The previous fake appended a string and emitted NOTHING — so the watchdog's own prompt
+        looked like a no-op, and `test_prompt_once` passed against a mock that was weaker than
+        production. In production, generate_reply emits agent thinking -> speaking and an
+        ASSISTANT conversation_item, all of which the old watchdog treated as proof of life,
+        which meant it re-armed itself and could prompt a silent caller every 25s forever.
+        A mock that cannot reproduce the bug cannot certify the fix. (Yua.)
+        """
         if self.generate_reply_fails:
             raise RuntimeError("realtime session is wedged: no response channel")
         self.replies.append(instructions)
+        self.emit("agent_state_changed", SimpleNamespace(new_state="thinking"))
+        self.emit("agent_state_changed", SimpleNamespace(new_state="speaking"))
+        self.emit(
+            "conversation_item_added", SimpleNamespace(item=SimpleNamespace(role="assistant"))
+        )
+        self.emit("agent_state_changed", SimpleNamespace(new_state="listening"))
 
     async def aclose(self) -> None:
         self.closed = True
@@ -280,3 +295,72 @@ async def test_the_timer_stops_on_normal_teardown() -> None:
 
     assert not state.hung_up, "the watchdog kept running after the call ended"
     assert not session.replies
+
+
+# --- the watchdog must not certify its own recovery --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_watchdog_cannot_keep_itself_alive_by_talking() -> None:
+    """THE ONE THE MOCK HID. Her re-engage emits agent events and an assistant turn.
+
+    The old watchdog counted those as activity: the prompt reset its own deadline, cleared
+    `prompted`, and marked the call RECOVERED. So a caller who had genuinely gone away would be
+    asked "still there?" every 25 seconds, forever, and never hung up — the watchdog certifying
+    its own recovery with its own voice.
+
+    It passed my test only because the fake generate_reply emitted nothing. The mock was weaker
+    than production, so it certified behaviour that did not exist. (Yua, reproduced.)
+    """
+    clock, session = FakeClock(), FakeSession()
+    ctx = _ctx()
+    state = await _watchdog(session, clock, ctx=ctx)
+
+    await clock.advance(120)  # caller says NOTHING, the whole time
+
+    assert len(session.replies) == 1, (
+        f"she prompted {len(session.replies)} times — her own voice is resetting her own "
+        f"deadline, and this caller is never hung up"
+    )
+    assert state.hung_up, "the caller was gone and the watchdog talked to itself instead"
+    assert state.outcome == "terminated"
+    assert state.outcome != "recovered", "she 'recovered' a call in which nobody spoke"
+
+
+@pytest.mark.asyncio
+async def test_only_a_real_user_turn_proves_recovery() -> None:
+    """An assistant turn is the agent talking. It says nothing about whether anyone is there."""
+    clock, session = FakeClock(), FakeSession()
+    state = await _watchdog(session, clock)
+
+    await clock.advance(30)
+    assert state.prompted and state.outcome == "detected"
+
+    session.emit("conversation_item_added", _agent_turn())  # she keeps talking
+    await clock.advance(5)
+    assert state.outcome == "detected", "an assistant turn was treated as the caller answering"
+
+    session.emit("conversation_item_added", _user_turn())  # HE answers
+    assert state.outcome == "recovered"
+
+
+@pytest.mark.asyncio
+async def test_a_long_agent_turn_is_not_cut_off_mid_sentence() -> None:
+    """A legitimate 90-second monologue is not a dead call — but it is not proof of a caller
+    either. Two clocks: hang up on caller silence, never in the middle of her sentence."""
+    clock, session = FakeClock(), FakeSession()
+    state = await _watchdog(session, clock)
+
+    session.emit("conversation_item_added", _user_turn())  # he asked for a long story
+    session.emit("agent_state_changed", _state("speaking"))
+    await clock.advance(90)  # she is still speaking
+
+    assert not state.hung_up, "she was cut off mid-sentence"
+
+    session.emit("agent_state_changed", _state("listening"))
+    await clock.advance(10)
+
+    assert state.hung_up, (
+        "she finished, the caller still never spoke, and the call was left open anyway — "
+        "agent speech must not stand in for caller presence"
+    )

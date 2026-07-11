@@ -181,3 +181,90 @@ async def test_a_toggle_failure_never_kills_the_call() -> None:
         session, call_sid="SCL_t", agent_name="aoi", enabled=True, sleep=lambda _s: asyncio.sleep(0)
     )
     session.emit("agent_state_changed", _state("speaking"))  # must not raise
+
+
+# --- the gate must survive a CONVERSATION, not just one turn -----------------------
+
+
+@pytest.mark.parametrize("turns", [2, 3, 5])
+@pytest.mark.asyncio
+async def test_the_mic_reopens_on_every_turn(turns: int) -> None:
+    """THE REGRESSION. My first fix muted the caller permanently from the second turn on.
+
+    `release_task` was never reset to None, so after the first reopen it was DONE but non-None
+    — and the `is None` guard meant the second `listening` never scheduled a reopen at all.
+    Two turns in: history=[False, True, False], audio_enabled=False. The caller is muted for
+    the rest of the call.
+
+    My fix was WORSE THAN THE BUG for any conversation longer than one exchange, and my test
+    suite never noticed because every test ran exactly one turn. (Yua, reproduced exactly.)
+    """
+    session = FakeSession()
+    wire_half_duplex(
+        session, call_sid="SCL_t", agent_name="aoi", enabled=True, sleep=lambda _s: asyncio.sleep(0)
+    )
+
+    for _ in range(turns):
+        session.emit("agent_state_changed", _state("speaking"))
+        session.emit("agent_state_changed", _state("listening"))
+        await _flush()
+
+        assert session.input.audio_enabled is True, (
+            f"after {turns} turns the caller's mic never reopened — he is muted for the rest "
+            f"of the call and cannot say a word to her"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_stale_reopen_cannot_unmute_during_a_new_turn() -> None:
+    """The race the handle-based version could not even express.
+
+    She stops (reopen scheduled), then starts speaking again before the tail elapses. The
+    pending reopen belongs to a turn that is over; if it fires now it opens the loop in the
+    middle of her new sentence.
+    """
+    session = FakeSession()
+    gate = asyncio.Event()
+
+    async def _held_sleep(_s: float) -> None:
+        await gate.wait()
+
+    wire_half_duplex(session, call_sid="SCL_t", agent_name="aoi", enabled=True, sleep=_held_sleep)
+
+    session.emit("agent_state_changed", _state("speaking"))
+    session.emit("agent_state_changed", _state("listening"))  # reopen scheduled, waiting on tail
+    await _flush()
+    session.emit("agent_state_changed", _state("speaking"))  # ...she starts again
+
+    gate.set()  # the OLD tail now elapses
+    await _flush()
+
+    assert session.input.audio_enabled is False, (
+        "a reopen from the previous turn fired during her new sentence — her voice is back on "
+        "the input path"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_release_tail_is_configurable() -> None:
+    """0.4s is a guess. It must be tunable without a code change, so the next real call can
+    measure the echo tail instead of inheriting my number."""
+    session = FakeSession()
+    waited: list[float] = []
+
+    async def _record(s: float) -> None:
+        waited.append(s)
+
+    wire_half_duplex(
+        session,
+        call_sid="SCL_t",
+        agent_name="aoi",
+        enabled=True,
+        release_delay_s=0.9,
+        sleep=_record,
+    )
+    session.emit("agent_state_changed", _state("speaking"))
+    session.emit("agent_state_changed", _state("listening"))
+    await _flush()
+
+    assert waited == [0.9]

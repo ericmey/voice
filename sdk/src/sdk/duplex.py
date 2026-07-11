@@ -52,7 +52,12 @@ logger = logging.getLogger("voice.agent")
 # How long to keep the caller's mic closed AFTER she stops speaking. Covers the audio still
 # in flight down the SIP leg and coming out of the speaker, plus room reverb. Too short and
 # the echo tail re-opens the loop; too long and we clip the caller's first word.
-RELEASE_DELAY_S = 0.4
+# 0.4s IS A GUESS. I have never measured the real echo tail on this trunk: how long her audio
+# keeps arriving at his microphone after LiveKit says she stopped. Too short and the loop
+# reopens on the tail; too long and we clip the caller's first word. It is env-tunable and
+# COUNTED (DuplexState.gate_closures / reopen timing) precisely so the next speakerphone call
+# can measure it instead of inheriting my guess. (Yua: "remains unmeasured".)
+RELEASE_DELAY_S = float(os.environ.get("VOICE_HALF_DUPLEX_TAIL_S", "0.4"))
 
 # Half-duplex is ON by default. Every one of these agents is a TELEPHONE agent, and Eric uses
 # a speakerphone. The failure it prevents is total (a dead call); the cost it imposes is
@@ -95,6 +100,21 @@ def wire_half_duplex(
         )
         return state
 
+    # TURN GENERATION. Not a bare task handle — a *generation counter*.
+    #
+    # The first version kept `release_task` and checked `is not None`. After the first reopen
+    # the task was DONE but still non-None, so the second turn's `listening` never scheduled a
+    # reopen — and the caller stayed muted for the rest of the call. Two turns in:
+    # history=[False, True, False], audio_enabled=False. My fix was worse than the bug it
+    # fixed, for any conversation longer than one exchange, and my test only ever ran ONE turn.
+    # (Yua, reproduced exactly.)
+    #
+    # A generation counter makes staleness explicit instead of inferring it from a handle's
+    # liveness: every time she starts speaking, the generation advances, and a reopen that
+    # belongs to an older generation simply declines to act. A cancelled-but-still-scheduled
+    # task can no longer reopen the mic in the middle of a new turn, which is the race the
+    # handle-based version could not even express.
+    generation = 0
     release_task: asyncio.Task[None] | None = None
 
     def _set_input(open_: bool) -> None:
@@ -104,30 +124,41 @@ def wire_half_duplex(
         except Exception as exc:  # noqa: BLE001 — never let the gate kill the call
             logger.error("half-duplex: could not toggle input audio: %s", exc)
 
-    async def _reopen_after_tail() -> None:
+    async def _reopen_after_tail(my_generation: int) -> None:
         # The tail is the whole point. Her last syllable is still leaving his speaker when
         # LiveKit says she stopped; reopening now feeds it straight back in.
-        await sleep(release_delay_s)
+        try:
+            await sleep(release_delay_s)
+        except asyncio.CancelledError:
+            return
+        if my_generation != generation:
+            return  # she started speaking again — this reopen belongs to a turn that is over
         _set_input(True)
+        trace(f"half-duplex: mic reopened after {release_delay_s:.2f}s tail call_sid={call_sid}")
 
     @session.on("agent_state_changed")
     def _on_agent_state(event: Any) -> None:
-        nonlocal release_task
+        nonlocal release_task, generation
         new = str(getattr(event, "new_state", ""))
 
         if new == "speaking":
+            generation += 1  # any pending reopen is now stale, by construction
             if release_task is not None and not release_task.done():
                 release_task.cancel()
-                release_task = None
+            release_task = None
             if state.input_open:
                 state.gate_closures += 1
                 _set_input(False)
                 trace(f"half-duplex: mic closed (agent speaking) call_sid={call_sid}")
             return
 
-        if not state.input_open and release_task is None:
+        # She stopped. Schedule the reopen for THIS generation. No `is None` guard on the
+        # handle — the generation decides validity, so a second, third, tenth turn all work.
+        if not state.input_open:
+            if release_task is not None and not release_task.done():
+                release_task.cancel()
             release_task = asyncio.create_task(
-                _reopen_after_tail(), name=f"half-duplex-release-{call_sid}"
+                _reopen_after_tail(generation), name=f"half-duplex-release-{call_sid}"
             )
 
     @session.on("close")
