@@ -407,8 +407,14 @@ async def test_only_a_real_user_turn_proves_recovery() -> None:
 
 @pytest.mark.asyncio
 async def test_a_long_agent_turn_is_not_cut_off_mid_sentence() -> None:
-    """A legitimate 90-second monologue is not a dead call — but it is not proof of a caller
-    either. Two clocks: hang up on caller silence, never in the middle of her sentence."""
+    """A legitimate 90-second monologue is not a dead call — and the caller's silence clock
+    does not run while she holds the floor.
+
+    Her speaking time must not count against him. He asks for a long answer, she talks for 90
+    seconds, and he then gets his FULL window to reply. Charging him for her turn would be
+    indefensible under half-duplex, where HIS MICROPHONE IS CLOSED while she speaks: we would
+    be hanging up on him for a silence we imposed.
+    """
     clock, session = FakeClock(), FakeSession()
     state = await _watchdog(session, clock)
 
@@ -418,12 +424,18 @@ async def test_a_long_agent_turn_is_not_cut_off_mid_sentence() -> None:
 
     assert not state.hung_up, "she was cut off mid-sentence"
 
-    session.emit("agent_state_changed", _state("listening"))
+    session.emit("agent_state_changed", _state("listening"))  # she finishes; the floor is his
     await clock.advance(10)
+    assert not state.hung_up, (
+        "hung up 10s after her 90s answer — her speaking time was charged against his silence"
+    )
+
+    await clock.advance(70)  # now HE has genuinely gone quiet, on his own clock
+    await _settle()
 
     assert state.hung_up, (
-        "she finished, the caller still never spoke, and the call was left open anyway — "
-        "agent speech must not stand in for caller presence"
+        "she finished, he never spoke for his full window, and the call was left open — agent "
+        "speech must not stand in for caller presence"
     )
 
 
@@ -604,3 +616,70 @@ async def _settle() -> None:
 async def _until(pred) -> None:
     while not pred():
         await asyncio.sleep(0.05)
+
+
+# --- no state may suppress safety forever -----------------------------------------
+#
+# `agent_busy` existed to stop us cutting her off mid-sentence, and it was UNBOUNDED. A
+# generation that emits `thinking` (or `speaking`) and then wedges before ever reaching
+# `listening` suppressed BOTH the prompt and the hangup, indefinitely. Reproduced: 180s,
+# zero prompts, no hangup, session open.
+#
+# Same class as every other defect today — A BROKEN COMPONENT GRANTING ITSELF INFINITE GRACE —
+# sitting just outside the watchdog-owned recovery path where I had *just* fixed exactly this.
+# My 90-second monologue test passed only because it eventually emitted `listening`. (Yua.)
+
+
+@pytest.mark.parametrize("stuck_state", ["thinking", "speaking"])
+@pytest.mark.asyncio
+async def test_an_agent_wedged_mid_turn_does_not_disable_the_watchdog(stuck_state: str) -> None:
+    """A turn that never ends is not a turn. It is a wedge, and it cannot buy silence."""
+    clock, session = FakeClock(), FakeSession()
+    ctx = _ctx()
+    state = await _watchdog(session, clock, ctx=ctx)
+
+    session.emit("agent_state_changed", _state(stuck_state))  # ...and never `listening`
+    await clock.advance(180)
+    await _settle()
+
+    assert state.hung_up, (
+        f"she wedged in `{stuck_state}` and the watchdog deferred to her forever — 180s, no "
+        f"prompt, no hangup, caller still on the line"
+    )
+    assert len(ctx.shutdowns) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_long_turn_that_completes_inside_the_grace_is_not_cut_off() -> None:
+    """The bound must not punish a legitimately long answer. 110s < 120s grace: she finishes."""
+    clock, session = FakeClock(), FakeSession()
+    state = await _watchdog(session, clock)
+
+    session.emit("conversation_item_added", _user_turn())
+    session.emit("agent_state_changed", _state("speaking"))
+    await clock.advance(110)
+
+    assert not state.hung_up, "a 110s answer was cut off inside a 120s grace"
+
+    session.emit("agent_state_changed", _state("listening"))  # she finishes
+    session.emit("conversation_item_added", _user_turn())  # and he replies
+    await clock.advance(10)
+
+    assert not state.hung_up
+    assert state.outcome == "healthy"
+
+
+@pytest.mark.asyncio
+async def test_the_busy_clock_resets_between_turns() -> None:
+    """Three 60s turns in a row are three turns, not one 180s wedge."""
+    clock, session = FakeClock(), FakeSession()
+    state = await _watchdog(session, clock)
+
+    for _ in range(3):
+        session.emit("conversation_item_added", _user_turn())
+        session.emit("agent_state_changed", _state("speaking"))
+        await clock.advance(60)
+        session.emit("agent_state_changed", _state("listening"))
+        await clock.advance(1)
+
+    assert not state.hung_up, "the agent-busy clock never reset — normal turns accumulated"

@@ -76,6 +76,20 @@ TICK_S = 2.0
 # installed source.)
 CLOSE_TIMEOUT_S = 5.0
 
+# THE LONGEST A SINGLE AGENT TURN MAY LAST BEFORE WE CALL IT A WEDGE.
+#
+# `agent_busy` exists to stop us cutting her off mid-sentence. But it was UNBOUNDED — so a
+# generation that emits `thinking` (or `speaking`) and then wedges before ever reaching
+# `listening` suppressed BOTH the prompt and the hangup, forever. Reproduced: 180 seconds,
+# zero prompts, no hangup, session open.
+#
+# That is the same class of defect as every other one today — A BROKEN COMPONENT GRANTING
+# ITSELF INFINITE GRACE — and it was sitting outside the watchdog-owned recovery path where I
+# had just fixed exactly this. (Yua.)
+#
+# A legitimate turn is generous but finite. Past this, she is not talking; she is stuck.
+AGENT_BUSY_MAX_S = 120.0
+
 
 @dataclass
 class LivenessState:
@@ -97,8 +111,9 @@ class LivenessState:
 
     # THE AGENT'S CLOCK, kept separate and used for exactly one thing: never cut her off in
     # the middle of a sentence. A long, legitimate monologue must not trip a hangup — but it
-    # must not count as the caller being present either.
+    # must not count as the caller being present either, AND IT MAY NOT DEFER SAFETY FOREVER.
     agent_busy: bool = False
+    agent_busy_since: float | None = None
 
     prompted: bool = False
     hung_up: bool = False
@@ -125,6 +140,7 @@ def wire_liveness_watchdog(
     agent_name: str,
     prompt_after_s: float = DEAD_AIR_PROMPT_S,
     hangup_after_s: float = DEAD_AIR_HANGUP_S,
+    agent_busy_max_s: float = AGENT_BUSY_MAX_S,
     tick_s: float = TICK_S,
     now: Any = time.monotonic,
 ) -> LivenessState:
@@ -159,7 +175,27 @@ def wire_liveness_watchdog(
     @session.on("agent_state_changed")
     def _on_agent_state(event: Any) -> None:
         # Tracks whether she is mid-sentence. Deliberately does NOT touch caller_last_seen.
-        state.agent_busy = str(getattr(event, "new_state", "")) in ("speaking", "thinking")
+        busy = str(getattr(event, "new_state", "")) in ("speaking", "thinking")
+
+        if busy and not state.agent_busy:
+            state.agent_busy_since = now()  # a turn began
+        elif state.agent_busy and not busy:
+            # HER TURN JUST ENDED. The floor is his now, so his silence is measured from HERE.
+            #
+            # Without this, her own speaking time counted against him: he asks a question, she
+            # answers for 60 seconds, and one second later we hang up on him for not talking.
+            # Under half-duplex that is indefensible — HIS MICROPHONE IS CLOSED WHILE SHE
+            # SPEAKS. We would be terminating the call for a silence we ourselves imposed.
+            #
+            # But this must NEVER be reachable by the watchdog's own voice, or Blocker 2 walks
+            # straight back in: a departed caller would be prompted forever, each prompt
+            # resetting his deadline. So an ordinary turn resets the floor; a recovery turn
+            # does not, and once we have prompted, ONLY A REAL USER TURN clears it.
+            if not recovery_in_flight and not state.prompted:
+                state.caller_last_seen = now()
+            state.agent_busy_since = None
+
+        state.agent_busy = busy
 
     @session.on("user_state_changed")
     def _on_user_state(event: Any) -> None:
@@ -333,14 +369,32 @@ def wire_liveness_watchdog(
             await asyncio.sleep(tick_s)
             silent_for = now() - state.caller_last_seen
 
+            busy_for = (
+                now() - state.agent_busy_since
+                if state.agent_busy and state.agent_busy_since is not None
+                else 0.0
+            )
+
+            # A TURN THAT NEVER ENDS IS NOT A TURN. It is a wedge, and it must not be able to
+            # suppress the watchdog by claiming to still be talking. This fires regardless of
+            # the caller's clock: if she is stuck mid-generation she will never answer him,
+            # whatever he does.
+            if busy_for >= agent_busy_max_s:
+                logger.error(
+                    "liveness: AGENT WEDGED — %.0fs in a single turn without completing "
+                    "(call_sid=%s agent=%s). A turn that never ends is not a turn.",
+                    busy_for,
+                    call_sid,
+                    agent_name,
+                )
+                await _hang_up(now() - state.caller_last_seen)
+                return
+
             if silent_for >= hangup_after_s:
-                # THE HARD DEADLINE IS AUTHORITATIVE.
-                #
-                # `agent_busy` may defer it for ORDINARY speech — a long legitimate monologue
-                # must not be cut off mid-sentence. But a wedged RECOVERY prompt can leave
-                # agent_busy=True forever, and deferring to that would let the watchdog's own
-                # stuck voice hold the call open indefinitely. So the recovery never earns the
-                # grace that real speech does. (Yua.)
+                # `agent_busy` may defer the hard deadline for ORDINARY speech — a long
+                # legitimate monologue must not be cut off mid-sentence. It may NOT defer it
+                # for a watchdog-owned recovery (that voice is ours, and it can wedge), and it
+                # may NOT defer it past agent_busy_max_s (handled above).
                 if state.agent_busy and not recovery_in_flight:
                     continue
                 await _hang_up(silent_for)

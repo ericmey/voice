@@ -324,3 +324,18 @@ def test_a_negative_tail_is_refused() -> None:
 def test_an_absurd_tail_is_clamped_not_obeyed() -> None:
     """30s of tail would clip the caller's first words after every turn. Clamp and say so."""
     assert resolve_release_delay("30") == MAX_RELEASE_DELAY_S
+
+
+@pytest.mark.asyncio
+async def test_a_bad_tail_cannot_defeat_the_emergency_disable(monkeypatch) -> None:
+    """VOICE_HALF_DUPLEX=0 is the off switch you reach for at 2am. A stale, malformed, UNUSED
+    tail value in the env must not be able to block it. A disable that something irrelevant can
+    veto is not a disable. (Yua, policy note.)"""
+    monkeypatch.setenv("VOICE_HALF_DUPLEX_TAIL_S", "garbage")
+
+    session = FakeSession()
+    state = wire_half_duplex(session, call_sid="SCL_t", agent_name="aoi", enabled=False)
+
+    assert state.enabled is False
+    session.emit("agent_state_changed", _state("speaking"))
+    assert session.input.audio_enabled is True

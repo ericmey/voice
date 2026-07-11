@@ -137,7 +137,6 @@ def wire_half_duplex(
 ) -> DuplexState:
     """Close the caller's mic while the agent speaks. Returns state for tests/telemetry."""
     is_on = half_duplex_enabled() if enabled is None else enabled
-    release_delay_s = resolve_release_delay() if release_delay_s is None else release_delay_s
     state = DuplexState(enabled=is_on)
 
     if not is_on:
@@ -148,6 +147,13 @@ def wire_half_duplex(
             call_sid,
         )
         return state
+
+    # Resolve the tail ONLY once we know we are enabled. VOICE_HALF_DUPLEX=0 is the EMERGENCY
+    # OFF SWITCH — the thing you reach for at 2am when half-duplex is making calls worse — and
+    # it must not be defeated by a stale, unused, malformed VOICE_HALF_DUPLEX_TAIL_S sitting in
+    # the env. A disable that can be blocked by an irrelevant value is not a disable.
+    # (Yua, policy note.)
+    release_delay_s = resolve_release_delay() if release_delay_s is None else release_delay_s
 
     # TURN GENERATION. Not a bare task handle — a *generation counter*.
     #
