@@ -150,4 +150,4 @@ for `service.name=voice-<agent>`.
 This repo previously carried LangSmith-specific provisioning and custom
 span enrichment. The active SDK path is now vendor-neutral OTLP/HTTP.
 The archived LangSmith provisioning tree remains under `ops/langsmith/`;
-see [LANGSMITH.md](LANGSMITH.md) for reactivation options.
+the LangSmith path is retired and LANGSMITH.md was deleted with it. Observability now runs through OTLP to the collector on shiori.

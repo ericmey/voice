@@ -234,3 +234,54 @@ def test_no_two_agents_share_a_health_port() -> None:
             f"be answered by the other's server."
         )
         seen[port] = agent
+
+
+# ---------------------------------------------------------------------------
+# The architecture doc must not invent config fields.
+#
+# docs/ARCHITECTURE.md described `AgentConfig` as carrying `discord_room`,
+# `musubi_v2_presence` and `household_presences`. It has THREE fields: `agent_name`,
+# `memory_agent_tag`, `musubi_v2_namespace`. Two of the five named do not exist.
+#
+# A config doc that names knobs you cannot set is how someone spends an afternoon looking for
+# one that was never there — or worse, writes code against it and finds out at runtime.
+# ---------------------------------------------------------------------------
+
+
+def test_the_architecture_doc_names_only_real_config_fields() -> None:
+    """Every `AgentConfig` field ARCHITECTURE.md claims must actually exist."""
+    import dataclasses
+
+    from sdk.config import AgentConfig
+
+    real = {f.name for f in dataclasses.fields(AgentConfig)}
+
+    arch = REPO_ROOT / "docs" / "ARCHITECTURE.md"
+    if not arch.exists():
+        pytest.skip("no ARCHITECTURE.md")
+
+    # The block that describes AgentConfig's fields.
+    body = arch.read_text()
+    m = re.search(r"`AgentConfig` dataclass.*?(?=\n- \*\*|\n##)", body, re.DOTALL)
+    if not m:
+        pytest.skip("could not locate the AgentConfig description")
+
+    # A doc may NAME a deleted field in order to say it is deleted — that is the point of a
+    # retirement note, and the note is what stops someone re-adding the phantom. (This test
+    # flagged its own explanatory sentence on the first run: the CHECK being over-broad, not
+    # the doc being wrong. Same lesson as the tool-catalog test.)
+    lines = [
+        line
+        for line in m.group(0).splitlines()
+        if not any(w in line.lower() for w in ("do not exist", "used to list", "none of them"))
+    ]
+    claimed = set(re.findall(r"`([a-z][a-z0-9_]*_[a-z0-9_]+)`", "\n".join(lines)))
+    # `registration_name` is a derived PROPERTY, not a field — it is legitimately named.
+    claimed -= {"registration_name", "phone_name"}
+
+    phantoms = claimed - real
+    assert not phantoms, (
+        f"docs/ARCHITECTURE.md claims AgentConfig fields that DO NOT EXIST: {sorted(phantoms)}. "
+        f"The real fields are {sorted(real)}. A config doc naming knobs you cannot set sends "
+        f"the next person hunting one that was never there."
+    )

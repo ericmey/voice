@@ -47,7 +47,7 @@ guarded by explicit environment variables.
 - Agents run as containers on `mizuki.mey.house` via
   `docker-compose.agents.yaml`. The macOS LaunchAgent path is gone.
 - The LangSmith provisioning tree is archived, not part of the active
-  telemetry path. See [LANGSMITH.md](LANGSMITH.md).
+  telemetry path. The LangSmith path is retired; LANGSMITH.md was deleted with it.
 
 ## Local-Only State
 

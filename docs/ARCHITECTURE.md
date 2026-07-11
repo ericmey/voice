@@ -43,11 +43,13 @@
 ### `sdk/`
 Shared Python package imported by the agents. Contains:
 
-- **`config.py`** — `AgentConfig` dataclass (agent_name, memory_agent_tag,
-  discord_room, musubi_v2_namespace/presence, household_presences). Per-agent
-  operational identity; the mixin stack reads `self.config.*` instead of
-  hardcoded constants.
-- **`tools/`** (separate workspace member) — Core, Memory, and Household
+- **`config.py`** — `AgentConfig` dataclass. Exactly THREE fields: `agent_name`,
+  `memory_agent_tag`, `musubi_v2_namespace`. Everything else derives from `agent_name` —
+  `registration_name` (`phone-<name>`), the service name, the memory namespace. One root.
+  (This page used to list `discord_room`, `musubi_v2_presence` and `household_presences`
+  as fields. None of them exist. A config doc that names fields you cannot set is how
+  someone spends an afternoon looking for a knob that was never there.)
+- **`tools/`** (separate workspace member) — Core and Memory
   mixins that each agent inherits. Function-tool decorated methods expose
   capabilities to the voice model.
 - **`telephony.py`** — `resolve_caller()` reads the SIP participant's

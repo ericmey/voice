@@ -20,6 +20,7 @@ generate_reply() at session start (tools without a preceding user turn).
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from livekit.agents import AgentSession, JobContext, JobProcess, cli
@@ -53,9 +54,17 @@ load_env()
 
 logger = logging.getLogger("voice.agent")
 
-# Sumi's fully-local inference services, all on mizuki's Blackwell card, reached
-# from the agent container via the host's LAN IP.
-_SUMI_HOST = "10.0.20.25"
+# Sumi's fully-local inference services — Riva ASR, Mistral Nemo, Orpheus TTS — all on
+# mizuki's Blackwell card, reached from the agent container via the host's LAN IP.
+#
+# This was a bare `_SUMI_HOST = "10.0.20.25"` literal: her ENTIRE voice chain pinned to one
+# hardcoded IP, while every other endpoint in the repo (LiveKit, Musubi, the OTel collector)
+# comes from the environment. Move the box, renumber the LAN, or stand her up anywhere else,
+# and she breaks in a way that requires a code change and an image rebuild to fix.
+#
+# The default is the current value, so nothing changes today. But it is now a knob, not a
+# weld — and a knob is what every other service in this stack already has.
+_SUMI_HOST = os.environ.get("SUMI_INFERENCE_HOST", "10.0.20.25")
 _RIVA_ASR_SERVER = f"{_SUMI_HOST}:50051"  # Riva Parakeet ASR (gRPC)
 _NEMO_BASE_URL = f"http://{_SUMI_HOST}:8090/v1"  # Mistral Nemo via llama.cpp
 _ORPHEUS_BASE_URL = f"http://{_SUMI_HOST}:5005/v1"  # Orpheus TTS (OpenAI-compatible)
@@ -111,6 +120,24 @@ class SumiAgent(
     config = SUMI_CONFIG
 
     async def on_enter(self) -> None:
+        # KNOWN DIVERGENCE, deliberately NOT fixed blind — validate on a real call.
+        #
+        # Her three sisters prefetch `fetch_recent_context(limit=10)` and pass it to
+        # `generate_reply()` as background awareness. Sumi does not, so she starts a call
+        # COLDER than they do: she has `musubi_recent` as a tool and can reach for it, but it
+        # is not already in her hands.
+        #
+        # She cannot simply copy them — `generate_reply()` is unsupported at session start on a
+        # chained pipeline, so her greeting is a fixed `session.say()` string with nowhere to
+        # fold context into.
+        #
+        # The obvious move — inject the context into her chat context instead — is exactly the
+        # move that has already broken her once: 69b3d99 ("keep the greeting out of LLM
+        # context") was REVERTED by 630380d because it stalled the greeting/turn loop. Mistral
+        # Nemo's alternation constraints make her chat context genuinely load-bearing.
+        #
+        # So this is a real gap with a real reason to be careful. It gets a call, not a guess.
+        #
         # Sumi uses the chained text-LLM pipeline (Nemo text + Riva STT +
         # Orpheus TTS). generate_reply() is not supported at session start
         # without a preceding user turn, so the greeting has to be a fixed
