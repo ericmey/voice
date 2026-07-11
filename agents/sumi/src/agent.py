@@ -121,7 +121,16 @@ class SumiAgent(
         # Per Eric's feedback (2026-04-27): no formulaic recall callbacks in
         # the opener — they read as calculated. Sumi opens bright and glad to
         # hear him — a warm, chipper hello, then she's all his.
-        await self.session.say("Eric! Hi hi~ there you are — what can I do for you?")
+        #
+        # add_to_chat_ctx=False is load-bearing: Mistral Nemo's chat template
+        # requires the first message after `system` to be `user`, and raises
+        # ("roles must alternate user/assistant") on a leading assistant turn.
+        # Keeping the spoken greeting OUT of the LLM history means the first
+        # LLM call is [system, user] — valid — so every turn doesn't 400.
+        await self.session.say(
+            "Eric! Hi hi~ there you are — what can I do for you?",
+            add_to_chat_ctx=False,
+        )
 
 
 # --- server + session --------------------------------------------------
