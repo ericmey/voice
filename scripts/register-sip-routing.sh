@@ -39,6 +39,11 @@ SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SO
 source "${REPO_ROOT}/scripts/lib/livekit-env.sh"
 livekit_reexec_with_1password_if_needed "${REPO_ROOT}" "${SCRIPT_PATH}" "$@"
 
+# The fleet, named. The old loop globbed `sip-dispatch-*.json` and registered whatever
+# it found — so a stray file became a live routing rule, and ZERO files became a warning
+# and exit 0 (`make up` would report success having registered no routing at all).
+AGENTS=(nyla aoi yua sumi)
+
 DRY_RUN=false
 TRUNKS_ONLY=false
 RULES_ONLY=false
@@ -71,6 +76,11 @@ _install_hint() {
 }
 command -v lk >/dev/null 2>&1 || die "lk (livekit-cli) not found — $(_install_hint livekit-cli)"
 command -v jq >/dev/null 2>&1 || die "jq not found — $(_install_hint jq)"
+# Preflight is not optional. Without it this script deletes live dispatch rules and replaces
+# them with files nothing has validated — so a missing `uv` must STOP the run, not skip the
+# check. Refusing to register is safe; registering unvalidated is how a caller reaches the
+# wrong sister.
+command -v uv >/dev/null 2>&1 || die "uv not found — cannot run the dispatch preflight, and this script will not delete live routing rules without validating their replacements first"
 
 declare -a TMP_FILES=()
 cleanup() {
@@ -200,16 +210,47 @@ if $TRUNKS_ONLY; then
   exit 0
 fi
 
-found_rule=false
-for rule in "${CONFIG_DIR}"/sip-dispatch-*.json; do
-  [[ -e "$rule" ]] || continue
-  found_rule=true
-  register_rule "$rule"
+# ---- PREFLIGHT: validate the COMPLETE set before touching anything -------------
+#
+# register_rule() DELETES the live rule and only then creates the replacement, from a
+# file it has never looked at. So a truncated file, a bad agentName, or a DID pasted
+# from a sister lands as: working route destroyed, broken route in its place. Nobody
+# finds out until a caller does.
+#
+# Per-file validation inside the loop would not save us either — by the time rule
+# three is found bad, rules one and two are already deleted. Duplicate DIDs and a
+# missing sister are only visible holding all four at once.
+#
+# So: one validator (sdk/sip_preflight.py — the SAME code the tests run, which is what
+# stops CI from certifying the .example files while production reads the .json ones),
+# run over the whole candidate set, BEFORE the first delete. If it fails, we have not
+# mutated anything and the old routing is still carrying calls.
+log "preflight: validating the dispatch set in ${CONFIG_DIR}"
+if ! (cd "${REPO_ROOT}" && uv run python -m sdk.sip_preflight "${CONFIG_DIR}"); then
+  die "dispatch preflight failed — nothing was registered, live routing is untouched"
+fi
+
+for a in "${AGENTS[@]}"; do
+  register_rule "${CONFIG_DIR}/sip-dispatch-${a}.json"
 done
-$found_rule || warn "no dispatch rule JSON files found in ${CONFIG_DIR}"
+
+# ---- POSTCONDITION: ask LiveKit what is actually live ---------------------------
+#
+# "The command exited 0" is not "the four of them are routable". Delete succeeded and
+# create silently didn't is exactly the state this script can produce, and it is the
+# state that ends with a call ringing into nothing.
+if ! $DRY_RUN; then
+  log "verifying live dispatch rules"
+  live="$(lk sip dispatch list --json 2>/dev/null | jq -r '[.items[]?.roomConfig.agents[]?.agentName] | .[]' || true)"
+  missing=()
+  for a in "${AGENTS[@]}"; do
+    grep -qx "phone-${a}" <<<"${live}" || missing+=("phone-${a}")
+  done
+  if (( ${#missing[@]} > 0 )); then
+    die "registration reported success but these are NOT live: ${missing[*]} — inbound calls to them will fail. Live now: $(tr '\n' ' ' <<<"${live}")"
+  fi
+  log "live: $(tr '\n' ' ' <<<"${live}")"
+fi
 
 log "done."
-if ! $DRY_RUN; then
-  log "verify: lk sip inbound list ; lk sip dispatch list"
-fi
 exit 0

@@ -63,6 +63,56 @@ class AgentConfig:
         ``agent_name``."""
         return f"phone-{self.agent_name}"
 
+    def __post_init__(self) -> None:
+        """THE MEMORY FENCE. The namespace tenant must BE the agent.
+
+        ``assert_agent_identity`` proves ``$AGENT == agent_name``. It says nothing about
+        ``musubi_v2_namespace`` — and that is the field which decides WHERE THE MEMORIES GO.
+        So this passed, at the reviewed head::
+
+            AgentConfig(agent_name="aoi", musubi_v2_namespace="nyla/voice")
+
+        Aoi answers the phone as Aoi. She registers as ``phone-aoi``. Her identity assert
+        passes. And every memory she writes lands in ``nyla/voice/episodic``, while
+        ``musubi_search`` widens to ``nyla/*/episodic`` and reads Nyla's whole tenant back to
+        her.
+
+        That is the exact misattribution this module exists to prevent, sitting inside the
+        fence built to prevent it. Three heads of the identity model were closed and the one
+        that actually routes the memories was left open. (Yua, QA of 96e2388.)
+
+        Validated at CONSTRUCTION, not at startup, and that distinction is the point:
+        ``assert_agent_identity`` is skipped when ``VOICE_AGENT_NAME`` is unset (dev, tests,
+        any direct import). A config that cannot be BUILT wrong cannot be shipped wrong from
+        any entry point at all.
+        """
+        if not self.agent_name or not self.agent_name.strip():
+            raise ValueError("AgentConfig.agent_name is required — an agent has a name")
+
+        ns = self.musubi_v2_namespace
+        if ns is None:
+            return  # memory deliberately unconfigured; tools degrade to "unavailable"
+
+        parts = ns.split("/")
+        if len(parts) != 2 or not all(p.strip() for p in parts):
+            raise ValueError(
+                f"AgentConfig.musubi_v2_namespace={ns!r} is not a canonical "
+                f"'<agent>/<channel>' pair. Empty or extra segments would silently reshape "
+                f"the Musubi path the memory tools build."
+            )
+
+        tenant = parts[0]
+        if tenant != self.agent_name:
+            raise ValueError(
+                f"MEMORY FENCE VIOLATION: agent_name={self.agent_name!r} but "
+                f"musubi_v2_namespace={ns!r} — the tenant is {tenant!r}.\n"
+                f"{self.agent_name} would answer the phone as herself, register as "
+                f"phone-{self.agent_name}, pass the startup identity assert, and write every "
+                f"memory into {tenant}'s namespace. musubi_search would widen to "
+                f"{tenant}/*/episodic and read {tenant}'s whole tenant back to her.\n"
+                f"The namespace tenant MUST be the agent. It is not a separate knob."
+            )
+
 
 # Fail-loud sentinel. This is the class-level default on the tool mixins, so
 # a new agent that forgets to set ``config`` gets THIS, not a real identity.

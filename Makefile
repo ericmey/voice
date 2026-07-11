@@ -23,6 +23,10 @@ sync-venvs: ## Re-sync the root workspace venv (one .venv/ for sdk+tools+all age
 
 # ---- infrastructure ------------------------------------------------
 
+# The rendered bearer file the agents actually boot from (docker-compose.agents.yaml
+# env_file). Overridable so the gate can be pointed at a candidate render before it lands.
+SECRETS_ENV ?= secrets/livekit-agents.env
+
 up: ## docker compose up -d + auto-register SIP routing (idempotent self-heal)
 	docker compose up -d
 	@printf "[up] waiting for redis + livekit-server... "
@@ -41,6 +45,9 @@ logs: ## docker compose logs -f (server + sip + redis)
 
 health: ## Run the health-check script
 	scripts/health-check.sh
+
+verify-bearers: ## Prove each agent's Musubi bearer IS that agent (reads claims; never prints a token)
+	@uv run python -m sdk.bearer_identity $(SECRETS_ENV)
 
 # ---- SIP routing ---------------------------------------------------
 
@@ -80,11 +87,15 @@ build-agent: ## Build voice-agent:<sha> (and tag it latest for convenience)
 		-t voice-agent:$(VOICE_SERVICE_VERSION) \
 		-t voice-agent:latest .
 
-deploy: build-agent ## Build the image + bring up infra and the four agents (lockstep)
+# The bearer gate runs BEFORE the containers come up, not after. A wrong bearer does not
+# crash an agent — she boots, authorizes as her sister, and writes memories into that
+# sister's plane. There is no error to catch afterward, so the only place to catch it is
+# in front of the deploy.
+deploy: build-agent verify-bearers ## Build the image + bring up infra and the four agents (lockstep)
 	VOICE_AGENT_IMAGE=voice-agent:$(VOICE_SERVICE_VERSION) \
 		docker compose -f docker-compose.yaml -f docker-compose.agents.yaml up -d
 
-cycle: build-agent ## Rebuild + recreate ALL FOUR agents on the new commit (lockstep)
+cycle: build-agent verify-bearers ## Rebuild + recreate ALL FOUR agents on the new commit (lockstep)
 	VOICE_AGENT_IMAGE=voice-agent:$(VOICE_SERVICE_VERSION) \
 		docker compose -f docker-compose.yaml -f docker-compose.agents.yaml up -d
 

@@ -67,6 +67,16 @@ record() {
 _container_up() { [[ "$("${DOCKER[@]}" inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" == "true" ]]; }
 _restart_count() { "${DOCKER[@]}" inspect -f '{{.RestartCount}}' "$1" 2>/dev/null || echo "?"; }
 
+# Docker's OWN health verdict — the thing this script never read.
+# Returns: healthy | unhealthy | starting | none
+_health() {
+  "${DOCKER[@]}" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$1" 2>/dev/null || echo "none"
+}
+
+# When did THIS container instance start? Registration proof must be bounded to it —
+# a registration line from an earlier life proves nothing about the process running now.
+_started_at() { "${DOCKER[@]}" inspect -f '{{.State.StartedAt}}' "$1" 2>/dev/null; }
+
 # ---- docker daemon -------------------------------------------------
 if "${DOCKER[@]}" ps >/dev/null 2>&1; then
   record "docker" ok "daemon reachable"
@@ -115,23 +125,77 @@ for a in "${AGENTS[@]}"; do
     continue
   fi
   restarts="$(_restart_count "$c")"
-  reg_line="$("${DOCKER[@]}" logs "$c" 2>&1 | grep -E "${_agent_ok_patterns}" | tail -1)"
+  health="$(_health "$c")"
+
+  # DOCKER'S HEALTH VERDICT IS AUTHORITATIVE, and this script never read it.
+  #
+  # It checked: container running + ANY registration line anywhere in the log + restart count.
+  # So an agent that registered and then WEDGED — up, not answering, health=unhealthy —
+  # stayed green forever.
+  #
+  # And `restart: unless-stopped` does NOT save you: Docker restart policies act on container
+  # EXIT, not on health status. An unhealthy container that keeps running is never restarted.
+  # (A comment I wrote elsewhere claimed the opposite. It was wrong. Yua caught it.)
+  #
+  # So an unhealthy agent is not restarted AND was not reported. Both silences at once.
+  if [[ "${health}" == "unhealthy" ]]; then
+    record "agent-${a}" fail "UNHEALTHY (restarts=${restarts}) — up but its health endpoint is not answering. Docker will NOT restart it; restart policies act on exit, not health."
+    continue
+  fi
+  if [[ "${health}" == "none" ]]; then
+    record "agent-${a}" fail "no healthcheck defined — a wedged agent would be indistinguishable from a healthy one"
+    continue
+  fi
+  if [[ "${health}" == "starting" ]]; then
+    record "agent-${a}" ok "starting (prewarm) restarts=${restarts}"
+    continue
+  fi
+
+  # Registration proof, BOUNDED TO THIS CONTAINER'S CURRENT START.
+  # `docker logs` without --since returns the whole life of the container, so a line from
+  # before a wedge (or from a previous start after a restart) would still satisfy the check.
+  started="$(_started_at "$c")"
+  reg_line="$("${DOCKER[@]}" logs --since "${started}" "$c" 2>&1 | grep -E "${_agent_ok_patterns}" | tail -1)"
   if [[ -z "${reg_line}" ]]; then
-    record "agent-${a}" fail "up (restarts=${restarts}) but no worker-registration line in logs"
+    record "agent-${a}" fail "healthy but NO worker registration since this start (${started}) — she is not on LiveKit's roster; calls will not route to her"
   elif [[ "${restarts}" =~ ^[0-9]+$ ]] && (( restarts > MAX_RESTARTS )); then
     record "agent-${a}" fail "registered but restarts=${restarts} > ${MAX_RESTARTS} (crash-loop?)"
   else
     worker_id="$(echo "${reg_line}" | grep -oE '"id": "[^"]+"' | head -1 | cut -d'"' -f4)"
-    record "agent-${a}" ok "up, registered worker=${worker_id:-unknown} restarts=${restarts}"
+    record "agent-${a}" ok "healthy, registered worker=${worker_id:-unknown} restarts=${restarts}"
   fi
 done
 
-# ---- SIP routing (persisted in Redis) ------------------------------
-present="$("${DOCKER[@]}" exec voice-redis redis-cli exists sip_inbound_trunk sip_dispatch_rule 2>/dev/null | tr -d '[:space:]')"
-if [[ "${present}" == "2" ]]; then
-  record "sip-routing" ok "sip_inbound_trunk + sip_dispatch_rule present"
+# ---- SIP routing: THE LIVE MAPPINGS, not "a key exists" -------------
+#
+# This used to be `redis-cli exists sip_inbound_trunk sip_dispatch_rule` == 2.
+#
+# That is a check that the routing table EXISTS. It is not a check that anyone is IN it.
+# A dispatch hash holding three rules, or four rules all pointing at Nyla, or a rule whose
+# agentName was typo'd — every one of those passes `exists`. And the failure they produce
+# is the worst one we have: the call connects and Eric is talking to the wrong sister, or
+# to silence. Nothing crashes. Nothing logs. The monitor stays green.
+#
+# So read the rules and require each of the four to actually be routable. LiveKit persists
+# them protobuf-encoded, but the agentName literals are legible in the values, and it is
+# those literals that inbound calls are routed on — so this checks the thing that decides
+# who picks up.
+if ! "${DOCKER[@]}" exec voice-redis redis-cli exists sip_inbound_trunk 2>/dev/null | grep -qx 1; then
+  record "sip-trunk" fail "no inbound trunk in Redis — no call reaches us at all; run scripts/register-sip-routing.sh"
 else
-  record "sip-routing" fail "routing state missing in Redis (present=${present}/2); inbound calls will fail — run scripts/register-sip-routing.sh"
+  record "sip-trunk" ok "inbound trunk present"
+fi
+
+live_agents="$("${DOCKER[@]}" exec voice-redis redis-cli --no-raw hvals sip_dispatch_rule 2>/dev/null \
+  | grep -o 'phone-[a-z][a-z]*' | sort -u)"
+missing=()
+for a in "${AGENTS[@]}"; do
+  grep -qx "phone-${a}" <<<"${live_agents}" || missing+=("phone-${a}")
+done
+if (( ${#missing[@]} > 0 )); then
+  record "sip-routing" fail "NOT routable: ${missing[*]} — calls to them will not reach an agent. Live: $(tr '\n' ' ' <<<"${live_agents}" | sed 's/ $//'). Run scripts/register-sip-routing.sh"
+else
+  record "sip-routing" ok "all 4 agents live in dispatch: $(tr '\n' ' ' <<<"${live_agents}" | sed 's/ $//')"
 fi
 
 # ---- emit ----------------------------------------------------------
