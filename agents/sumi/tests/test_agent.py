@@ -133,6 +133,33 @@ class TestPersona:
         assert len(persona) > 100
 
 
+class TestOrpheusTTS:
+    """The custom Orpheus adapter that replaced the incompatible openai.TTS."""
+
+    def test_imports_and_constructs(self):
+        from orpheus_tts import OrpheusTTS
+
+        t = OrpheusTTS(base_url="http://10.0.20.25:5005/v1", voice="tara")
+        assert t.sample_rate == 24000
+        assert t.num_channels == 1
+
+    def test_speech_url_normalizes_v1_suffix(self):
+        from orpheus_tts import OrpheusTTS
+
+        # base already ending in /v1 must not double it
+        a = OrpheusTTS(base_url="http://h:5005/v1")
+        assert a._speech_url == "http://h:5005/v1/audio/speech"
+        # bare host base must gain /v1
+        b = OrpheusTTS(base_url="http://h:5005")
+        assert b._speech_url == "http://h:5005/v1/audio/speech"
+
+    def test_is_non_streaming(self):
+        from orpheus_tts import OrpheusTTS
+
+        t = OrpheusTTS(base_url="http://h:5005/v1")
+        assert t.capabilities.streaming is False
+
+
 class TestSDKImports:
     """Verify SDK dependencies import cleanly."""
 

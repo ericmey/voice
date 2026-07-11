@@ -28,6 +28,7 @@ from livekit.agents.worker import AgentServer
 from livekit.plugins import nvidia as nvidia_plugin
 from livekit.plugins import openai as openai_plugin
 from livekit.plugins import silero as silero_plugin
+from orpheus_tts import OrpheusTTS
 from sdk.audio_recording import (
     annotate_call_audio_recording,
     start_call_audio_recording,
@@ -149,7 +150,15 @@ async def entrypoint(ctx: JobContext) -> None:
 
     # Sumi's fully-local chained pipeline (all on mizuki's Blackwell card):
     # Riva ASR (STT) -> Mistral Nemo / llama.cpp (LLM) -> Orpheus (TTS).
-    stt = nvidia_plugin.STT(server=_RIVA_ASR_SERVER, use_ssl=False, language_code="en-US")
+    # The Riva CTC NIM serves "parakeet-1.1b-en-US-asr-streaming"; the plugin's
+    # default (…-silero-vad-sortformer) is NOT loaded and fails with
+    # INVALID_ARGUMENT "model not available", so name it explicitly.
+    stt = nvidia_plugin.STT(
+        server=_RIVA_ASR_SERVER,
+        model="parakeet-1.1b-en-US-asr-streaming",
+        use_ssl=False,
+        language_code="en-US",
+    )
 
     vad = silero_plugin.VAD.load(
         min_speech_duration=0.1,
@@ -159,13 +168,10 @@ async def entrypoint(ctx: JobContext) -> None:
 
     llm = openai_plugin.LLM(model="nemo", base_url=_NEMO_BASE_URL, api_key="sk-local")
 
-    tts = openai_plugin.TTS(
-        model="orpheus",
-        voice="tara",
-        base_url=_ORPHEUS_BASE_URL,
-        api_key="sk-local",
-        response_format="wav",
-    )
+    # Orpheus-FastAPI isn't OpenAI-streaming-compatible (it ignores
+    # response_format and returns a whole WAV), so the stock openai.TTS pushes
+    # no frames -> dead air. OrpheusTTS reads the WAV and pushes raw PCM.
+    tts = OrpheusTTS(base_url=_ORPHEUS_BASE_URL, voice="tara")
 
     extra_tools = [
         EndCallTool(
