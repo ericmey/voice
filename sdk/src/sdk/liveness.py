@@ -43,6 +43,7 @@ Escalation, in order:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from dataclasses import dataclass, field
@@ -194,15 +195,31 @@ def wire_liveness_watchdog(
             state.echo_windows.append((user_speaking_since, now()))
             user_speaking_since = None
 
-    async def _reengage() -> None:
-        """Ask once whether he is still there. This does NOT reset the caller's clock."""
+    # THE RECOVERY IS SEPARATELY OWNED. The watchdog's clock NEVER waits on it.
+    #
+    # `AgentSession.generate_reply` is SYNCHRONOUS and returns a `SpeechHandle`, which is
+    # awaitable — and awaiting it waits for generation AND PLAYOUT to complete. I wrote
+    # `await session.generate_reply(...)` inline inside the watch loop. So if the realtime
+    # channel wedges by NEVER COMPLETING rather than by raising, `_watch` blocks inside the
+    # re-engage and never reaches the 60s hangup.
+    #
+    # THE WATCHDOG WOULD HAVE BEEN DISABLED BY THE EXACT FAILURE IT EXISTS TO CATCH — and the
+    # caller sits in silence past 100 seconds with prompted=True and hung_up=False. My fake
+    # only ever modelled immediate completion or immediate exception, so it could not express
+    # a handle that simply never finishes. (Yua, verified against the installed contract.)
+    #
+    # The hard deadline is authoritative. Nothing may postpone it — least of all the recovery.
+    recovery_task: asyncio.Task[None] | None = None
+    recovery_handle: Any = None
+    recovery_in_flight = False
+
+    async def _drain_recovery(awaitable: Any) -> None:
+        nonlocal recovery_in_flight
         try:
-            await session.generate_reply(
-                instructions=(
-                    "You have heard nothing from the caller for a while. Check in warmly and "
-                    "briefly — ask if they are still there. One short sentence."
-                )
-            )
+            await awaitable
+            logger.info("liveness: re-engage completed call_sid=%s", call_sid)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:  # noqa: BLE001 — a wedged session can fail in any way
             logger.error(
                 "liveness: re-engage FAILED (call_sid=%s): %s — the session is not merely "
@@ -211,12 +228,53 @@ def wire_liveness_watchdog(
                 exc,
             )
             trace(f"liveness: re-engage failed call_sid={call_sid}: {exc}")
+        finally:
+            recovery_in_flight = False
+
+    def _start_recovery() -> None:
+        """Fire the prompt. Do not wait for it. Ever."""
+        nonlocal recovery_task, recovery_handle, recovery_in_flight
+        try:
+            result = session.generate_reply(
+                instructions=(
+                    "You have heard nothing from the caller for a while. Check in warmly and "
+                    "briefly — ask if they are still there. One short sentence."
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — it may refuse synchronously
+            logger.error("liveness: re-engage could not start (call_sid=%s): %s", call_sid, exc)
+            trace(f"liveness: re-engage could not start call_sid={call_sid}: {exc}")
+            return
+
+        if not inspect.isawaitable(result):
+            return  # nothing to own
+
+        recovery_handle = result
+        recovery_in_flight = True
+        recovery_task = asyncio.create_task(
+            _drain_recovery(result), name=f"liveness-recovery-{call_sid}"
+        )
+
+    def _abandon_recovery() -> None:
+        """Stop the prompt from holding the call open. Interrupt the speech, drop the task."""
+        nonlocal recovery_task, recovery_in_flight
+        handle = recovery_handle
+        interrupt = getattr(handle, "interrupt", None)
+        if callable(interrupt):
+            try:
+                interrupt()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("liveness: could not interrupt recovery speech: %s", exc)
+        if recovery_task is not None and not recovery_task.done():
+            recovery_task.cancel()
+        recovery_in_flight = False
 
     async def _hang_up(silent_for: float) -> None:
         if state.hung_up:
             return  # exactly once, ever
         state.hung_up = True
         state.outcome = "terminated"
+        _abandon_recovery()
         logger.error(
             "liveness: ENDING CALL after %.0fs with no caller input (call_sid=%s agent=%s "
             "echo_events=%d). A live call that answers nothing is worse than a dropped one — "
@@ -245,39 +303,43 @@ def wire_liveness_watchdog(
             silent_for = now() - state.caller_last_seen
 
             if silent_for >= hangup_after_s:
-                if state.agent_busy:
-                    # She is mid-sentence. Do not cut her off — a long legitimate turn is not
-                    # a dead call. Re-check on the next tick.
+                # THE HARD DEADLINE IS AUTHORITATIVE.
+                #
+                # `agent_busy` may defer it for ORDINARY speech — a long legitimate monologue
+                # must not be cut off mid-sentence. But a wedged RECOVERY prompt can leave
+                # agent_busy=True forever, and deferring to that would let the watchdog's own
+                # stuck voice hold the call open indefinitely. So the recovery never earns the
+                # grace that real speech does. (Yua.)
+                if state.agent_busy and not recovery_in_flight:
                     continue
                 await _hang_up(silent_for)
                 return
 
             if state.agent_busy:
-                # SHE IS SPEAKING, so the line is not silent. Dead air means SILENCE — and
-                # interrupting her own sentence to ask "are you still there?" is both absurd
-                # and, on the failing call's realtime path, a way to wedge her further.
-                # The caller's clock keeps running; we simply do not act while she talks.
+                # She is speaking, so the line is NOT silent. Dead air means silence.
                 continue
 
             if silent_for >= prompt_after_s and not state.prompted:
-                state.prompted = True  # exactly one prompt per silence; only a USER turn clears it
+                state.prompted = True  # one prompt per silence; only a USER turn clears it
                 state.prompts_sent += 1
                 state.outcome = "detected"
                 logger.warning(
                     "liveness: DEAD AIR %.0fs with no caller input (call_sid=%s agent=%s) — "
-                    "re-engaging once. The clock is NOT reset by my own voice.",
+                    "re-engaging once. The clock is NOT reset by my own voice, and NOT paused "
+                    "while I speak it.",
                     silent_for,
                     call_sid,
                     agent_name,
                 )
                 trace(f"liveness: dead air {silent_for:.0f}s call_sid={call_sid}, re-engaging")
-                await _reengage()
+                _start_recovery()
 
     task = asyncio.create_task(_watch(), name=f"liveness-{call_sid}")
 
     @session.on("close")
     def _on_close(_event: Any = None) -> None:
         task.cancel()
+        _abandon_recovery()
         if state.suspected_echo_events:
             logger.warning(
                 "liveness: call ended with %d suspected audio-bleed events (call_sid=%s). The "

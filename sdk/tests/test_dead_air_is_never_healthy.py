@@ -39,6 +39,31 @@ class FakeClock:
             await asyncio.sleep(0)
 
 
+class FakeSpeechHandle:
+    """What `AgentSession.generate_reply` ACTUALLY returns.
+
+    It is NOT a coroutine. `generate_reply` is SYNCHRONOUS and returns this handle, which is
+    awaitable — and awaiting it waits for generation *and playout* to complete. That is the
+    contract the old fake did not model: it could only ever complete immediately or raise
+    immediately, so a handle that simply NEVER FINISHES was inexpressible — which is exactly
+    how a wedged realtime channel behaves. (Yua, verified against the installed LiveKit.)
+    """
+
+    def __init__(self, *, never_completes: bool = False) -> None:
+        self.never_completes = never_completes
+        self.interrupted = False
+        self._done = asyncio.Event()
+        if not never_completes:
+            self._done.set()
+
+    def interrupt(self) -> None:
+        self.interrupted = True
+        self._done.set()
+
+    def __await__(self):
+        return self._done.wait().__await__()
+
+
 class FakeSession:
     """A LiveKit AgentSession's event surface, and nothing else."""
 
@@ -47,6 +72,8 @@ class FakeSession:
         self.replies: list[str] = []
         self.closed = False
         self.generate_reply_fails = generate_reply_fails
+        self.reply_never_completes = False
+        self.handles: list[FakeSpeechHandle] = []
 
     def on(self, event: str):
         def _register(fn):
@@ -59,7 +86,7 @@ class FakeSession:
         for fn in self._handlers.get(event, []):
             fn(payload)
 
-    async def generate_reply(self, *, instructions: str) -> None:
+    def generate_reply(self, *, instructions: str) -> FakeSpeechHandle:
         """Emits what the REAL AgentSession emits. This is the whole point.
 
         The previous fake appended a string and emitted NOTHING — so the watchdog's own prompt
@@ -77,7 +104,14 @@ class FakeSession:
         self.emit(
             "conversation_item_added", SimpleNamespace(item=SimpleNamespace(role="assistant"))
         )
-        self.emit("agent_state_changed", SimpleNamespace(new_state="listening"))
+        handle = FakeSpeechHandle(never_completes=self.reply_never_completes)
+        self.handles.append(handle)
+        if not self.reply_never_completes:
+            self.emit("agent_state_changed", SimpleNamespace(new_state="listening"))
+        # If it never completes she stays `speaking` FOREVER, so agent_busy stays True — which
+        # is exactly how a wedged recovery could hold a dead call open if the watchdog deferred
+        # to it. The old fake could not express this at all.
+        return handle
 
     async def aclose(self) -> None:
         self.closed = True
@@ -364,3 +398,86 @@ async def test_a_long_agent_turn_is_not_cut_off_mid_sentence() -> None:
         "she finished, the caller still never spoke, and the call was left open anyway — "
         "agent speech must not stand in for caller presence"
     )
+
+
+# --- the watchdog must not be wedgeable by the wedge -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_recovery_that_never_completes_cannot_block_the_hangup() -> None:
+    """THE P0. The watchdog awaited the thing that was broken.
+
+    `generate_reply` is synchronous and returns an awaitable SpeechHandle; awaiting it waits
+    for PLAYOUT. The old code did `await session.generate_reply(...)` inline in the watch loop.
+    If the realtime channel wedges by never completing — rather than by raising — `_watch`
+    blocks inside the re-engage and NEVER REACHES THE HANGUP.
+
+    The watchdog would have been disabled by the exact failure it exists to catch, and the
+    caller would sit in silence past 100 seconds with prompted=True, hung_up=False.
+    """
+    clock, session = FakeClock(), FakeSession()
+    session.reply_never_completes = True
+    ctx = _ctx()
+    state = await _watchdog(session, clock, ctx=ctx)
+
+    await clock.advance(120)
+
+    assert session.replies, "she never even tried to re-engage"
+    assert state.hung_up, (
+        "the recovery speech never completed and the watchdog waited on it forever — it was "
+        "disabled by the very wedge it exists to catch, and the caller is still in silence"
+    )
+    assert state.outcome == "terminated"
+    assert session.closed
+    assert len(ctx.shutdowns) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_wedged_recovery_is_interrupted_not_left_speaking() -> None:
+    """A stuck prompt must not hold the call open. Interrupt it, then close."""
+    clock, session = FakeClock(), FakeSession()
+    session.reply_never_completes = True
+    state = await _watchdog(session, clock)
+
+    await clock.advance(120)
+
+    assert state.hung_up
+    assert session.handles and session.handles[0].interrupted, (
+        "the wedged recovery speech was never interrupted — agent_busy stays True forever and "
+        "a watchdog that defers to it would hold a dead call open indefinitely"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_wedged_recovery_does_not_earn_the_grace_real_speech_gets() -> None:
+    """`agent_busy` defers the hangup for a long LEGITIMATE turn. It must not do so for the
+    watchdog's own stuck voice — otherwise the watchdog holds the call open with its own
+    wedge. Ordinary speech and the recovery attempt are different things."""
+    clock, session = FakeClock(), FakeSession()
+    session.reply_never_completes = True
+    state = await _watchdog(session, clock)
+
+    await clock.advance(120)
+
+    # She is still "speaking" (the wedged prompt never finished) — and the call ended anyway.
+    assert state.agent_busy, "the fake was supposed to leave her stuck mid-speech"
+    assert state.hung_up, "the watchdog deferred to its own wedged recovery and never hung up"
+
+
+@pytest.mark.asyncio
+async def test_closing_during_a_wedged_recovery_does_not_double_close() -> None:
+    """Close race: the caller hangs up while the stuck prompt is still in flight."""
+    clock, session = FakeClock(), FakeSession()
+    session.reply_never_completes = True
+    ctx = _ctx()
+    state = await _watchdog(session, clock, ctx=ctx)
+
+    await clock.advance(30)  # prompt fired, handle is stuck
+    assert state.prompted
+
+    session.emit("close", None)  # he hangs up
+    await clock.advance(120)
+
+    assert not state.hung_up, "the watchdog kept running after the call closed"
+    assert len(ctx.shutdowns) == 0, "it shut the job down after the session had already closed"
+    assert session.handles[0].interrupted, "the in-flight recovery speech was left dangling"

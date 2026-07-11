@@ -18,7 +18,12 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from sdk.duplex import wire_half_duplex
+from sdk.duplex import (
+    DEFAULT_RELEASE_DELAY_S,
+    MAX_RELEASE_DELAY_S,
+    resolve_release_delay,
+    wire_half_duplex,
+)
 
 
 class FakeInput:
@@ -268,3 +273,54 @@ async def test_the_release_tail_is_configurable() -> None:
     await _flush()
 
     assert waited == [0.9]
+
+
+# --- the tail is a config contract, not a bare float() at import ------------------
+#
+# It was `float(os.environ.get("VOICE_HALF_DUPLEX_TAIL_S", "0.4"))` at MODULE IMPORT. A typo
+# in an env var would crash the agent at import; `inf` would mute the caller for the entire
+# call; a negative would reopen the mic instantly and restore the echo loop. Config errors
+# must fail loudly at a boundary, not detonate at import or degrade in silence. (Yua.)
+
+
+def test_the_default_tail_is_the_documented_guess() -> None:
+    assert resolve_release_delay(None) == DEFAULT_RELEASE_DELAY_S
+    assert resolve_release_delay("") == DEFAULT_RELEASE_DELAY_S
+
+
+def test_a_valid_tail_is_taken() -> None:
+    assert resolve_release_delay("0.75") == 0.75
+    assert resolve_release_delay(" 1.2 ") == 1.2
+    assert resolve_release_delay("0") == 0.0
+
+
+@pytest.mark.parametrize("bad", ["", None])
+def test_absent_is_not_an_error(bad) -> None:
+    assert resolve_release_delay(bad) == DEFAULT_RELEASE_DELAY_S
+
+
+@pytest.mark.parametrize("bad", ["abc", "0.4s", "--1"])
+def test_garbage_is_refused_loudly(bad: str) -> None:
+    """A typo in an env var must not be the reason an agent will not start — it must be the
+    reason she says WHY she will not start."""
+    with pytest.raises(ValueError, match="not a number"):
+        resolve_release_delay(bad)
+
+
+@pytest.mark.parametrize("bad", ["inf", "-inf", "nan"])
+def test_a_non_finite_tail_is_refused(bad: str) -> None:
+    """`inf` never reopens the microphone. The caller is muted for the whole call and nothing
+    errors — the exact silent-degradation shape this whole day has been about."""
+    with pytest.raises(ValueError, match="finite"):
+        resolve_release_delay(bad)
+
+
+def test_a_negative_tail_is_refused() -> None:
+    """A negative tail reopens the mic immediately — the echo loop, restored."""
+    with pytest.raises(ValueError, match="negative"):
+        resolve_release_delay("-0.5")
+
+
+def test_an_absurd_tail_is_clamped_not_obeyed() -> None:
+    """30s of tail would clip the caller's first words after every turn. Clamp and say so."""
+    assert resolve_release_delay("30") == MAX_RELEASE_DELAY_S

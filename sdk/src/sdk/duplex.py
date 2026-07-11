@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
 from dataclasses import dataclass
@@ -55,13 +56,60 @@ logger = logging.getLogger("voice.agent")
 # 0.4s IS A GUESS. I have never measured the real echo tail on this trunk: how long her audio
 # keeps arriving at his microphone after LiveKit says she stopped. Too short and the loop
 # reopens on the tail; too long and we clip the caller's first word. It is env-tunable and
-# COUNTED (DuplexState.gate_closures / reopen timing) precisely so the next speakerphone call
-# can measure it instead of inheriting my guess. (Yua: "remains unmeasured".)
-RELEASE_DELAY_S = float(os.environ.get("VOICE_HALF_DUPLEX_TAIL_S", "0.4"))
+# counted precisely so the next speakerphone call can MEASURE it instead of inheriting my
+# guess. (Yua: "remains unmeasured".)
+DEFAULT_RELEASE_DELAY_S = 0.4
 
-# Half-duplex is ON by default. Every one of these agents is a TELEPHONE agent, and Eric uses
-# a speakerphone. The failure it prevents is total (a dead call); the cost it imposes is
-# partial (no barge-in). Default to the safe side and let the env turn it off.
+# A tail may not be negative, NaN, or infinite — and it must not be parsed with a bare
+# `float()` at import time, which would crash the whole agent on a typo in an env var, or
+# silently accept `inf` (mic never reopens: the caller is muted for the entire call) or a
+# negative (reopen fires immediately: the echo loop is back). Config errors must fail LOUDLY
+# and at a boundary, not detonate at import or degrade in silence. (Yua, precision note.)
+MAX_RELEASE_DELAY_S = 5.0
+
+ENV_TAIL = "VOICE_HALF_DUPLEX_TAIL_S"
+
+
+def resolve_release_delay(raw: str | None = None) -> float:
+    """Parse + validate the echo-tail delay. Raises on garbage; clamps what is merely silly."""
+    if raw is None:
+        raw = os.environ.get(ENV_TAIL)
+    if raw is None or not str(raw).strip():
+        return DEFAULT_RELEASE_DELAY_S
+
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"{ENV_TAIL}={raw!r} is not a number. This is the echo-tail delay that keeps the "
+            f"agent from hearing her own voice; a typo here must not start the agent."
+        ) from None
+
+    if math.isnan(value) or math.isinf(value):
+        raise ValueError(
+            f"{ENV_TAIL}={raw!r} is not a finite number. An infinite tail never reopens the "
+            f"caller's microphone — he would be muted for the entire call."
+        )
+
+    if value < 0:
+        raise ValueError(
+            f"{ENV_TAIL}={raw!r} is negative. A negative tail reopens the mic immediately, "
+            f"which is the echo loop this module exists to break."
+        )
+
+    if value > MAX_RELEASE_DELAY_S:
+        logger.warning(
+            "%s=%s exceeds the %.1fs ceiling — clamping. A tail this long clips the caller's "
+            "first words after every single turn.",
+            ENV_TAIL,
+            raw,
+            MAX_RELEASE_DELAY_S,
+        )
+        return MAX_RELEASE_DELAY_S
+
+    return value
+
+
 ENV_FLAG = "VOICE_HALF_DUPLEX"
 
 
@@ -84,11 +132,12 @@ def wire_half_duplex(
     call_sid: str | None,  # None on a non-SIP job; only ever used for logging
     agent_name: str,
     enabled: bool | None = None,
-    release_delay_s: float = RELEASE_DELAY_S,
+    release_delay_s: float | None = None,
     sleep: Any = asyncio.sleep,
 ) -> DuplexState:
     """Close the caller's mic while the agent speaks. Returns state for tests/telemetry."""
     is_on = half_duplex_enabled() if enabled is None else enabled
+    release_delay_s = resolve_release_delay() if release_delay_s is None else release_delay_s
     state = DuplexState(enabled=is_on)
 
     if not is_on:
