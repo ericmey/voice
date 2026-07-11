@@ -6,9 +6,12 @@ with LiveKit; the livekit-sip container (bind-mounted config at
 `../../config/livekit-sip.yaml`) routes inbound PSTN calls to it via dispatch
 rule.
 
-Ships with both a voice entrypoint (`src/agent.py`) and a text-only
-variant (`src/agent_text.py`) sharing model / tool / persona configuration
-through `src/_shared.py`.
+Voice entrypoint: `src/agent.py`. Model, tools, persona and composition live in
+`src/_shared.py`.
+
+(This used to claim a text-only variant at `src/agent_text.py`. That file does not exist and
+there is no `phone-nyla-text` dispatch rule — the README was describing a twin who was
+deleted.)
 
 ## Requirements
 

@@ -62,7 +62,18 @@ def _append_manifest(entry: dict) -> None:
 def wire_postcall_review(
     session: AgentSession,
     call_sid: str | None,
-    agent_name: str = "unknown",
+    # agent_name is REQUIRED. It used to default to "unknown".
+    #
+    # Every one of the 12 call sites passes it, so the default never fired — it existed only
+    # to SWALLOW a future wiring mistake. And what it would swallow is an identity error: a
+    # transcript, a telemetry span, or a call review attributed to nobody, filed under
+    # "unknown", silently, forever. Every per-agent dashboard panel and alert selector
+    # (`voice-.*`) would match nothing and look healthy.
+    #
+    # Same lesson as ENV AGENT=aoi, the default persona, and voice="Leda": a default in the
+    # identity path is not a convenience. It is a misattribution waiting for the first person
+    # who forgets an argument.
+    agent_name: str,
 ) -> None:
     """Register a ``close`` handler that appends the call to the manifest.
 

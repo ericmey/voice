@@ -144,12 +144,30 @@ def test_multiple_calls_append(voice_logs: Path) -> None:
     assert [e["call_sid"] for e in entries] == ["SCL_5", "SCL_6"]
 
 
-def test_default_agent_name_is_unknown(voice_logs: Path) -> None:
-    _make_transcript(voice_logs, "SCL_7")
-    session = _FakeSession()
-    _wire(session, call_sid="SCL_7")
-    _fire_close(session, _close_event())
-    assert _read_manifest(voice_logs)[0]["agent"] == "unknown"
+def test_agent_name_is_required_not_defaulted_to_unknown() -> None:
+    """This test used to be `test_default_agent_name_is_unknown` — it ASSERTED THE BUG.
+
+    `agent_name` defaulted to "unknown". All 12 call sites pass it, so the default never
+    fired: it existed only to SWALLOW a future wiring mistake. And what it would swallow is an
+    identity error — a call review filed under "unknown", silently, forever, while every
+    per-agent dashboard panel and alert selector (`voice-.*`) matched nothing and looked fine.
+
+    A default in the identity path is not a convenience. It is a misattribution waiting for the
+    first person who forgets an argument. Same lesson as ENV AGENT=aoi, the default persona,
+    and voice="Leda".
+
+    The old test locked the default in place. This one refuses it.
+    """
+    import inspect
+
+    from sdk.postcall import wire_postcall_review
+
+    param = inspect.signature(wire_postcall_review).parameters["agent_name"]
+    assert param.default is inspect.Parameter.empty, (
+        f"wire_postcall_review(agent_name=...) defaults to {param.default!r}. A call review "
+        f"attributed to nobody is worse than a crash — the crash you fix, the misattribution "
+        f"you never notice."
+    )
 
 
 # --- $LIVEKIT_VOICE_LOGS unset → no-op ------------------------------------

@@ -1,7 +1,13 @@
-"""Nyla voice agent — Gemini 2.5 Flash Native Audio, voice "Leda".
+"""Nyla voice agent — Gemini 2.5 Flash Native Audio, voice "Aoede".
 
-Registers as "phone-nyla" with LiveKit. For the text-only test variant,
+Registers as "phone-nyla" with LiveKit.
 
+The docstring used to say voice "Leda" — which is YUA'S voice. The one line a reader trusts
+first, naming the wrong sister. (`NYLA_VOICE = "Aoede"` in _shared.py has always been right.)
+
+It also trailed off mid-sentence — "For the text-only test variant," and then nothing. A
+cleanup deleted `agent_text.py` and left the clause bleeding. There is no text variant; the
+phantom is now gone from here, from _shared.py, and from the README.
 """
 
 from __future__ import annotations

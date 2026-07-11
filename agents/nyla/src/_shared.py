@@ -1,7 +1,9 @@
-"""Shared setup for Nyla voice and text agents.
+"""Nyla's setup — model, tools, persona, agent class.
 
-Everything that must be identical between phone-nyla (voice) and
-phone-nyla-text (text-only): model, tools, persona, agent class.
+This used to say it held "everything that must be identical between phone-nyla (voice) and
+phone-nyla-text (text-only)". There is no text-only agent: `agent_text.py` was deleted and
+no `phone-nyla-text` dispatch rule exists. The file survives because it is where Nyla's
+config, voice and composition live — not because it is shared with a twin who does not exist.
 
 Thin wrapper around :mod:`tools.base_agent` so Nyla-specific config
 lives here while shared scaffolding lives in one place.

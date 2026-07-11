@@ -156,3 +156,42 @@ def test_the_live_sections_reference_no_class_that_does_not_exist() -> None:
         f"— anyone copying it got an ImportError, out of the file AGENTS.md calls "
         f"authoritative."
     )
+
+
+# ---------------------------------------------------------------------------
+# Docs must not claim source files that do not exist.
+#
+# `agents/nyla/README.md` said she "ships with ... a text-only variant (`src/agent_text.py`)".
+# That file was deleted. `_shared.py` still said it held "everything that must be identical
+# between phone-nyla (voice) and phone-nyla-text (text-only)". And `agent.py`'s docstring
+# trailed off MID-SENTENCE — "For the text-only test variant," and then nothing — where the
+# cleanup removed the file and left the clause bleeding.
+#
+# Three files describing a twin who does not exist. A reader goes looking for `agent_text.py`,
+# finds nothing, and cannot tell whether it is missing or whether they are.
+# ---------------------------------------------------------------------------
+
+
+def test_no_doc_references_a_source_file_that_does_not_exist() -> None:
+    """Any `src/<name>.py` a doc mentions must actually be there."""
+    docs = list(REPO.glob("agents/*/README.md")) + [REPO / "AGENTS.md"]
+    offenders: list[str] = []
+
+    for doc in docs:
+        if not doc.exists():
+            continue
+        body = doc.read_text()
+        agent_dir = doc.parent
+        for ref in re.findall(r"`(src/[a-z_]+\.py)`", body):
+            # A doc may name a deleted file IN ORDER TO SAY IT IS DELETED. Allow that; the
+            # whole point of a retirement note is that it names the thing.
+            line = next((line for line in body.splitlines() if ref in line), "")
+            if any(w in line.lower() for w in ("does not exist", "deleted", "no longer")):
+                continue
+            if not (agent_dir / ref).exists():
+                offenders.append(f"{doc.relative_to(REPO)} references {ref}, which is absent")
+
+    assert not offenders, (
+        f"docs claim source files that do not exist: {offenders}. A reader who goes looking "
+        f"and finds nothing cannot tell whether the file is missing or whether they are."
+    )
