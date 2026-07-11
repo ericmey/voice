@@ -24,6 +24,7 @@ from sdk.bearer_identity import (
     BearerIdentityError,
     _op_references,
     _scope_allows,
+    check_bearer,
     decode_claims,
     runtime_write_targets,
     verify_env,
@@ -169,12 +170,12 @@ def test_the_grandfathered_fleet_read_is_allowed() -> None:
 def test_a_write_scope_into_a_sisters_tenant_is_refused() -> None:
     """Right subject, wrong write scope — she authorizes as herself and writes into Nyla."""
     env = _healthy_env()
-    env["MUSUBI_V2_TOKEN_AOI"] = _token("aoi/voice", "aoi/voice:r nyla/voice/*:rw")
+    env["MUSUBI_V2_TOKEN_AOI"] = _token("aoi/voice", "aoi/voice/*:rw nyla/voice/*:rw")
 
     with pytest.raises(BearerIdentityError) as exc:
-        verify_env(env)
+        verify_env(env, probe=accepts_everything)
 
-    assert any("that is nyla's tenant" in p for p in exc.value.problems), exc.value.problems
+    assert any("nyla" in p for p in exc.value.problems), exc.value.problems
 
 
 def test_an_unrendered_template_is_refused() -> None:
@@ -354,14 +355,19 @@ def test_an_exact_prefix_grant_with_too_few_segments_is_refused() -> None:
 
 
 def test_a_fleet_write_wildcard_grants_nothing_and_is_refused() -> None:
-    """Musubi REFUSES `**` for writes. So `**:rw` reads as fleet-write and behaves as nothing."""
+    """`**:rw` is refused by the allowlist — and separately, it authorizes nothing.
+
+    Musubi REFUSES `**` for writes, so a bearer relying on this grant fails every write. It
+    reads as fleet-wide write and behaves as nothing. Both are reasons to reject it; the
+    allowlist does not need to know which.
+    """
     env = _healthy_env()
     env["MUSUBI_V2_TOKEN_AOI"] = _token("aoi/voice", "**:rw")
 
     with pytest.raises(BearerIdentityError) as exc:
         verify_env(env, probe=accepts_everything)
 
-    assert any("REFUSES" in p for p in exc.value.problems), exc.value.problems
+    assert any("not permitted" in p for p in exc.value.problems), exc.value.problems
     assert any("CANNOT WRITE" in p for p in exc.value.problems), exc.value.problems
 
 
@@ -415,3 +421,83 @@ def test_the_runtime_targets_are_the_planes_the_tools_write() -> None:
     """If MusubiToolsMixin grows a plane, this gate must grow with it or it stops proving
     write coverage while still claiming to."""
     assert runtime_write_targets("aoi") == ("aoi/voice/episodic", "aoi/voice/thought")
+
+
+# --- THE TENANT SEGMENT ADMITS NO WILDCARD ----------------------------------------
+#
+# I wrote `tenant not in (agent, "*")` — hand-excusing `*` in the tenant position, inside the
+# function whose entire job is keeping one sister out of another's plane. `*/voice/*:rw`
+# covers aoi/voice/episodic, so the write-coverage requirement I had JUST added was satisfied,
+# and the same grant authorizes every other sister's voice plane. I punched the hole while
+# building the fence. (Yua, round 4 — reproduced at the reviewed head.)
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "*/voice/*:rw",  # Yua's exact repro
+        "*/*/*:rw",
+        "*/voice/episodic:rw",
+        "*/voice/*:w",
+    ],
+)
+def test_a_wildcard_tenant_write_is_refused(scope: str) -> None:
+    """It satisfies her own coverage AND opens every sister's plane. That is the whole trap:
+    a scope that passes the "can she write?" test by being far too permissive."""
+    claims = decode_claims(_token("aoi/voice", f"{scope} **:r"))
+
+    problems = check_bearer("aoi", claims)
+
+    assert problems, f"{scope!r} authorizes cross-sister writes and the gate accepted it"
+    assert any("every sister" in p or "AUTHORIZES WRITING" in p for p in problems), problems
+
+
+def test_the_wildcard_tenant_really_does_reach_a_sister() -> None:
+    """Yua's second line. The matcher agrees it is a cross-sister write — so this is not a
+    style objection about wildcards, it is a live capability."""
+    assert _scope_allows("*/voice/*:rw", "nyla/voice/episodic", "w")
+    assert _scope_allows("*/voice/*:rw", "yua/voice/thought", "w")
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "aoi/voice/*:rw",  # what production actually carries
+        "aoi/voice/episodic:rw aoi/voice/thought:rw",  # explicit per-plane
+    ],
+)
+def test_the_allowed_write_grants_pass(scope: str) -> None:
+    """The allowlist must still admit the real fleet. A gate that cannot pass production is
+    not a gate, it is an outage."""
+    claims = decode_claims(_token("aoi/voice", f"{scope} **:r"))
+
+    assert check_bearer("aoi", claims) == []
+
+
+def test_a_channel_wildcard_in_her_own_tenant_is_refused() -> None:
+    """`aoi/*/*:rw` — the tenant is HERS, and it is still refused.
+
+    It grants her discord and hermes planes as well, which makes the sentence this gate
+    PRINTS — "she may write only to her own voice plane" — false. The verdict is the contract;
+    a grant that outruns the verdict is a lie the gate tells on our behalf. (Yua, round 4
+    addendum.)
+    """
+    claims = decode_claims(_token("aoi/voice", "aoi/*/*:rw **:r"))
+
+    problems = check_bearer("aoi", claims)
+
+    assert problems, "aoi/*/*:rw reaches beyond her voice plane and the gate accepted it"
+    assert any("beyond her voice channel" in p for p in problems), problems
+
+
+def test_the_property_check_catches_what_the_syntax_check_might_not() -> None:
+    """The tenant-string rule is only as good as my imagination — which is exactly what failed.
+
+    So the cross-sister fence is ALSO stated as a property, asked through Musubi's own matcher:
+    does this scope authorize writing any other agent's runtime target? That question does not
+    depend on me predicting the spelling.
+    """
+    claims = decode_claims(_token("aoi/voice", "nyla/voice/episodic:rw"))
+    problems = check_bearer("aoi", claims)
+
+    assert any("AUTHORIZES WRITING" in p and "nyla/voice/episodic" in p for p in problems), problems

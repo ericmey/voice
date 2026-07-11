@@ -214,29 +214,65 @@ def check_bearer(agent: str, claims: BearerClaims) -> list[str]:
     if not claims.scopes:
         problems.append(f"{agent}: bearer carries no scope claim — it can do nothing")
 
-    # --- direction 1: she must not be able to write anywhere else -------
+    # --- WRITE SCOPES ARE AN ALLOWLIST -----------------------------------
+    #
+    # Every previous version of this was a DENYLIST: reject foreign tenants, reject `**`,
+    # reject... whatever I thought of. And each round found another spelling I had not thought
+    # of — most damningly `*/voice/*:rw`, which I let through because I had hand-excused `*`
+    # in the tenant position myself, inside the function whose whole job is the fence.
+    #
+    # A denylist guarding a strict claim is unsound by construction. It can only ever be as
+    # complete as the author's imagination, and mine demonstrably was not. The CLI prints
+    # "she may write ONLY to her own voice plane" — that is a universal claim, and a universal
+    # claim cannot be defended by enumerating its counterexamples.
+    #
+    # So: name what is ALLOWED, and refuse everything else. These three are exactly the grants
+    # that authorize the runtime targets and nothing beyond them.
+    #
+    # Note `<agent>/*/*:rw` is REFUSED even though the tenant is hers: it grants her discord
+    # and hermes planes too, which makes the sentence the gate prints FALSE. (Yua, round 4.)
+    allowed_write_patterns = {
+        f"{agent}/{CHANNEL}/*",
+        *(t for t in runtime_write_targets(agent)),
+    }
+
     for scope in claims.scopes:
         namespace, sep, access = scope.rpartition(":")
         if not sep or access not in WRITE_ACCESS:
             continue  # a read scope cannot misattribute a memory
 
-        if namespace == GRANDFATHERED_READ:
-            # Musubi refuses ** for writes, so this grants nothing — but a scope that LOOKS
-            # like fleet-wide write and silently isn't is its own trap: it invites someone to
-            # rely on it, and every write fails at runtime.
+        if namespace not in allowed_write_patterns:
             problems.append(
-                f"{agent}: bearer carries {scope!r}. Musubi REFUSES '**' for writes, so this "
-                f"grants no write at all — it reads as fleet-write and behaves as nothing. "
-                f"({GRANDFATHERED_READ}:r is the grandfathered read and is fine.)"
+                f"{agent}: write scope {scope!r} is not permitted. A voice bearer may hold "
+                f"write ONLY on {sorted(allowed_write_patterns)} — her own voice plane and "
+                f"nothing else. "
+                + (
+                    f"Its tenant is {namespace.split('/')[0]!r}, not {agent!r}: a wildcard "
+                    f"there is not a broad grant, it is EVERY SISTER'S PLANE. "
+                    if namespace.split("/")[0] != agent
+                    else "The tenant is hers, but the grant reaches beyond her voice channel, "
+                    "which makes 'writes only to her own plane' false. "
+                )
+                + "This is an allowlist because a denylist here can only be as complete as "
+                "the imagination of whoever wrote it."
             )
-            continue
 
-        tenant = namespace.split("/")[0]
-        if tenant not in (agent, "*"):
-            problems.append(
-                f"{agent}: bearer may WRITE into {namespace!r} — that is {tenant}'s tenant. "
-                f"A voice agent writes to her own plane and nowhere else."
-            )
+    # --- the fence, stated as a PROPERTY rather than as syntax -----------
+    #
+    # Belt to the allowlist's braces, and it answers a different question: not "does this
+    # string look permitted" but "what does Musubi's own matcher say this AUTHORIZES". It
+    # holds against a spelling nobody predicted.
+    for other in AGENTS:
+        if other == agent:
+            continue
+        for target in runtime_write_targets(other):
+            for scope in claims.scopes:
+                if _scope_allows(scope, target, "w"):
+                    problems.append(
+                        f"{agent}: scope {scope!r} AUTHORIZES WRITING {target!r} — that is "
+                        f"{other}'s plane. Whatever the scope looks like, this is the "
+                        f"cross-sister write the fence exists to prevent."
+                    )
 
     # --- direction 2: she MUST be able to write where the tools write ---
     #
