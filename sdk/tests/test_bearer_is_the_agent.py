@@ -367,7 +367,7 @@ def test_a_fleet_write_wildcard_grants_nothing_and_is_refused() -> None:
     with pytest.raises(BearerIdentityError) as exc:
         verify_env(env, probe=accepts_everything)
 
-    assert any("not permitted" in p for p in exc.value.problems), exc.value.problems
+    assert any("grandfathered fleet READ" in p for p in exc.value.problems), exc.value.problems
     assert any("CANNOT WRITE" in p for p in exc.value.problems), exc.value.problems
 
 
@@ -501,3 +501,82 @@ def test_the_property_check_catches_what_the_syntax_check_might_not() -> None:
     problems = check_bearer("aoi", claims)
 
     assert any("AUTHORIZES WRITING" in p and "nyla/voice/episodic" in p for p in problems), problems
+
+
+# --- SPECIAL, NON-NAMESPACE AUTHORITY ---------------------------------------------
+#
+# My "allowlist" looped over the scopes, `continue`d on anything without :w/:rw, and
+# allowlisted the remainder. A scope with NO access suffix was never examined — it fell
+# through the filter before the allowlist ever saw it.
+#
+# `operator` is exactly that scope, and Musubi's require_operator_scope treats the bare string
+# as an ADMIN WRITE GRANT: admin endpoints, hard delete, lifecycle paths, created_at overrides,
+# across every plane. So `aoi/voice/*:rw operator **:r` produced NO problems and the gate
+# printed "writes only to her own voice plane" over destructive cross-plane admin authority.
+#
+# An allowlist with a `continue` at the top of the loop is a denylist wearing the word.
+# (Yua, round 5 — reproduced.)
+
+
+def test_the_operator_scope_is_refused() -> None:
+    """Yua's exact repro. Every namespace scope is impeccable; `operator` owns the whole store."""
+    claims = decode_claims(_token("aoi/voice", "aoi/voice/*:rw operator **:r"))
+
+    problems = check_bearer("aoi", claims)
+
+    assert problems, "a bearer with the `operator` admin grant passed the gate"
+    assert any("operator" in p for p in problems), problems
+
+
+def test_the_operator_scope_is_refused_end_to_end() -> None:
+    """And it must stop the deploy, not merely be noticed."""
+    env = _healthy_env()
+    env["MUSUBI_V2_TOKEN_SUMI"] = _token("sumi/voice", "sumi/voice/*:rw operator")
+
+    with pytest.raises(BearerIdentityError) as exc:
+        verify_env(env, probe=accepts_everything)
+
+    assert any("operator" in p for p in exc.value.problems), exc.value.problems
+
+
+@pytest.mark.parametrize(
+    "special",
+    [
+        "operator",
+        "admin",  # not a scope Musubi has today
+        "superuser",
+        "musubi:root",  # ':root' is not an access level, so this is not a namespace scope
+    ],
+)
+def test_any_unrecognized_non_namespace_scope_fails_closed(special: str) -> None:
+    """THE PROPERTY THAT HAD TO BE TRUE ALL ALONG: the unanticipated case FAILS CLOSED.
+
+    `operator` is the special grant that exists today. The point of an allowlist is that I do
+    not have to know what the NEXT one is called — a scope shaped like a special authority is
+    refused because it is not on the list, not because I predicted it.
+
+    Every round of this review found a spelling I had not thought of. This is the test that
+    makes the next one land as a refusal instead of a finding.
+    """
+    claims = decode_claims(_token("aoi/voice", f"aoi/voice/*:rw {special} **:r"))
+
+    problems = check_bearer("aoi", claims)
+
+    assert problems, f"the unrecognized scope {special!r} passed the gate — it did not fail closed"
+
+
+def test_the_production_grant_still_passes() -> None:
+    """The exact live scope string, verified on mizuki. A gate that cannot pass production is
+    not a gate, it is an outage — this assertion is as load-bearing as any negative above."""
+    claims = decode_claims(_token("aoi/voice", "aoi/voice:r aoi/voice/*:rw **:r"))
+
+    assert check_bearer("aoi", claims) == []
+
+
+def test_a_fleet_write_at_the_wildcard_is_refused() -> None:
+    """`**:rw` — only `**:r` is permitted at the wildcard."""
+    claims = decode_claims(_token("aoi/voice", "aoi/voice/*:rw **:rw"))
+
+    assert any("grandfathered fleet READ" in p for p in check_bearer("aoi", claims)), check_bearer(
+        "aoi", claims
+    )

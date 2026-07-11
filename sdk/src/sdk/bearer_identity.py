@@ -214,54 +214,76 @@ def check_bearer(agent: str, claims: BearerClaims) -> list[str]:
     if not claims.scopes:
         problems.append(f"{agent}: bearer carries no scope claim — it can do nothing")
 
-    # --- WRITE SCOPES ARE AN ALLOWLIST -----------------------------------
+    # --- EVERY SCOPE IS ALLOWLISTED. Not every write scope. EVERY scope. ------
     #
-    # Every previous version of this was a DENYLIST: reject foreign tenants, reject `**`,
-    # reject... whatever I thought of. And each round found another spelling I had not thought
-    # of — most damningly `*/voice/*:rw`, which I let through because I had hand-excused `*`
-    # in the tenant position myself, inside the function whose whole job is the fence.
+    # My last "allowlist" was not one. It looped over the scopes, `continue`d on anything
+    # without `:w`/`:rw`, and allowlisted the remainder. So a scope with NO access suffix at
+    # all was never examined — it fell through the filter before the allowlist ever saw it.
     #
-    # A denylist guarding a strict claim is unsound by construction. It can only ever be as
-    # complete as the author's imagination, and mine demonstrably was not. The CLI prints
-    # "she may write ONLY to her own voice plane" — that is a universal claim, and a universal
-    # claim cannot be defended by enumerating its counterexamples.
+    # `operator` is exactly that scope. Musubi's `require_operator_scope` treats the bare
+    # string as an ADMIN WRITE GRANT: operator endpoints, created_at overrides, hard delete,
+    # lifecycle/admin paths. So `aoi/voice/*:rw operator **:r` returned NO problems, and the
+    # gate printed "she may write only to her own voice plane" over a bearer holding
+    # destructive cross-plane admin authority. (Yua, round 5 — reproduced.)
     #
-    # So: name what is ALLOWED, and refuse everything else. These three are exactly the grants
-    # that authorize the runtime targets and nothing beyond them.
+    # An allowlist with a `continue` at the top of the loop is a denylist wearing the word.
+    # The whole point of an allowlist is that the unanticipated case FAILS CLOSED, and mine
+    # was routing the unanticipated case around the check.
     #
-    # Note `<agent>/*/*:rw` is REFUSED even though the tenant is hers: it grants her discord
-    # and hermes planes too, which makes the sentence the gate prints FALSE. (Yua, round 4.)
-    allowed_write_patterns = {
+    # So: every scope the token carries must match this grammar, or the bearer is refused.
+    # A future special grant Musubi invents will land here as "unrecognized" and fail closed,
+    # which is the only property that makes this survive the next round.
+    own_namespaces = {
+        f"{agent}/{CHANNEL}",  # her two-segment prefix (production carries this, read-only)
         f"{agent}/{CHANNEL}/*",
-        *(t for t in runtime_write_targets(agent)),
+        *runtime_write_targets(agent),
     }
 
     for scope in claims.scopes:
-        namespace, sep, access = scope.rpartition(":")
-        if not sep or access not in WRITE_ACCESS:
-            continue  # a read scope cannot misattribute a memory
+        pattern, sep, access = scope.rpartition(":")
 
-        if namespace not in allowed_write_patterns:
+        # No `:access` suffix => not a namespace scope at all => a SPECIAL AUTHORITY.
+        # `operator` is the one that exists today. Anything else in this shape is one we have
+        # not heard of, which is strictly more reason to refuse it.
+        if not sep or access not in {"r", "w", "rw"}:
             problems.append(
-                f"{agent}: write scope {scope!r} is not permitted. A voice bearer may hold "
-                f"write ONLY on {sorted(allowed_write_patterns)} — her own voice plane and "
-                f"nothing else. "
-                + (
-                    f"Its tenant is {namespace.split('/')[0]!r}, not {agent!r}: a wildcard "
-                    f"there is not a broad grant, it is EVERY SISTER'S PLANE. "
-                    if namespace.split("/")[0] != agent
-                    else "The tenant is hers, but the grant reaches beyond her voice channel, "
-                    "which makes 'writes only to her own plane' false. "
+                f"{agent}: bearer carries the non-namespace scope {scope!r}. Musubi grants "
+                f"special authority through bare scopes like this — `operator` unlocks admin "
+                f"endpoints, hard delete, lifecycle paths and created_at overrides, across "
+                f"EVERY plane. A voice agent needs none of it, and this gate prints 'writes "
+                f"only to her own voice plane', which such a scope makes false."
+            )
+            continue
+
+        if pattern == GRANDFATHERED_READ:
+            if access != "r":
+                problems.append(
+                    f"{agent}: bearer carries {scope!r}. Only {GRANDFATHERED_READ}:r — the "
+                    f"grandfathered fleet READ — is permitted at the wildcard. (Musubi refuses "
+                    f"'**' for writes anyway, so this grants no write and merely invites "
+                    f"someone to rely on one.)"
                 )
-                + "This is an allowlist because a denylist here can only be as complete as "
-                "the imagination of whoever wrote it."
+            continue
+
+        if pattern not in own_namespaces:
+            problems.append(
+                f"{agent}: scope {scope!r} is not permitted. A voice bearer may hold scopes "
+                f"ONLY on {sorted(own_namespaces)} (plus {GRANDFATHERED_READ}:r). "
+                + (
+                    f"Its tenant is {pattern.split('/')[0]!r}, not {agent!r} — a wildcard "
+                    f"there is not a broad grant, it is EVERY SISTER'S PLANE."
+                    if pattern.split("/")[0] != agent
+                    else "The tenant is hers, but it reaches beyond her voice channel, which "
+                    "makes the verdict this gate prints false."
+                )
             )
 
     # --- the fence, stated as a PROPERTY rather than as syntax -----------
     #
-    # Belt to the allowlist's braces, and it answers a different question: not "does this
-    # string look permitted" but "what does Musubi's own matcher say this AUTHORIZES". It
-    # holds against a spelling nobody predicted.
+    # The allowlist above judges the SHAPE of each scope. This asks what a scope actually
+    # AUTHORIZES, through Musubi's own matcher: can it write any other agent's runtime target?
+    # It holds against a spelling nobody predicted — which is the faculty that has failed in
+    # every round of this review.
     for other in AGENTS:
         if other == agent:
             continue
