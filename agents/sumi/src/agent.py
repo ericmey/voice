@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from livekit.agents import Agent, AgentSession, JobContext, cli
+from livekit.agents import Agent, AgentSession, JobContext, JobProcess, cli
 from livekit.agents.beta import EndCallTool
 from livekit.agents.worker import AgentServer
 from livekit.plugins import nvidia as nvidia_plugin
@@ -126,8 +126,50 @@ class SumiAgent(
         await self.session.say("Eric! Hi hi~ there you are — what can I do for you?")
 
 
+# --- endpointing -------------------------------------------------------
+#
+# How long Sumi waits in silence before deciding Eric has finished his turn.
+#
+# Her three sisters use 1000ms, with an explicit reason stated in tools/base_agent.py:
+# "Eric can pause up to 1s mid-thought without Gemini ending his turn." That reason is about
+# ERIC — his speech pattern — not about Gemini. It applies to Sumi identically.
+#
+# She was at 0.65s: 350ms MORE trigger-happy than her sisters, on the chained STT->LLM->TTS
+# pipeline, which has LESS context than a realtime model to recover from cutting him off
+# mid-sentence. Nothing in the code said why. Best guess: a leftover from debugging her
+# dead-air bugs (04739ef, 69b3d99, 630380d).
+#
+# Aligned to 1.0s. VALIDATE ON THE REAL CALL — if she now feels sluggish to respond, this is
+# the first dial to turn, and the fix is to add a semantic turn detector rather than to race
+# the silence timer.
+_MIN_SILENCE_DURATION_S = 1.0
+
+
+# --- prewarm -----------------------------------------------------------
+#
+# Silero VAD is an ONNX model. It was being loaded INSIDE the entrypoint, AFTER
+# `ctx.connect()` — so the caller was already on the line, listening to nothing, while the
+# model came off disk. That is the canonical LiveKit anti-pattern; every chained-pipeline
+# example in their docs loads VAD in prewarm and stashes it in `proc.userdata`.
+#
+# `setup_fnc` runs once per job PROCESS, before any job is assigned, with its own 10s
+# `initialize_process_timeout`. `proc.userdata` is per-process — which is exactly right for
+# a model (a shared, immutable, expensive resource). Per-CALL state must never go here; a
+# job process can be reused for sequential jobs, so that would leak between callers.
+
+
+def prewarm(proc: JobProcess) -> None:
+    """Load the VAD model before a call arrives, not while one is waiting."""
+    proc.userdata["vad"] = silero_plugin.VAD.load(
+        min_speech_duration=0.1,
+        min_silence_duration=_MIN_SILENCE_DURATION_S,
+        prefix_padding_duration=0.4,
+    )
+    logger.info("prewarm: silero VAD loaded (min_silence=%.2fs)", _MIN_SILENCE_DURATION_S)
+
+
 # --- server + session --------------------------------------------------
-server = AgentServer(port=8083)
+server = AgentServer(port=8083, setup_fnc=prewarm)
 
 
 @server.rtc_session(
@@ -169,11 +211,8 @@ async def entrypoint(ctx: JobContext) -> None:
         language_code="en-US",
     )
 
-    vad = silero_plugin.VAD.load(
-        min_speech_duration=0.1,
-        min_silence_duration=0.65,
-        prefix_padding_duration=0.4,
-    )
+    # Prewarmed in `setup_fnc` — no ONNX load while the caller is waiting.
+    vad = ctx.proc.userdata["vad"]
 
     llm = openai_plugin.LLM(model="nemo", base_url=_NEMO_BASE_URL, api_key="sk-local")
 

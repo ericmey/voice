@@ -127,8 +127,19 @@ class TestPersona:
         content = prompt_path.read_text(encoding="utf-8")
         assert "musubi_recent()" in content, "Prompt must still reference musubi_recent"
 
-    def test_load_persona_function(self, agent_module):
-        persona = agent_module._load_persona()
+    def test_sumi_uses_the_shared_persona_loader(self, agent_module):
+        """She used to carry her OWN `_load_persona()` with her OWN silent fallback
+        ("You are the Harem World host..."). Two implementations of the identity path, two
+        different strangers to become. There is one loader now, in tools.base_agent, and it
+        RAISES rather than substituting anybody."""
+        assert not hasattr(agent_module, "_load_persona"), (
+            "sumi still declares her own persona loader — use tools.base_agent.load_persona"
+        )
+        assert not hasattr(agent_module, "_DEFAULT_PERSONA"), (
+            "sumi still declares a default persona — a default persona is a stranger"
+        )
+
+        persona = agent_module.load_persona(agent_module._PROMPTS_DIR)
         assert isinstance(persona, str)
         assert len(persona) > 100
 
