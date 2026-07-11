@@ -47,7 +47,7 @@ health: ## Run the health-check script
 	scripts/health-check.sh
 
 verify-bearers: ## Prove each agent's Musubi bearer IS that agent (reads claims; never prints a token)
-	@uv run python -m sdk.bearer_identity $(SECRETS_ENV)
+	@scripts/verify-bearers.sh $(SECRETS_ENV)
 
 # ---- SIP routing ---------------------------------------------------
 

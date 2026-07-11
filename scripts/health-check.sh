@@ -40,7 +40,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PATH="$HOME/.local/bin:$PATH"  # cron: uv/lk live here
+
+# Find lk/uv from ANY shell (cron has no login PATH) — or say so. See scripts/lib/tool-path.sh.
+# This script deliberately does NOT `ensure_tool` them: a missing tool must be REPORTED as
+# "cannot verify", not exit the monitor. It only puts them on PATH if they exist.
+# APPENDED, not prepended: these are FALLBACKS for a shell that never read a login profile.
+# The caller's PATH must still win — prepending them would let a system binary shadow the one
+# the caller deliberately put in front (and did: it silently shadowed the mocked docker in the
+# health tests, turning a green suite red for a reason that had nothing to do with health).
+for _dir in "${HOME}/.local/bin" /usr/local/bin /opt/homebrew/bin; do
+  [[ -d "$_dir" ]] && PATH="${PATH}:${_dir}"
+done
+export PATH
 
 # Overridable so the test suite can point the routing check at a fixture fleet and still run
 # the REAL comparator. A monitor whose central check is unreachable from a test is a monitor

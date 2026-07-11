@@ -35,6 +35,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_DIR="${LIVEKIT_CONFIG_DIR:-${REPO_ROOT}/config}"
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
+# shellcheck source=scripts/lib/tool-path.sh
+source "${REPO_ROOT}/scripts/lib/tool-path.sh"
+
 # shellcheck source=scripts/lib/livekit-env.sh
 source "${REPO_ROOT}/scripts/lib/livekit-env.sh"
 livekit_reexec_with_1password_if_needed "${REPO_ROOT}" "${SCRIPT_PATH}" "$@"
@@ -74,13 +77,16 @@ _install_hint() {
     printf 'see https://docs.livekit.io/home/cli/cli-setup/  (or: apt install %s)' "$1"
   fi
 }
-command -v lk >/dev/null 2>&1 || die "lk (livekit-cli) not found — $(_install_hint livekit-cli)"
-command -v jq >/dev/null 2>&1 || die "jq not found — $(_install_hint jq)"
+# Resolve from any shell — a non-interactive ssh/cron shell never read the login profile,
+# which is how `make up` came to fail on the very host it is documented to run on.
+ensure_tools lk jq
 # Preflight is not optional. Without it this script deletes live dispatch rules and replaces
 # them with files nothing has validated — so a missing `uv` must STOP the run, not skip the
 # check. Refusing to register is safe; registering unvalidated is how a caller reaches the
 # wrong sister.
-command -v uv >/dev/null 2>&1 || die "uv not found — cannot run the dispatch preflight, and this script will not delete live routing rules without validating their replacements first"
+# Preflight is not optional: without it this script deletes live dispatch rules and replaces
+# them with files nothing has validated. A missing `uv` STOPS the run.
+ensure_tool uv
 
 declare -a TMP_FILES=()
 cleanup() {
