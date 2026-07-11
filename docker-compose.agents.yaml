@@ -39,7 +39,19 @@ x-agent-common: &agent-common
   # start_period covers prewarm: sumi loads the Silero ONNX model in setup_fnc before she is
   # ready, and a healthcheck that fires during that would flap her on every deploy.
   healthcheck:
-    test: ["CMD-SHELL", "curl -fsS --max-time 3 http://localhost:${AGENT_PORT}/ || exit 1"]
+    # NOTE THE $$. A single `${AGENT_PORT}` is interpolated by COMPOSE, at config-parse time,
+    # from the host shell — NOT from the container's environment. It resolved to empty, so the
+    # check curl'd `http://localhost:/` (port 80), failed, and marked all four agents UNHEALTHY
+    # while they were serving HTTP 200 perfectly.
+    #
+    # This is the exact trap this file already warns about for MUSUBI_V2_TOKEN, twenty lines
+    # up: "`${VAR}` in an `environment:` block interpolates from the shell and .env, never from
+    # env_file." I walked straight into it in the healthcheck.
+    #
+    # `$$AGENT_PORT` passes a literal `$AGENT_PORT` through to the shell INSIDE the container,
+    # which reads it from the container's own env. Verify with `docker compose config` — the
+    # rendered command must still contain `$AGENT_PORT`, not a bare colon.
+    test: ["CMD-SHELL", "curl -fsS --max-time 3 http://localhost:$$AGENT_PORT/ || exit 1"]
     interval: 30s
     timeout: 5s
     retries: 3
