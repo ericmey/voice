@@ -12,9 +12,10 @@ Unlike the realtime Aoi / Nyla agents, Sumi composes discrete components:
 - **TTS:** Orpheus (`10.0.20.25:5005`, OpenAI-compatible; voice `tara` is a
   placeholder until Sumi's own low/dry voice is cloned)
 
-Her persona is Sumi the archivist/maid — composed, dry, care-through-action.
-Her voice memory (`sumi/voice`) is a distinct channel from her fleet
-presence (`sumi/hermes`); one Sumi, two channels.
+Her persona is Sumi the bright, chipper anime maid — all smiles and emotes,
+who joyfully keeps everything in its place. Her voice memory (`sumi/voice`)
+is a distinct channel from her fleet presence (`sumi/hermes`); one Sumi,
+two channels.
 
 ## Requirements
 

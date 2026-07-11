@@ -8,10 +8,10 @@ inference stack on mizuki's Blackwell card — separate components:
   - TTS: Orpheus (OpenAI-compatible; voice ``tara`` is a placeholder
     until Sumi's own low/dry voice is cloned)
 
-Inherits the voice tool set (Core, Memory). Persona is Sumi (the
-archivist/maid — composed, dry, care-through-action); memory is her own
-(``sumi/voice`` / ``sumi-voice``), distinct from her fleet presence
-(``sumi/hermes``) — one Sumi, two channels.
+Inherits the voice tool set (Core, Memory). Persona is Sumi (the bright,
+chipper anime maid — all smiles and emotes, who joyfully keeps everything);
+memory is her own (``sumi/voice`` / ``sumi-voice``), distinct from her fleet
+presence (``sumi/hermes``) — one Sumi, two channels.
 
 Greeting uses session.say() — the chained text LLM rejects
 generate_reply() at session start (tools without a preceding user turn).
@@ -95,8 +95,8 @@ class SumiAgent(
 ):
     """Sumi Tachibana — core + Musubi memory tools on the chained voice line.
 
-    Persona is Sumi (archivist/maid — composed, dry, care-through-action);
-    memory identity is her own (``sumi/voice``).
+    Persona is Sumi (bright, chipper anime maid — smiles and emotes, and
+    loves keeping everything); memory identity is her own (``sumi/voice``).
     """
 
     config = SUMI_CONFIG
@@ -118,9 +118,9 @@ class SumiAgent(
         # string via session.say().
         #
         # Per Eric's feedback (2026-04-27): no formulaic recall callbacks in
-        # the opener — they read as calculated. Sumi opens composed, not
-        # effusive: a quiet acknowledgement, then she waits for him.
-        await self.session.say("Eric. I'm here.")
+        # the opener — they read as calculated. Sumi opens bright and glad to
+        # hear him — a warm, chipper hello, then she's all his.
+        await self.session.say("Eric! Hi hi~ there you are — what can I do for you?")
 
 
 # --- server + session --------------------------------------------------
