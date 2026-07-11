@@ -223,12 +223,32 @@ if ! command -v lk >/dev/null 2>&1 || ! command -v uv >/dev/null 2>&1; then
 elif ! ( _lk_env ) 2>/dev/null; then
   record "sip-routing" fail "cannot verify routing — ${SECRETS_ENV} is unreadable (no LiveKit credentials)"
 else
-  routing_out="$( ( _lk_env; lk sip dispatch list --json 2>/dev/null ) \
-    | ( cd "${REPO_ROOT}" && uv run python -m sdk.sip_preflight "${CONFIG_DIR}" --live - 2>&1 ) )"
-  if [[ $? -eq 0 ]]; then
-    record "sip-routing" ok "live dispatch matches the validated set exactly (4 rules, no extras)"
+  # THE AUTHORITATIVE QUERY MUST SUCCEED, and its exit status must be read INDEPENDENTLY.
+  #
+  # This was `lk ... | sdk.sip_preflight ...`. The script runs under `set -u`, NOT
+  # `set -o pipefail`, so a pipeline's status is the LAST command's status — the comparator's.
+  # If `lk` printed a complete but stale/cached/partial JSON document and then exited nonzero,
+  # the comparator would happily validate that document and health would report green, having
+  # never noticed that the query it based the verdict on had FAILED.
+  #
+  # A correct answer computed from an unreliable reading is not a correct answer. So: capture
+  # lk's output and its status separately, and refuse to compare at all if the query failed.
+  # (Yua, round 3.)
+  live_json="$( ( _lk_env; lk sip dispatch list --json 2>/dev/null ) )"
+  lk_status=$?
+
+  if (( lk_status != 0 )); then
+    record "sip-routing" fail "cannot verify routing — \`lk sip dispatch list\` exited ${lk_status}. The authoritative query FAILED; any JSON it printed is not trustworthy, and a verdict computed from it would be a guess wearing a checkmark."
+  elif [[ -z "${live_json//[[:space:]]/}" ]]; then
+    record "sip-routing" fail "cannot verify routing — \`lk sip dispatch list\` returned nothing"
   else
-    record "sip-routing" fail "live dispatch does NOT match the validated set: $(tr '\n' ' ' <<<"${routing_out}" | sed 's/  */ /g')"
+    routing_out="$( printf '%s' "${live_json}" \
+      | ( cd "${REPO_ROOT}" && uv run python -m sdk.sip_preflight "${CONFIG_DIR}" --live - 2>&1 ) )"
+    if (( $? == 0 )); then
+      record "sip-routing" ok "live dispatch matches the validated set exactly (4 rules, no extras)"
+    else
+      record "sip-routing" fail "live dispatch does NOT match the validated set: $(tr '\n' ' ' <<<"${routing_out}" | sed 's/  */ /g')"
+    fi
   fi
 fi
 

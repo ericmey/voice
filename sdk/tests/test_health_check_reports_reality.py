@@ -146,8 +146,10 @@ import json, os, sys
 
 scenario = json.loads(open(os.environ["HEALTH_SCENARIO"]).read())
 if sys.argv[1:4] == ["sip", "dispatch", "list"]:
+    # Print a COMPLETE, VALID document and then fail — the exact shape that slipped past a
+    # pipeline whose status came only from the comparator.
     print(json.dumps({"items": scenario["live_rules"]}))
-    sys.exit(0)
+    sys.exit(scenario.get("lk_exit", 0))
 sys.stderr.write("fake-lk: unhandled: " + " ".join(sys.argv[1:]) + chr(10))
 sys.exit(97)
 """
@@ -447,3 +449,48 @@ def test_a_missing_inbound_trunk_is_reported(run_health_check):
 
     assert code == 1
     assert _check(report, "sip-trunk")["status"] == "fail"
+
+
+def test_an_agentless_extra_rule_is_reported(run_health_check):
+    """THE INVISIBLE RULE. It names no agent, so an agent-keyed comparison cannot see it.
+
+    My comparator indexed the live table by `roomConfig.agents[].agentName` and then made
+    claims about the live TABLE. A rule with an empty agents list never enters that index: not
+    an extra, not a duplicate, and with an unrelated DID it owns nothing anyone checks. Five
+    live rules, zero problems, and the gate printed "exactly 4 rules, no extras".
+
+    A verdict about a set requires looking at the whole set, not a projection of it.
+    (Yua, round 3.)
+    """
+    scenario = _healthy_fleet()
+    scenario["live_rules"].append(
+        {
+            "sipDispatchRuleId": "SDR_ghost",
+            "name": "twilio-orphan",
+            "numbers": ["+15557770000"],  # unrelated to all four of ours
+            "roomConfig": {"agents": []},
+        }
+    )
+
+    code, report = run_health_check(scenario)
+
+    assert code == 1, "a fifth, agentless live rule exists and `make health` exited 0"
+    assert _check(report, "sip-routing")["status"] == "fail"
+
+
+def test_a_failed_authoritative_query_is_not_a_green_verdict(run_health_check):
+    """`lk` prints the PERFECT healthy document and exits nonzero.
+
+    Without pipefail, the pipeline's status was the comparator's status — so the comparator
+    validated a document whose query had failed, and health went green. A correct answer
+    computed from an unreliable reading is not a correct answer.
+    """
+    scenario = _healthy_fleet()
+    scenario["lk_exit"] = 3  # the JSON is exactly right; the query failed anyway
+
+    code, report = run_health_check(scenario)
+
+    assert code == 1, "the authoritative routing query FAILED and `make health` exited 0"
+    routing = _check(report, "sip-routing")
+    assert routing["status"] == "fail"
+    assert "cannot verify" in routing["detail"].lower()

@@ -139,8 +139,64 @@ def probe_bearer(base_url: str, token: str, *, timeout: float = 5.0) -> tuple[in
         return 0, f"unreachable: {exc}"
 
 
+def runtime_write_targets(agent: str) -> tuple[str, ...]:
+    """The namespaces the voice tools ACTUALLY write to at runtime.
+
+    ``MusubiToolsMixin`` appends the plane to ``musubi_v2_namespace``: remember/recent write
+    ``<prefix>/episodic``, think writes ``<prefix>/thought``. These are the paths — not the
+    two-segment prefix — that the bearer must be able to write.
+    """
+    return (f"{agent}/{CHANNEL}/episodic", f"{agent}/{CHANNEL}/thought")
+
+
+def _scope_allows(scope: str, namespace: str, access: str) -> bool:
+    """Musubi's OWN matching rules, mirrored exactly (``musubi.auth.scopes``).
+
+    Re-deriving these by intuition is how you build a gate that disagrees with the server it
+    is gating. The rules that actually matter here and are easy to get wrong:
+
+    - ``**`` matches anything for READ and is **refused outright for write**. So ``**:rw``
+      grants no write at all — a bearer relying on it fails every write, and my earlier
+      "fleet-wide write" alarm overstated the danger while missing the real one.
+    - Segment counts must match EXACTLY; ``*`` matches exactly one segment. So
+      ``aoi/voice:rw`` (two segments) does NOT authorize ``aoi/voice/episodic`` (three).
+      A bearer can therefore be scoped to precisely the namespace in the config and still be
+      unable to write a single memory.
+    """
+    pattern, sep, granted = scope.rpartition(":")
+    if not sep or granted not in {"r", "w", "rw"}:
+        return False
+
+    if pattern == "**":
+        if access == "w":
+            return False  # musubi refuses ** for writes
+        return granted in {"r", "rw"}
+
+    pattern_parts = pattern.split("/")
+    ns_parts = namespace.split("/")
+    if len(pattern_parts) != len(ns_parts):
+        return False
+    if not all(p == "*" or p == n for p, n in zip(pattern_parts, ns_parts, strict=True)):
+        return False
+
+    return granted == "rw" or granted == access
+
+
 def check_bearer(agent: str, claims: BearerClaims) -> list[str]:
-    """Every way this bearer could belong to someone other than ``agent``."""
+    """Every way this bearer could belong to someone other than ``agent`` — or be useless.
+
+    Two directions, and I had only built one.
+
+    **Can she write where she must not?** (foreign tenant) — that is misattribution.
+
+    **Can she write where she must?** — I never asked. So a server-accepted bearer carrying
+    only ``**:r``, or one writable only to ``aoi/discord/*``, passed every check and the gate
+    printed *"she may write only to her own plane"* about an agent who cannot write at all.
+    The tenant was hers; the grant was useless. Every memory write fails at runtime, on a
+    call, and the deploy gate said OK. (Yua, round 3.)
+
+    A negative-only check certifies the absence of one bug, not the presence of the capability.
+    """
     problems: list[str] = []
     expected = f"{agent}/{CHANNEL}"
 
@@ -158,25 +214,44 @@ def check_bearer(agent: str, claims: BearerClaims) -> list[str]:
     if not claims.scopes:
         problems.append(f"{agent}: bearer carries no scope claim — it can do nothing")
 
+    # --- direction 1: she must not be able to write anywhere else -------
     for scope in claims.scopes:
-        namespace, _, access = scope.partition(":")
-        if access not in WRITE_ACCESS:
+        namespace, sep, access = scope.rpartition(":")
+        if not sep or access not in WRITE_ACCESS:
             continue  # a read scope cannot misattribute a memory
 
-        if namespace == GRANDFATHERED_READ or namespace.startswith("**"):
+        if namespace == GRANDFATHERED_READ:
+            # Musubi refuses ** for writes, so this grants nothing — but a scope that LOOKS
+            # like fleet-wide write and silently isn't is its own trap: it invites someone to
+            # rely on it, and every write fails at runtime.
             problems.append(
-                f"{agent}: bearer holds a FLEET-WIDE WRITE scope ({scope!r}). "
-                f"{GRANDFATHERED_READ}:r is grandfathered and fine — it only reads. A write "
-                f"wildcard means {agent} may write into ANY sister's plane, and the namespace "
-                f"fence in AgentConfig is then guarding a door whose key opens every room."
+                f"{agent}: bearer carries {scope!r}. Musubi REFUSES '**' for writes, so this "
+                f"grants no write at all — it reads as fleet-write and behaves as nothing. "
+                f"({GRANDFATHERED_READ}:r is the grandfathered read and is fine.)"
             )
             continue
 
         tenant = namespace.split("/")[0]
-        if tenant != agent:
+        if tenant not in (agent, "*"):
             problems.append(
                 f"{agent}: bearer may WRITE into {namespace!r} — that is {tenant}'s tenant. "
                 f"A voice agent writes to her own plane and nowhere else."
+            )
+
+    # --- direction 2: she MUST be able to write where the tools write ---
+    #
+    # This is the half that was missing entirely. Note the segment arithmetic, which is where
+    # a plausible-looking grant dies: `aoi/voice:rw` is TWO segments and the tools write THREE
+    # (`aoi/voice/episodic`), so it authorizes nothing they do.
+    for target in runtime_write_targets(agent):
+        if not any(_scope_allows(scope, target, "w") for scope in claims.scopes):
+            problems.append(
+                f"{agent}: bearer CANNOT WRITE {target!r} — no scope in "
+                f"{list(claims.scopes)!r} grants write there. She boots, she is healthy, "
+                f"Musubi accepts her token, and every memory she tries to save fails "
+                f"authorization mid-call. A read-only bearer, a wrong-channel grant "
+                f"({agent}/discord/*:rw), and an exact-prefix grant ({agent}/{CHANNEL}:rw — "
+                f"too few segments) all land here."
             )
 
     return problems

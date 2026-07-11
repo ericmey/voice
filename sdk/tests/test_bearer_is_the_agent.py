@@ -23,7 +23,9 @@ from sdk.bearer_identity import (
     AGENTS,
     BearerIdentityError,
     _op_references,
+    _scope_allows,
     decode_claims,
+    runtime_write_targets,
     verify_env,
 )
 
@@ -149,19 +151,12 @@ def test_a_sisters_token_is_refused(victim: str) -> None:
     assert any("share ONE bearer" in p for p in exc.value.problems), exc.value.problems
 
 
-def test_a_fleet_wide_write_scope_is_refused() -> None:
-    """`**:r` is grandfathered and harmless. `**:rw` makes the namespace fence decorative.
-
-    If a bearer may write anywhere, then every guard upstream of it — the config fence, the
-    namespace derivation, the tests — is protecting a door whose key opens every room.
-    """
-    env = _healthy_env()
-    env["MUSUBI_V2_TOKEN_AOI"] = _token("aoi/voice", "aoi/voice:r **:rw")
-
-    with pytest.raises(BearerIdentityError) as exc:
-        verify_env(env)
-
-    assert any("FLEET-WIDE WRITE" in p for p in exc.value.problems), exc.value.problems
+# NOTE: an earlier test here asserted that `**:rw` would let an agent "write into ANY
+# sister's plane". THAT WAS WRONG — I had not read Musubi's matcher, I had inferred it.
+# `_namespace_scope_allows` refuses `**` for write outright, so `**:rw` grants no write at
+# all. The real danger is the opposite of the one I alarmed about: a scope that LOOKS like
+# fleet-write and silently authorizes nothing, so every write fails at runtime. That is
+# `test_a_fleet_write_wildcard_grants_nothing_and_is_refused`, below.
 
 
 def test_the_grandfathered_fleet_read_is_allowed() -> None:
@@ -309,3 +304,114 @@ def test_the_probe_never_leaks_the_token(monkeypatch) -> None:
     message = str(exc.value)
     for token in seen:
         assert token not in message, "the failure message leaked the bearer it probed with"
+
+
+# --- she must be able to write WHERE THE TOOLS WRITE ------------------------------
+#
+# The gate only ever asked "can she write somewhere she must not?". It never asked "can she
+# write where she must?" — so a server-accepted bearer with the right tenant and no usable
+# write grant passed, and the CLI printed "she may write only to her own plane" about an
+# agent who could not write at all. A negative-only check certifies the absence of one bug,
+# not the presence of the capability. (Yua, round 3.)
+
+
+def test_a_read_only_bearer_is_refused() -> None:
+    """Server accepts her. Tenant is hers. She cannot save a single memory."""
+    env = _healthy_env()
+    env["MUSUBI_V2_TOKEN_AOI"] = _token("aoi/voice", "aoi/voice:r **:r")
+
+    with pytest.raises(BearerIdentityError) as exc:
+        verify_env(env, probe=accepts_everything)
+
+    assert any("CANNOT WRITE" in p for p in exc.value.problems), exc.value.problems
+
+
+def test_a_wrong_channel_grant_in_the_right_tenant_is_refused() -> None:
+    """`aoi/discord/*:rw` — her tenant, her token, and none of it reaches voice."""
+    env = _healthy_env()
+    env["MUSUBI_V2_TOKEN_AOI"] = _token("aoi/voice", "aoi/discord/*:rw **:r")
+
+    with pytest.raises(BearerIdentityError) as exc:
+        verify_env(env, probe=accepts_everything)
+
+    assert any("CANNOT WRITE" in p for p in exc.value.problems), exc.value.problems
+
+
+def test_an_exact_prefix_grant_with_too_few_segments_is_refused() -> None:
+    """THE SUBTLE ONE. `aoi/voice:rw` looks exactly right and authorizes nothing.
+
+    Musubi requires the segment count to MATCH: a two-segment pattern cannot match the
+    three-segment `aoi/voice/episodic` the tools actually write. A bearer scoped to precisely
+    the namespace in her config still cannot save a memory.
+    """
+    env = _healthy_env()
+    env["MUSUBI_V2_TOKEN_AOI"] = _token("aoi/voice", "aoi/voice:rw")
+
+    with pytest.raises(BearerIdentityError) as exc:
+        verify_env(env, probe=accepts_everything)
+
+    assert any("CANNOT WRITE" in p for p in exc.value.problems), exc.value.problems
+
+
+def test_a_fleet_write_wildcard_grants_nothing_and_is_refused() -> None:
+    """Musubi REFUSES `**` for writes. So `**:rw` reads as fleet-write and behaves as nothing."""
+    env = _healthy_env()
+    env["MUSUBI_V2_TOKEN_AOI"] = _token("aoi/voice", "**:rw")
+
+    with pytest.raises(BearerIdentityError) as exc:
+        verify_env(env, probe=accepts_everything)
+
+    assert any("REFUSES" in p for p in exc.value.problems), exc.value.problems
+    assert any("CANNOT WRITE" in p for p in exc.value.problems), exc.value.problems
+
+
+def test_the_wildcard_plane_grant_is_accepted() -> None:
+    """POSITIVE COVERAGE: `<agent>/voice/*:rw` — what production actually carries."""
+    verify_env(_healthy_env(), probe=accepts_everything)
+
+
+def test_explicit_per_plane_grants_are_accepted() -> None:
+    """POSITIVE COVERAGE: naming each plane instead of wildcarding is equally valid."""
+    env = _healthy_env()
+    env["MUSUBI_V2_TOKEN_SUMI"] = _token(
+        "sumi/voice", "sumi/voice/episodic:rw sumi/voice/thought:rw **:r"
+    )
+    verify_env(env, probe=accepts_everything)
+
+
+def test_a_grant_covering_only_episodic_is_refused() -> None:
+    """`think` writes to the thought plane. Half a grant is a runtime failure, not a warning."""
+    env = _healthy_env()
+    env["MUSUBI_V2_TOKEN_YUA"] = _token("yua/voice", "yua/voice/episodic:rw **:r")
+
+    with pytest.raises(BearerIdentityError) as exc:
+        verify_env(env, probe=accepts_everything)
+
+    assert any("thought" in p for p in exc.value.problems), exc.value.problems
+
+
+def test_the_matcher_mirrors_musubi() -> None:
+    """These are Musubi's rules, not mine. If they drift, this gate certifies a fiction.
+
+    Re-derived from musubi.auth.scopes._namespace_scope_allows / _namespace_matches.
+    """
+    assert _scope_allows("aoi/voice/*:rw", "aoi/voice/episodic", "w")
+    assert _scope_allows("aoi/voice/episodic:rw", "aoi/voice/episodic", "w")
+    assert _scope_allows("aoi/voice/episodic:w", "aoi/voice/episodic", "w")
+
+    # segment count must match exactly
+    assert not _scope_allows("aoi/voice:rw", "aoi/voice/episodic", "w")
+    assert not _scope_allows("aoi/*:rw", "aoi/voice/episodic", "w")
+
+    # ** reads everything, writes nothing
+    assert _scope_allows("**:r", "aoi/voice/episodic", "r")
+    assert not _scope_allows("**:rw", "aoi/voice/episodic", "w")
+
+    # read grant is not a write grant
+    assert not _scope_allows("aoi/voice/*:r", "aoi/voice/episodic", "w")
+
+
+def test_the_runtime_targets_are_the_planes_the_tools_write() -> None:
+    """If MusubiToolsMixin grows a plane, this gate must grow with it or it stops proving
+    write coverage while still claiming to."""
+    assert runtime_write_targets("aoi") == ("aoi/voice/episodic", "aoi/voice/thought")

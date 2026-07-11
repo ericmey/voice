@@ -260,11 +260,57 @@ def compare_live_to_candidates(live_items: list[dict], rules: list[DispatchRule]
 
     So: exact set equality, on identity AND on DID ownership. "Presence" is not "correctness",
     and a postcondition that cannot tell them apart is decoration. (Yua, round 2.)
+
+    AND THE COMPARATOR ITSELF HAD THE SAME BUG ONE LEVEL DOWN. (Yua, round 3.)
+
+    It indexed the live table by ``roomConfig.agents[].agentName`` and then reasoned entirely
+    over that index. A live rule with an **empty or missing agents list** never enters the
+    index — so it is not an "extra" (nothing to compare), not a duplicate (no agent), and if
+    its DID is unrelated to our four, ``did_owners`` records an empty owner set that no branch
+    reports. Five live rules, zero problems, and the gate prints *"exactly 4 rules, no extras"*.
+
+    The check was built on a projection of the live table and then made claims about the live
+    TABLE. So now: count first, pair every live item to exactly one candidate, and only then
+    reason about identity. A verdict about a set requires looking at the whole set.
     """
     problems: list[str] = []
 
     expected = {r.agent_name: r for r in rules}
     expected_dids = {n: r.agent_name for r in rules for n in r.numbers}
+
+    # --- the WHOLE table, before any projection of it -------------------
+    if len(live_items) != len(rules):
+        problems.append(
+            f"live dispatch has {len(live_items)} rules; we validated {len(rules)}. The live "
+            f"routing table is not the one we approved — something is there that we did not "
+            f"put there, or something we registered is gone."
+        )
+
+    seen_ids: dict[str, int] = {}
+    for item in live_items:
+        rule_id = str(item.get("sipDispatchRuleId") or "")
+        if not rule_id:
+            problems.append(f"live rule {item.get('name')!r} has no sipDispatchRuleId")
+        seen_ids[rule_id] = seen_ids.get(rule_id, 0) + 1
+
+        specs = item.get("roomConfig", {}).get("agents") or []
+        names = [s.get("agentName", "") for s in specs if isinstance(s, dict)]
+        named = [n for n in names if n]
+
+        if len(named) != 1:
+            # THE INVISIBLE RULE. No agent to index by, so every agent-keyed check below is
+            # blind to it — while LiveKit still matches its DIDs and routes the call to
+            # whatever the rule says (or drops it on the floor).
+            problems.append(
+                f"live rule {item.get('name')!r} (id {rule_id or '?'}) names "
+                f"{len(named)} agents {named!r} — every dispatch rule must name exactly one. "
+                f"A rule with no agent is INVISIBLE to an agent-keyed comparison and still "
+                f"claims its DIDs {item.get('numbers')}."
+            )
+
+    for rule_id, count in sorted(seen_ids.items()):
+        if rule_id and count > 1:
+            problems.append(f"live rule id {rule_id} appears {count} times")
 
     live_by_agent: dict[str, list[dict]] = {}
     for item in live_items:
