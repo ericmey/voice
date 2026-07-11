@@ -19,7 +19,7 @@ from sdk.audio_recording import (
 from sdk.config import assert_agent_identity
 from sdk.musubi_client import wire_musubi_shutdown
 from sdk.postcall import wire_postcall_review
-from sdk.postcall_memory import wire_postcall_memory
+from sdk.postcall_memory import arm_postcall_memory, run_postcall_memory
 from sdk.telemetry import wire_telemetry_capture
 from sdk.telephony import resolve_caller
 from sdk.trace import trace
@@ -37,7 +37,14 @@ logger = logging.getLogger("voice.agent")
 server = AgentServer(port=8085)
 
 
-@server.rtc_session(agent_name=YUA_CONFIG.registration_name)
+@server.rtc_session(
+    agent_name=YUA_CONFIG.registration_name,
+    # Post-call extraction runs here, NOT in a shutdown callback: on_session_end
+    # fires BEFORE `ShuttingDown` starts the 10s kill clock, and gets the 300s
+    # `session_end_timeout`. It replaces a detached subprocess whose only job was
+    # to outlive a kill that no longer happens.
+    on_session_end=run_postcall_memory,
+)
 async def entrypoint(ctx: JobContext) -> None:
     reg = YUA_CONFIG.registration_name
     logger.info("%s entrypoint: room=%s", reg, ctx.room.name)
@@ -74,8 +81,8 @@ async def entrypoint(ctx: JobContext) -> None:
     wire_transcript_logging(session, transcript_sid, agent_name=reg)
     wire_telemetry_capture(session, transcript_sid, agent_name=reg)
     wire_postcall_review(session, transcript_sid, agent_name=reg)
-    wire_postcall_memory(
-        session,
+    arm_postcall_memory(
+        ctx,
         call_sid=transcript_sid,
         namespace=f"{YUA_CONFIG.musubi_v2_namespace}/episodic"
         if YUA_CONFIG.musubi_v2_namespace

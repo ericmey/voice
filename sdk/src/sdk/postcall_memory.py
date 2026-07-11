@@ -11,13 +11,23 @@ and posts each extracted moment as a normal episodic memory. Maturation
 handles importance/topic enrichment on its hourly tick like any other
 row.
 
-Wire it into the agent's session via :func:`wire_postcall_memory`. That
-registers a ``close`` handler which **spawns a detached subprocess** to
-run the extraction. Subprocess (not asyncio task) because the LiveKit
-worker process tears down after the job ends, killing any in-flight
-coroutines on its event loop — which silently lost extractions on short
-calls. The subprocess survives parent shutdown and runs to completion
-in its own process group.
+Wiring (two calls, and they land in different places on purpose):
+
+- :func:`run_postcall_memory` is registered as LiveKit's ``on_session_end`` at *decoration*
+  time — ``@server.rtc_session(agent_name=..., on_session_end=run_postcall_memory)``.
+- :func:`arm_postcall_memory` is called from the *entrypoint*, which is where ``call_sid``
+  and ``speaker_tag`` actually become known. It stashes them on the ``JobContext`` — the
+  per-job object, and the same instance ``on_session_end`` receives.
+
+``on_session_end`` runs **before** ``ShuttingDown``, i.e. before the 10s kill clock starts,
+with the 300s ``session_end_timeout``.
+
+This used to **fork a detached subprocess** (``Popen(..., start_new_session=True)``) for one
+reason: to survive the ``-10`` kill, which was ``sdk/tracing.py`` blocking the event loop
+with a synchronous OTel flush during shutdown. That bug is fixed and covered by tests, so
+the fork is gone. It was expensive (a fresh interpreter and a full SDK re-import per call),
+unobservable (detached, writing to one shared log), and it existed solely to escape a
+deadline that no longer applies.
 
 Failure modes:
 - ``LIVEKIT_VOICE_LOGS`` unset → no-op (no transcript path to read).
@@ -28,13 +38,10 @@ Failure modes:
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import json
 import logging
 import os
-import subprocess
-import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -43,7 +50,6 @@ from typing import Any, Literal
 
 import google.genai as genai
 from google.genai import types as genai_types
-from livekit.agents import AgentSession
 
 from .musubi_client import (
     MusubiClient,
@@ -477,146 +483,128 @@ async def run_extraction(
 # --- wiring -----------------------------------------------------------------
 
 
-def wire_postcall_memory(
-    session: AgentSession,
+# ---------------------------------------------------------------------------
+# Post-call extraction runs on LiveKit's `on_session_end` hook.
+#
+# It used to fork a DETACHED SUBPROCESS — `Popen(..., start_new_session=True)` — for one
+# reason, stated plainly in the old docs: so the work would **survive the -10 kill**.
+#
+# That kill was `sdk/tracing.py` blocking the event loop with a synchronous OTel flush
+# during shutdown (see test_shutdown_flush_does_not_block.py). It is fixed. The subprocess
+# was a workaround engineered *around* a bug, and with the bug gone it is pure cost:
+#
+#   - it forked a fresh Python interpreter per call and re-imported the entire SDK;
+#   - it appended to one shared log file, so failures were invisible per-call;
+#   - it ran detached, so nothing could observe, await, or trace it;
+#   - and it did all that to escape a deadline it no longer needs to escape.
+#
+# `on_session_end` is the sanctioned hook and it is strictly better:
+#
+#   - it runs BEFORE `ShuttingDown` — i.e. before the 10s kill clock starts at all;
+#   - it gets `session_end_timeout` (300s default) instead of 10s;
+#   - it is `async`, so the extraction is simply awaited in-process;
+#   - it receives the SAME JobContext instance the entrypoint got, which is per-job.
+#
+# Two calls, deliberately: `arm_postcall_memory(ctx, ...)` in the entrypoint (which is where
+# call_sid and speaker_tag are actually known), and `run_postcall_memory` registered as
+# `on_session_end` at decoration time (which is before any of that exists). The plan is
+# carried on the JobContext because THAT is the per-job object — a job process can be reused
+# for sequential jobs, so `proc.userdata` would leak state between calls.
+# ---------------------------------------------------------------------------
+
+_CTX_PLAN_ATTR = "_voice_postcall_plan"
+
+
+@dataclass(frozen=True)
+class _PostcallPlan:
+    """What `run_postcall_memory` needs, captured while the call is still up."""
+
+    call_sid: str
+    namespace: str
+    speaker_tag: str | None
+
+
+def arm_postcall_memory(
+    ctx: Any,
     *,
     call_sid: str | None,
     namespace: str | None,
     speaker_tag: str | None,
 ) -> None:
-    """Register a ``close`` handler that runs transcript extraction.
+    """Record what the session-end handler will need. Call from the agent entrypoint.
 
-    Call this AFTER ``wire_postcall_review`` in the agent entrypoint.
-    Both can register on the same session — livekit allows multiple
-    listeners on the ``close`` event.
-
-    No-ops if any of ``call_sid``, ``namespace``, or
-    ``LIVEKIT_VOICE_LOGS`` is missing — those are required for
-    extraction to make sense.
+    No-ops if ``call_sid``, ``namespace`` or ``LIVEKIT_VOICE_LOGS`` is missing — without any
+    of those there is nothing to extract, or nowhere to put it.
     """
     if not call_sid:
-        trace("postcall_memory: no call_sid, not wiring")
+        trace("postcall_memory: no call_sid, not arming")
         return
     if not namespace:
-        trace("postcall_memory: no namespace, not wiring")
+        trace("postcall_memory: no namespace, not arming")
         return
     if _voice_logs() is None:
-        trace("postcall_memory: LIVEKIT_VOICE_LOGS unset, not wiring")
+        trace("postcall_memory: LIVEKIT_VOICE_LOGS unset, not arming")
         return
 
-    @session.on("close")
-    def _on_close(ev: Any) -> None:
-        _spawn_extraction_subprocess(
-            call_sid=call_sid,
-            namespace=namespace,
-            speaker_tag=speaker_tag,
-        )
-
-    trace(f"postcall_memory wired call_sid={call_sid} namespace={namespace}")
+    setattr(
+        ctx,
+        _CTX_PLAN_ATTR,
+        _PostcallPlan(call_sid=call_sid, namespace=namespace, speaker_tag=speaker_tag),
+    )
+    trace(f"postcall_memory armed call_sid={call_sid} namespace={namespace}")
 
 
-# --- subprocess spawn -------------------------------------------------------
+async def run_postcall_memory(ctx: Any) -> None:
+    """LiveKit ``on_session_end`` handler: extract memories from the transcript.
 
+    Register it at decoration time::
 
-def _postcall_logfile() -> Path | None:
-    """Where extraction-subprocess stdout/stderr land. One shared file
-    across all calls — the per-line ``call_sid=`` makes ``grep`` cheap."""
-    base = _voice_logs()
-    return base / "postcall-memory.log" if base else None
+        @server.rtc_session(agent_name=CFG.registration_name, on_session_end=run_postcall_memory)
+        async def entrypoint(ctx: JobContext) -> None:
+            ...
+            arm_postcall_memory(ctx, call_sid=..., namespace=..., speaker_tag=...)
 
-
-def _spawn_extraction_subprocess(
-    *,
-    call_sid: str,
-    namespace: str,
-    speaker_tag: str | None,
-) -> None:
-    """Spawn a detached Python subprocess to run :func:`run_extraction`.
-
-    Uses ``sys.executable -m sdk.postcall_memory`` so the subprocess
-    runs inside the same venv as the parent agent. The child inherits
-    the parent's environment (Gemini key, Musubi base URL + token,
-    voice-logs dir) so no extra wiring is needed.
-
-    Failures to spawn (FileNotFoundError, PermissionError, OSError)
-    log at ERROR but do not raise — Path B is best-effort.
+    Runs before ``ShuttingDown``, with the 300s ``session_end_timeout`` — not inside the 10s
+    shutdown budget. Never raises: a failed extraction must not take the job down with it.
     """
-    logfile = _postcall_logfile()
+    plan: _PostcallPlan | None = getattr(ctx, _CTX_PLAN_ATTR, None)
+    if plan is None:
+        trace("postcall_memory: session ended with no plan armed — nothing to extract")
+        return
 
-    args = [
-        sys.executable,
-        "-m",
-        "sdk.postcall_memory",
-        "--call-sid",
-        call_sid,
-        "--namespace",
-        namespace,
-    ]
-    if speaker_tag:
-        args.extend(["--speaker-tag", speaker_tag])
-
+    trace(f"postcall_memory: extracting call_sid={plan.call_sid}")
     try:
-        if logfile is not None:
-            # Parent opens, passes fd to child via Popen's dup, closes its
-            # own copy. Child keeps its dup until it exits naturally.
-            with logfile.open("a", encoding="utf-8") as fp:
-                subprocess.Popen(
-                    args,
-                    stdin=subprocess.DEVNULL,
-                    stdout=fp,
-                    stderr=fp,
-                    start_new_session=True,
-                    close_fds=True,
-                )
-        else:
-            subprocess.Popen(
-                args,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-                close_fds=True,
-            )
-        trace(f"postcall_memory: spawned subprocess call_sid={call_sid}")
-        logger.info("postcall_memory: spawned subprocess call_sid=%s", call_sid)
-    except Exception as exc:
-        logger.error("postcall_memory: failed to spawn subprocess: %s", exc)
-        trace(f"postcall_memory: spawn failed call_sid={call_sid}: {exc}")
-
-
-# --- CLI entry --------------------------------------------------------------
-
-
-def _cli_main() -> int:
-    """``python -m sdk.postcall_memory --call-sid X --namespace Y [--speaker-tag Z]``
-
-    Subprocess entry. Logs to whatever stdout/stderr was inherited by the
-    spawn — typically ``$LIVEKIT_VOICE_LOGS/postcall-memory.log`` per
-    :func:`_spawn_extraction_subprocess`. Exits 0 on completion (incl.
-    no_transcript / empty_extraction); 2 on argparse errors.
-    """
-    parser = argparse.ArgumentParser(prog="sdk.postcall_memory")
-    parser.add_argument("--call-sid", required=True)
-    parser.add_argument("--namespace", required=True)
-    parser.add_argument("--speaker-tag", default=None)
-    args = parser.parse_args()
-
-    # Subprocess inherits no logging handlers; configure a minimal one so
-    # logger.info / logger.error lines actually reach the inherited stderr.
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
-
-    asyncio.run(
-        run_extraction(
-            call_sid=args.call_sid,
-            namespace=args.namespace,
-            speaker_tag=args.speaker_tag,
+        captured = await run_extraction(
+            call_sid=plan.call_sid,
+            namespace=plan.namespace,
+            speaker_tag=plan.speaker_tag,
         )
-    )
-    return 0
+    except Exception as exc:
+        # In-process now, so a failure is finally VISIBLE — the detached subprocess used to
+        # swallow this into a shared log nobody read.
+        logger.error(
+            "postcall_memory: extraction failed call_sid=%s: %s",
+            plan.call_sid,
+            exc,
+            exc_info=True,
+        )
+        trace(f"postcall_memory: extraction failed call_sid={plan.call_sid}: {exc}")
+        return
+
+    logger.info("postcall_memory: captured %d memories call_sid=%s", captured, plan.call_sid)
+    trace(f"postcall_memory: captured={captured} call_sid={plan.call_sid}")
 
 
-if __name__ == "__main__":
-    sys.exit(_cli_main())
+# The detached-subprocess machinery that used to live here is GONE.
+#
+# `_postcall_logfile()`, `_spawn_extraction_subprocess()`, `_cli_main()` and the
+# `if __name__ == "__main__"` CLI existed for exactly one reason: to fork the extraction out
+# of the job process so it would SURVIVE the -10 kill.
+#
+# The kill was a synchronous OTel flush blocking the event loop during shutdown
+# (sdk/tracing.py). It is fixed and covered by tests. With the bug gone, forking a fresh
+# Python interpreter per call — re-importing the whole SDK, writing to a shared log nobody
+# read, detached from any supervision — is cost with no benefit.
+#
+# Extraction now runs in-process on `on_session_end`, before the kill clock starts, with a
+# 300s budget instead of 10s, and its failures are finally visible.

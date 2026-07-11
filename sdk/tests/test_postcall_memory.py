@@ -498,78 +498,108 @@ async def test_run_extraction_auth_failure_logs_distinct_status(
     )
 
 
-# --- _spawn_extraction_subprocess ------------------------------------------
+# --- on_session_end: the sanctioned hook that replaced the detached subprocess ----------
+#
+# The three tests that used to live here drove `_spawn_extraction_subprocess` — a
+# `Popen(..., start_new_session=True)` fork whose ONLY purpose was to outlive the `-10`
+# kill. That kill was a synchronous OTel flush blocking the event loop during shutdown
+# (sdk/tracing.py); it is fixed and covered by test_shutdown_flush_does_not_block.py.
+#
+# So the fork is gone, and with it the tests that asserted its argv. What replaces them is
+# the actual contract: arm the plan on the per-job JobContext during the call, and run the
+# extraction in-process on `on_session_end` — which fires BEFORE `ShuttingDown`, with a 300s
+# budget instead of 10s.
 
 
-def test_spawn_extraction_subprocess_invokes_popen_with_correct_args(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The spawn helper should call subprocess.Popen with the expected
-    `python -m sdk.postcall_memory` invocation, in detached mode."""
-    monkeypatch.setenv("LIVEKIT_VOICE_LOGS", str(tmp_path))
-    captured: dict[str, Any] = {}
+class _Ctx:
+    """Stand-in for JobContext. The real one is the SAME instance in the entrypoint and in
+    on_session_end, which is exactly why the plan can ride on it."""
 
-    def fake_popen(args: list[str], **kwargs: Any) -> MagicMock:
-        captured["args"] = args
-        captured["kwargs"] = kwargs
-        return MagicMock()
 
-    with patch("sdk.postcall_memory.subprocess.Popen", side_effect=fake_popen):
-        postcall_memory._spawn_extraction_subprocess(
-            call_sid="test-sid",
-            namespace="nyla/voice/episodic",
-            speaker_tag="nyla-voice",
+@pytest.mark.asyncio
+async def test_arm_then_run_extracts_with_the_armed_plan(monkeypatch) -> None:
+    """The entrypoint arms; the session-end hook runs. That is the whole contract."""
+    monkeypatch.setenv("LIVEKIT_VOICE_LOGS", "/tmp")
+    ctx = _Ctx()
+    postcall_memory.arm_postcall_memory(
+        ctx, call_sid="sid-1", namespace="aoi/voice/episodic", speaker_tag="aoi"
+    )
+
+    seen: dict[str, Any] = {}
+
+    async def fake_run_extraction(**kwargs: Any) -> int:
+        seen.update(kwargs)
+        return 3
+
+    with patch.object(postcall_memory, "run_extraction", side_effect=fake_run_extraction):
+        await postcall_memory.run_postcall_memory(ctx)
+
+    assert seen["call_sid"] == "sid-1"
+    assert seen["namespace"] == "aoi/voice/episodic"
+    assert seen["speaker_tag"] == "aoi"
+
+
+@pytest.mark.asyncio
+async def test_run_without_arming_is_a_clean_no_op() -> None:
+    """A job that never armed (no call_sid, no transcript) must not explode at session end."""
+    with patch.object(postcall_memory, "run_extraction") as run:
+        await postcall_memory.run_postcall_memory(_Ctx())
+    run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_extraction_never_takes_the_job_down(monkeypatch) -> None:
+    """Extraction is now IN-PROCESS. A raise here would propagate into LiveKit's teardown.
+
+    The old detached subprocess could not take the job down because it was detached — it
+    also meant nobody ever saw it fail. In-process failures are visible AND contained.
+    """
+    monkeypatch.setenv("LIVEKIT_VOICE_LOGS", "/tmp")
+    ctx = _Ctx()
+    postcall_memory.arm_postcall_memory(
+        ctx, call_sid="sid-2", namespace="nyla/voice/episodic", speaker_tag="nyla"
+    )
+
+    async def boom(**_: Any) -> int:
+        raise RuntimeError("gemini is down")
+
+    with patch.object(postcall_memory, "run_extraction", side_effect=boom):
+        await postcall_memory.run_postcall_memory(ctx)  # must not raise
+
+
+def test_arming_is_skipped_without_the_things_extraction_needs(monkeypatch) -> None:
+    """No call_sid / no namespace / no LIVEKIT_VOICE_LOGS => nothing to extract."""
+    monkeypatch.setenv("LIVEKIT_VOICE_LOGS", "/tmp")
+
+    ctx = _Ctx()
+    postcall_memory.arm_postcall_memory(ctx, call_sid=None, namespace="ns", speaker_tag="t")
+    assert not hasattr(ctx, postcall_memory._CTX_PLAN_ATTR)
+
+    ctx = _Ctx()
+    postcall_memory.arm_postcall_memory(ctx, call_sid="sid", namespace=None, speaker_tag="t")
+    assert not hasattr(ctx, postcall_memory._CTX_PLAN_ATTR)
+
+    monkeypatch.delenv("LIVEKIT_VOICE_LOGS", raising=False)
+    ctx = _Ctx()
+    postcall_memory.arm_postcall_memory(ctx, call_sid="sid", namespace="ns", speaker_tag="t")
+    assert not hasattr(ctx, postcall_memory._CTX_PLAN_ATTR)
+
+
+def test_the_agents_register_extraction_on_session_end_not_a_shutdown_callback() -> None:
+    """Guard-rail: all four agents must use `on_session_end`.
+
+    A shutdown callback would put extraction back inside the 10s kill budget, alongside the
+    OTel flush and delete_room — which is how the detached-subprocess workaround came to
+    exist in the first place. `on_session_end` runs BEFORE that clock starts, with 300s.
+    """
+    import re
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    for agent in ("aoi", "nyla", "yua", "sumi"):
+        src = (repo / "agents" / agent / "src" / "agent.py").read_text()
+        assert re.search(r"on_session_end\s*=\s*run_postcall_memory", src), (
+            f"{agent} does not register run_postcall_memory as on_session_end. Extraction "
+            f"must not run inside the 10s shutdown budget."
         )
-
-    args = captured["args"]
-    # python -m sdk.postcall_memory --call-sid X --namespace Y --speaker-tag Z
-    assert args[1:3] == ["-m", "sdk.postcall_memory"]
-    assert "--call-sid" in args and "test-sid" in args
-    assert "--namespace" in args and "nyla/voice/episodic" in args
-    assert "--speaker-tag" in args and "nyla-voice" in args
-
-    # Detached spawn
-    assert captured["kwargs"]["start_new_session"] is True
-    assert captured["kwargs"]["close_fds"] is True
-
-
-def test_spawn_extraction_subprocess_omits_speaker_tag_when_none(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setenv("LIVEKIT_VOICE_LOGS", str(tmp_path))
-    captured: dict[str, Any] = {}
-
-    def fake_popen(args: list[str], **kwargs: Any) -> MagicMock:
-        captured["args"] = args
-        return MagicMock()
-
-    with patch("sdk.postcall_memory.subprocess.Popen", side_effect=fake_popen):
-        postcall_memory._spawn_extraction_subprocess(
-            call_sid="test-sid",
-            namespace="nyla/voice/episodic",
-            speaker_tag=None,
-        )
-
-    args = captured["args"]
-    assert "--speaker-tag" not in args
-
-
-def test_spawn_extraction_subprocess_swallows_popen_failure(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A failure to spawn (e.g. permission, missing binary) should log
-    but not raise — Path B is best-effort and can't break the close
-    handler that calls it."""
-    monkeypatch.setenv("LIVEKIT_VOICE_LOGS", str(tmp_path))
-
-    with patch(
-        "sdk.postcall_memory.subprocess.Popen",
-        side_effect=PermissionError("denied"),
-    ):
-        # Should NOT raise — that would propagate into the session.on('close')
-        # handler and be silent on the user side.
-        postcall_memory._spawn_extraction_subprocess(
-            call_sid="test-sid",
-            namespace="nyla/voice/episodic",
-            speaker_tag="nyla-voice",
-        )
+        assert "add_shutdown_callback(run_postcall_memory" not in src
