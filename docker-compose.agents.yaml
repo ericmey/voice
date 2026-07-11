@@ -8,7 +8,20 @@
 # `${VAR}` in an `environment:` block interpolates from the shell and .env,
 # never from env_file, so it would silently resolve to "".
 x-agent-common: &agent-common
-  image: voice-agent:latest
+  # Pinned by COMMIT, not `latest`. `make deploy` / `make cycle` set VOICE_AGENT_IMAGE.
+  #
+  # With a bare `latest`, `docker compose up -d` does not recreate a container — the config
+  # text is unchanged — so rebuilding one agent moved the tag while the others kept running
+  # the old image. That produced a live split-brain on 2026-07-11 (sumi on a new build, her
+  # three sisters on yesterday's), and a reboot would have silently pulled them onto SDK code
+  # they had never run.
+  #
+  # The four agents SHARE the SDK. Shared code demands lockstep deploys, and a version in the
+  # image tag is what makes compose enforce that instead of merely intending it.
+  #
+  # The default is deliberately an invalid tag: deploying without going through the Makefile
+  # should FAIL LOUDLY, not silently fall back to `latest` and reintroduce the drift.
+  image: ${VOICE_AGENT_IMAGE:?run `make deploy` or `make cycle` — never `docker compose up` directly, or you get the split-brain back}
   env_file: [secrets/livekit-agents.env]
   # Wait for the server to be healthy (not merely started) so agents don't
   # attempt worker registration before signaling is up.
@@ -16,6 +29,21 @@ x-agent-common: &agent-common
     livekit-server:
       condition: service_healthy
   restart: unless-stopped
+  # Every agent already serves LiveKit's health endpoint on its own port — and NOTHING was
+  # checking it. `docker inspect` reported health=NONE on all four, so a wedged agent (one
+  # that is up, registered, and no longer answering) looked exactly like a healthy one.
+  #
+  # AGENT_PORT is set per-service below. The check hits the agent's OWN port; curl is in the
+  # image (wget is not — verified, rather than assumed).
+  #
+  # start_period covers prewarm: sumi loads the Silero ONNX model in setup_fnc before she is
+  # ready, and a healthcheck that fires during that would flap her on every deploy.
+  healthcheck:
+    test: ["CMD-SHELL", "curl -fsS --max-time 3 http://localhost:${AGENT_PORT}/ || exit 1"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 40s
   volumes:
     # Transcripts, trace, telemetry, call-reviews and the post-call memory log
     # all resolve under LIVEKIT_VOICE_LOGS. Bind-mounted so they outlive the
@@ -41,6 +69,9 @@ services:
     environment:
       <<: *agent-env
       AGENT: aoi
+      # Must match AgentServer(port=...) in agents/aoi/src/agent.py — the healthcheck
+      # above probes it. A test asserts the two never drift apart.
+      AGENT_PORT: "8082"
 
   agent-nyla:
     <<: *agent-common
@@ -48,6 +79,9 @@ services:
     environment:
       <<: *agent-env
       AGENT: nyla
+      # Must match AgentServer(port=...) in agents/nyla/src/agent.py — the healthcheck
+      # above probes it. A test asserts the two never drift apart.
+      AGENT_PORT: "8081"
 
   agent-yua:
     <<: *agent-common
@@ -55,6 +89,9 @@ services:
     environment:
       <<: *agent-env
       AGENT: yua
+      # Must match AgentServer(port=...) in agents/yua/src/agent.py — the healthcheck
+      # above probes it. A test asserts the two never drift apart.
+      AGENT_PORT: "8085"
 
   agent-sumi:
     <<: *agent-common
@@ -62,3 +99,6 @@ services:
     environment:
       <<: *agent-env
       AGENT: sumi
+      # Must match AgentServer(port=...) in agents/sumi/src/agent.py — the healthcheck
+      # above probes it. A test asserts the two never drift apart.
+      AGENT_PORT: "8083"

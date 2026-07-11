@@ -180,3 +180,57 @@ def test_the_entrypoint_maps_a_bearer_for_every_agent() -> None:
         f"scripts/agent-entrypoint.sh has no Musubi bearer mapping for: {missing}. "
         f"That agent exits 64 at container start."
     )
+
+
+# ---------------------------------------------------------------------------
+# The health port is declared twice. Pin the two together.
+#
+# `AgentServer(port=8081)` in agents/nyla/src/agent.py, and `AGENT_PORT: "8081"` in
+# docker-compose.agents.yaml (which the container healthcheck probes).
+#
+# Two declarations of one fact is exactly the shape that produced every identity bug in this
+# codebase. If they drift, the healthcheck probes a port nobody is listening on — and the
+# container is marked UNHEALTHY and restarted, forever, while the agent inside is perfectly
+# fine. A monitoring bug that manufactures the outage it is watching for.
+# ---------------------------------------------------------------------------
+
+COMPOSE = REPO_ROOT / "docker-compose.agents.yaml"
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+def test_the_healthcheck_port_matches_the_port_the_agent_listens_on(agent: str) -> None:
+    """AGENT_PORT in compose must equal AgentServer(port=...) in the agent's source."""
+    src = (REPO_ROOT / "agents" / agent / "src" / "agent.py").read_text()
+    m = re.search(r"AgentServer\(\s*port\s*=\s*(\d+)", src)
+    assert m, f"{agent} does not call AgentServer(port=...)"
+    listens_on = m.group(1)
+
+    compose = COMPOSE.read_text()
+    block = re.search(rf"AGENT:\s*{agent}\b(?:.*?\n)*?\s*AGENT_PORT:\s*\"(\d+)\"", compose)
+    assert block, f"docker-compose.agents.yaml declares no AGENT_PORT for {agent}"
+    probed = block.group(1)
+
+    assert probed == listens_on, (
+        f"{agent} listens on {listens_on} but the container healthcheck probes {probed}. "
+        f"The healthcheck would fail forever against a perfectly healthy agent, and docker "
+        f"would restart her on a loop — a monitoring bug that manufactures the outage it is "
+        f"watching for."
+    )
+
+
+def test_no_two_agents_share_a_health_port() -> None:
+    """A port collision would make one agent's healthcheck pass on her sister's server."""
+    ports: dict[str, str] = {}
+    for agent in AGENTS:
+        src = (REPO_ROOT / "agents" / agent / "src" / "agent.py").read_text()
+        m = re.search(r"AgentServer\(\s*port\s*=\s*(\d+)", src)
+        assert m
+        ports[agent] = m.group(1)
+
+    seen: dict[str, str] = {}
+    for agent, port in ports.items():
+        assert port not in seen, (
+            f"{agent} and {seen[port]} both listen on {port} — one agent's healthcheck would "
+            f"be answered by the other's server."
+        )
+        seen[port] = agent

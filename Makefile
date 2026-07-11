@@ -59,16 +59,44 @@ register-sip: ## Register/refresh SIP trunk + dispatch rules from ./config/ (or 
 # every trace report service.version=dev.
 VOICE_SERVICE_VERSION ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 
-build-agent: ## Build the voice-agent:latest image from Dockerfile.agent
+# The image is tagged with the COMMIT, not just `latest`.
+#
+# `latest` alone produced a split-brain on 2026-07-11: sumi was rebuilt and recreated, which
+# moved the `latest` tag — while aoi/nyla/yua kept running the OLD image, because
+# `docker compose up -d` only recreates a container whose CONFIG TEXT changed, and
+# `image: voice-agent:latest` never changes. Three agents on one build, one agent on another,
+# and a reboot would have silently dragged the other three onto code they had never run.
+#
+# That matters more here than in most stacks: the four agents SHARE the SDK. A change to
+# sdk/config.py or sdk/postcall_memory.py is a change to all four. Shared code demands
+# LOCKSTEP deploys, and the deploy has to make that unavoidable rather than merely intended.
+#
+# So compose now sees `voice-agent:$(VOICE_SERVICE_VERSION)` — a new commit is a new tag is a
+# config change is a recreate of ALL FOUR. `latest` stays as a human convenience alias and is
+# never what compose runs.
+build-agent: ## Build voice-agent:<sha> (and tag it latest for convenience)
 	docker build -f Dockerfile.agent \
 		--build-arg VOICE_SERVICE_VERSION=$(VOICE_SERVICE_VERSION) \
+		-t voice-agent:$(VOICE_SERVICE_VERSION) \
 		-t voice-agent:latest .
 
-deploy: build-agent ## Build the image + bring up infra and the four agents
-	docker compose -f docker-compose.yaml -f docker-compose.agents.yaml up -d
+deploy: build-agent ## Build the image + bring up infra and the four agents (lockstep)
+	VOICE_AGENT_IMAGE=voice-agent:$(VOICE_SERVICE_VERSION) \
+		docker compose -f docker-compose.yaml -f docker-compose.agents.yaml up -d
 
-cycle: build-agent ## Rebuild the image + recreate the agent containers (picks up code changes)
-	docker compose -f docker-compose.yaml -f docker-compose.agents.yaml up -d
+cycle: build-agent ## Rebuild + recreate ALL FOUR agents on the new commit (lockstep)
+	VOICE_AGENT_IMAGE=voice-agent:$(VOICE_SERVICE_VERSION) \
+		docker compose -f docker-compose.yaml -f docker-compose.agents.yaml up -d
+
+version: ## Print the image tag this working tree would deploy
+	@echo "voice-agent:$(VOICE_SERVICE_VERSION)"
+
+drift: ## Are all four agents running the SAME image? (the split-brain check)
+	@echo "  deployable: voice-agent:$(VOICE_SERVICE_VERSION)"
+	@for a in aoi nyla yua sumi; do \
+	  printf "  %-5s %s\n" "$$a" "$$(sudo docker inspect voice-agent-$$a --format '{{.Config.Image}}' 2>/dev/null || echo '(not running)')"; \
+	done
+	@echo "  -> all four must show the SAME tag. They share the SDK; a split is untested code in production."
 
 # ---- observability -------------------------------------------------
 

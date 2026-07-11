@@ -147,6 +147,18 @@ if [[ "$FORMAT" == "json" ]]; then
   printf '{"failed":%d,"checks":%s}\n' "$failed" "$items_json"
 else
   if [[ $failed -eq 0 ]] && $QUIET; then
+    # A HEARTBEAT, not silence.
+    #
+    # This used to `exit 0` printing nothing, so a healthy run left no trace. The cron log
+    # was therefore EMPTY after ~250 runs — and an empty log means "everything is fine" and
+    # "cron has been dead for a week" in exactly the same way. You cannot tell them apart,
+    # which makes the monitor indistinguishable from a corpse. (It WAS running; I verified
+    # 260 executions in syslog. But I could only verify that by going and looking, which is
+    # the thing a monitor is supposed to save you from.)
+    #
+    # One compact line per healthy run. Now SILENCE MEANS BROKEN, which is the only reading
+    # that is safe to act on. ~288 lines/day; logrotate handles it.
+    printf '[%s] ok — %d checks passed\n' "$(date -Is)" "${#RESULTS[@]}"
     exit 0
   fi
   printf '%-18s %-6s %s\n' CHECK STATUS DETAIL
