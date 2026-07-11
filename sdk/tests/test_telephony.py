@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -14,11 +15,35 @@ from sdk.telephony import (
 
 
 def _make_ctx(metadata: str | None, participants: dict) -> MagicMock:
-    """Build a fake JobContext sufficient for resolve_caller()."""
+    """Build a fake JobContext sufficient for resolve_caller().
+
+    `resolve_caller` now uses LiveKit's own `ctx.wait_for_participant(kind=...)` instead of a
+    hand-rolled 50ms polling loop over `room.remote_participants`.
+
+    The fake must behave like the REAL one, or these tests prove nothing. Two properties of
+    the real API matter here, both read out of the shipped wheel rather than assumed:
+
+    1. "If the participant has already joined, the function will return immediately." That is
+       the normal case for SIP — livekit-sip creates the room and the caller joins BEFORE the
+       agent is dispatched. A fake that only resolved on a future join would have passed while
+       the real thing hung every call.
+    2. It has NO timeout — it waits forever. `resolve_caller` bounds it with `asyncio.wait_for`
+       so a call that never fully connects cannot hang the job. So the fake must also never
+       return on its own when there is no match: the timeout is what has to fire.
+    """
     ctx = MagicMock()
     ctx.job.metadata = metadata
     ctx.room.name = "test-room"
     ctx.room.remote_participants = participants
+
+    async def _wait_for_participant(*, identity=None, kind=None):
+        wanted = kind if isinstance(kind, list) else [kind]
+        for p in participants.values():
+            if p.kind in wanted:
+                return p  # already joined -> immediate, like the real API
+        await asyncio.Event().wait()  # no match -> block forever; the timeout must fire
+
+    ctx.wait_for_participant = _wait_for_participant
     return ctx
 
 

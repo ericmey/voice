@@ -60,25 +60,36 @@ class CallerInfo:
 
 
 async def _wait_for_sip_participant(
-    room: rtc.Room,
+    ctx: JobContext,
     timeout: float,
 ) -> rtc.RemoteParticipant | None:
-    """Poll remote_participants for a SIP-kind participant.
+    """Wait for the SIP caller, event-driven, bounded.
 
-    Returns the first one found or None on timeout. A polling loop is
-    fine here: in the normal case the SIP participant is already in the
-    room by the time we check, so we return on the first iteration.
+    This was a 50ms polling loop over ``room.remote_participants``. LiveKit already provides
+    ``ctx.wait_for_participant(kind=...)``, which is event-driven and does the kind-filtering
+    natively — so the loop was re-implementing the framework.
+
+    **Correcting an audit finding rather than repeating it:** this was reported as "up to 5s
+    of dead air before the session starts". That is wrong, and worth saying plainly. The 5s is
+    the *timeout*, and it applies to either implementation — if no SIP participant ever
+    arrives, both wait the full budget. The polling loop's real cost was its 50ms granularity:
+    a caller who joins just after a scan waits up to 50ms extra. Not 5 seconds. Fifty
+    milliseconds.
+
+    It is still worth replacing — event-driven wakes immediately, and deleting a hand-rolled
+    version of something the framework ships is a straight win. But it is a tidy-up, not the
+    latency bug it was billed as, and shipping it under the wrong justification would leave
+    the next person hunting a 5-second stall that was never there.
+
+    ``ctx.wait_for_participant`` has **no timeout** — it waits forever — so it cannot be a
+    drop-in. Bounded here with ``asyncio.wait_for``: the caller must fall back to
+    ``source="unknown"`` rather than hang a job on a call that never fully connected.
     """
-
-    async def _scan() -> rtc.RemoteParticipant:
-        while True:
-            for p in room.remote_participants.values():
-                if p.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
-                    return p
-            await asyncio.sleep(0.05)
-
     try:
-        return await asyncio.wait_for(_scan(), timeout=timeout)
+        return await asyncio.wait_for(
+            ctx.wait_for_participant(kind=rtc.ParticipantKind.PARTICIPANT_KIND_SIP),
+            timeout=timeout,
+        )
     except TimeoutError:
         return None
 
@@ -117,7 +128,7 @@ async def resolve_caller(
 
     Call AFTER ``await ctx.connect()``.
     """
-    participant = await _wait_for_sip_participant(ctx.room, sip_wait_seconds)
+    participant = await _wait_for_sip_participant(ctx, sip_wait_seconds)
     if participant is not None:
         return _caller_info_from_sip_participant(participant)
 
