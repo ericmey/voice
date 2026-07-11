@@ -1,0 +1,168 @@
+"""Don't listen while you talk. The speakerphone is a loop, and she was closing it.
+
+2026-07-11, the first real call. Eric was on speakerphone. Her voice came out of his phone,
+went back into his microphone, travelled up the SIP leg, and arrived at Gemini as CALLER
+AUDIO. The session logged ``user_state=speaking`` for 57.69–73.54 — the exact window she was
+speaking (58.08–73.55) — and then registered **nothing at all** when Eric actually spoke.
+
+She was listening to herself. Her VAD is configured ``START_SENSITIVITY_HIGH`` ("commit to
+user speech faster"), which is the worst possible setting into a loop: it latches onto the
+echo instantly. She spent her whole turn believing she was being interrupted, and came out of
+it with the input pipeline wedged. Eric said "hello?" four times into the silence.
+
+THE FIX IS TO OPEN THE LOOP: while she is speaking, her microphone is closed.
+
+That is half-duplex — the oldest remedy in telephony, and the one Eric remembered before I
+found it. It is not a heuristic that tries to *recognise* her own voice and subtract it; it
+removes the path. There is nothing to recognise, because nothing arrives.
+
+WHY NOT NOISE CANCELLATION? Because we cannot have it. LiveKit's enhanced noise cancellation
+(``BVCTelephony``) is the documented answer for exactly this, and its package metadata says
+plainly: **"Requires LiveKit Cloud."** We self-host on mizuki. I checked the wheel rather than
+assume, and it is not available to us. (If the stack ever moves to Cloud, BVC is strictly
+better than this — it cancels the echo without closing the mic, so barge-in survives.)
+
+THE COST, STATED PLAINLY: while she is speaking, you cannot interrupt her.
+
+That is a real loss and I am not going to pretend otherwise. But barge-in was already broken
+on this path — the call recorded ``interruptions: 0`` — and the choice is not
+"barge-in vs. no barge-in". It is "no barge-in" vs. "no barge-in AND the call wedges into 98
+seconds of silence". A caller who must wait for her to finish is inconvenienced. A caller
+talking to a dead line is abandoned.
+
+``RELEASE_DELAY_S`` matters as much as the gate: audio does not stop at the instant she does.
+Reopening the mic the moment her turn ends lets the tail — the last syllable still coming out
+of the speaker, plus room reverb — straight back in, which is the same bug with a shorter
+window.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import time
+from dataclasses import dataclass
+from typing import Any
+
+from sdk.trace import trace
+
+logger = logging.getLogger("voice.agent")
+
+# How long to keep the caller's mic closed AFTER she stops speaking. Covers the audio still
+# in flight down the SIP leg and coming out of the speaker, plus room reverb. Too short and
+# the echo tail re-opens the loop; too long and we clip the caller's first word.
+RELEASE_DELAY_S = 0.4
+
+# Half-duplex is ON by default. Every one of these agents is a TELEPHONE agent, and Eric uses
+# a speakerphone. The failure it prevents is total (a dead call); the cost it imposes is
+# partial (no barge-in). Default to the safe side and let the env turn it off.
+ENV_FLAG = "VOICE_HALF_DUPLEX"
+
+
+def half_duplex_enabled() -> bool:
+    return (os.environ.get(ENV_FLAG, "1").strip().lower()) not in ("0", "false", "no", "off")
+
+
+@dataclass
+class DuplexState:
+    """Observable, so a call can be audited afterwards rather than guessed about."""
+
+    enabled: bool
+    gate_closures: int = 0
+    input_open: bool = True
+
+
+def wire_half_duplex(
+    session: Any,
+    *,
+    call_sid: str | None,  # None on a non-SIP job; only ever used for logging
+    agent_name: str,
+    enabled: bool | None = None,
+    release_delay_s: float = RELEASE_DELAY_S,
+    sleep: Any = asyncio.sleep,
+) -> DuplexState:
+    """Close the caller's mic while the agent speaks. Returns state for tests/telemetry."""
+    is_on = half_duplex_enabled() if enabled is None else enabled
+    state = DuplexState(enabled=is_on)
+
+    if not is_on:
+        logger.warning(
+            "half-duplex DISABLED (%s=0) for call_sid=%s — the agent will hear her own audio "
+            "back through a speakerphone, and that is what wedged the 2026-07-11 call",
+            ENV_FLAG,
+            call_sid,
+        )
+        return state
+
+    release_task: asyncio.Task[None] | None = None
+
+    def _set_input(open_: bool) -> None:
+        try:
+            session.input.set_audio_enabled(open_)
+            state.input_open = open_
+        except Exception as exc:  # noqa: BLE001 — never let the gate kill the call
+            logger.error("half-duplex: could not toggle input audio: %s", exc)
+
+    async def _reopen_after_tail() -> None:
+        # The tail is the whole point. Her last syllable is still leaving his speaker when
+        # LiveKit says she stopped; reopening now feeds it straight back in.
+        await sleep(release_delay_s)
+        _set_input(True)
+
+    @session.on("agent_state_changed")
+    def _on_agent_state(event: Any) -> None:
+        nonlocal release_task
+        new = str(getattr(event, "new_state", ""))
+
+        if new == "speaking":
+            if release_task is not None and not release_task.done():
+                release_task.cancel()
+                release_task = None
+            if state.input_open:
+                state.gate_closures += 1
+                _set_input(False)
+                trace(f"half-duplex: mic closed (agent speaking) call_sid={call_sid}")
+            return
+
+        if not state.input_open and release_task is None:
+            release_task = asyncio.create_task(
+                _reopen_after_tail(), name=f"half-duplex-release-{call_sid}"
+            )
+
+    @session.on("close")
+    def _on_close(_event: Any = None) -> None:
+        nonlocal release_task
+        if release_task is not None and not release_task.done():
+            release_task.cancel()
+        # Leave input enabled on the way out; a closed mic must never outlive the gate.
+        _set_input(True)
+        logger.info(
+            "half-duplex: call ended (call_sid=%s agent=%s, mic closed %d times)",
+            call_sid,
+            agent_name,
+            state.gate_closures,
+        )
+
+    logger.info(
+        "half-duplex ENABLED for call_sid=%s agent=%s (release tail %.2fs) — the caller cannot "
+        "interrupt while she speaks; this is what keeps her own audio off the input path",
+        call_sid,
+        agent_name,
+        release_delay_s,
+    )
+    return state
+
+
+# Kept deliberately: the moment this stack moves to LiveKit Cloud, this is the better fix.
+BVC_NOTE = (
+    "livekit-plugins-noise-cancellation (BVCTelephony) cancels far-end echo WITHOUT closing "
+    "the mic, so barge-in survives. Its metadata states 'Requires LiveKit Cloud' — verified "
+    "against the wheel on 2026-07-11, not assumed. We self-host, so it is unavailable. If the "
+    "deployment ever moves to Cloud: pass noise_cancellation=BVCTelephony() in RoomInputOptions "
+    "and half-duplex can be turned off."
+)
+
+
+def time_now() -> float:  # pragma: no cover - trivial seam for tests
+    return time.monotonic()

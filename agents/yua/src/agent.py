@@ -17,6 +17,8 @@ from sdk.audio_recording import (
     wire_call_audio_attachment,
 )
 from sdk.config import assert_agent_identity
+from sdk.duplex import wire_half_duplex
+from sdk.liveness import wire_liveness_watchdog
 from sdk.musubi_client import wire_musubi_shutdown
 from sdk.postcall import wire_postcall_review
 from sdk.postcall_memory import arm_postcall_memory, run_postcall_memory
@@ -106,6 +108,17 @@ async def entrypoint(ctx: JobContext) -> None:
     wire_transcript_logging(session, transcript_sid, agent_name=reg)
     wire_telemetry_capture(session, transcript_sid, agent_name=reg)
     wire_postcall_review(session, transcript_sid, agent_name=reg)
+
+    # HALF-DUPLEX: close the caller's mic while she speaks. On a speakerphone her own voice
+    # returns through his microphone and arrives as caller input — that is what wedged the
+    # 2026-07-11 call. Costs barge-in; prevents the loop. (sdk/duplex.py)
+    wire_half_duplex(session, call_sid=transcript_sid, agent_name=reg)
+
+    # DEAD-AIR WATCHDOG: a silent call must never look like a healthy one. Runs on its own
+    # clock, and user VAD deliberately CANNOT satisfy it — on that call the VAD was being fed
+    # by her own echo, so a watchdog trusting it would have been kept alive by the very fault
+    # it exists to catch. (sdk/liveness.py)
+    wire_liveness_watchdog(session, ctx, call_sid=transcript_sid, agent_name=reg)
     arm_postcall_memory(
         ctx,
         call_sid=transcript_sid,
