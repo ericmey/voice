@@ -74,6 +74,11 @@ class FakeSession:
         self.generate_reply_fails = generate_reply_fails
         self.reply_never_completes = False
         self.handles: list[FakeSpeechHandle] = []
+        # aclose() behaviour, modelled on the installed AgentSession._aclose_impl:
+        #   force-interrupt -> drain -> AWAIT activity.current_speech -> emit("close")
+        #   -> MORE CLEANUP (room_io, forward-audio tasks, toolsets)
+        self.aclose_never_completes = False
+        self.cleanup_finished = False
 
     def on(self, event: str):
         def _register(fn):
@@ -114,7 +119,29 @@ class FakeSession:
         return handle
 
     async def aclose(self) -> None:
+        """Modelled on the REAL `_aclose_impl`, which the old fake did not resemble at all.
+
+        Two things the old one-liner could not express, and both were P0s:
+
+        1. It AWAITS uninterruptible speech (`activity.current_speech`). On a wedged realtime
+           path that never returns — so an unbounded `await session.aclose()` blocks forever
+           and the `finally` holding `ctx.shutdown` is never reached. The wedge simply MOVED
+           from the recovery await into the close await.
+
+        2. It emits `close` PART WAY THROUGH and then does more cleanup. If the watchdog's own
+           close handler cancels the watch task, and the watch task is the one sitting inside
+           `aclose()`, it cancels its own caller and the remaining teardown is aborted at the
+           next await.
+
+        (Yua, both verified against the installed LiveKit source.)
+        """
+        if self.aclose_never_completes:
+            await asyncio.Event().wait()  # uninterruptible speech that never finishes
+
         self.closed = True
+        self.emit("close", None)  # <- mid-close, exactly as LiveKit does
+        await asyncio.sleep(0)  # the next await, where a stray cancel would land
+        self.cleanup_finished = True  # room_io / forward-audio / toolsets
 
 
 def _ctx() -> Any:
@@ -481,3 +508,99 @@ async def test_closing_during_a_wedged_recovery_does_not_double_close() -> None:
     assert not state.hung_up, "the watchdog kept running after the call closed"
     assert len(ctx.shutdowns) == 0, "it shut the job down after the session had already closed"
     assert session.handles[0].interrupted, "the in-flight recovery speech was left dangling"
+
+
+# --- the hard-close boundary: the wedge must not simply MOVE -----------------------
+
+
+@pytest.mark.asyncio
+async def test_a_close_that_never_completes_still_brings_the_job_down() -> None:
+    """P0. `aclose()` awaits uninterruptible speech — on a wedged path it never returns.
+
+    An unbounded `await session.aclose()` means the `finally` holding `ctx.shutdown` is never
+    reached: the caller is on a dead line and the job stays alive forever. The graceful close
+    is best-effort. The job coming down is not optional.
+    """
+    clock, session = FakeClock(), FakeSession()
+    session.reply_never_completes = True
+    session.aclose_never_completes = True
+    ctx = _ctx()
+    state = await _watchdog(session, clock, ctx=ctx)
+
+    await clock.advance(120)
+    # the close is hung; give the bounded wait its real (short) timeout
+    await asyncio.wait_for(_until(lambda: bool(ctx.shutdowns)), timeout=10)
+
+    assert state.hung_up
+    assert ctx.shutdowns == ["dead air — no caller input"], (
+        "session.aclose() never returned and the job was never shut down — the wedge just "
+        "moved from the recovery await into the close await"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_watchdog_does_not_cancel_the_task_that_is_closing() -> None:
+    """P0. `_aclose_impl` emits `close` MID-CLOSE and then keeps cleaning up.
+
+    `_watch` is the task inside `session.aclose()`. An unconditional `task.cancel()` in the
+    close handler cancels its own caller, and the CancelledError lands at the next await inside
+    LiveKit's close — aborting room_io teardown, forward-audio cancellation, toolset cleanup.
+    """
+    clock, session = FakeClock(), FakeSession()
+    ctx = _ctx()
+    state = await _watchdog(session, clock, ctx=ctx)
+
+    await clock.advance(70)
+    await _settle()
+
+    assert state.hung_up
+    assert session.cleanup_finished, (
+        "the close handler cancelled the very task performing the close — LiveKit's remaining "
+        "teardown was aborted at the next await"
+    )
+    assert len(ctx.shutdowns) == 1, "shutdown must happen exactly once"
+
+
+@pytest.mark.asyncio
+async def test_an_external_close_still_stops_the_watchdog() -> None:
+    """The caller hangs up. That close is NOT ours — the watch task must be cancelled."""
+    clock, session = FakeClock(), FakeSession()
+    ctx = _ctx()
+    state = await _watchdog(session, clock, ctx=ctx)
+
+    session.emit("close", None)  # LiveKit closing for its own reasons
+    await _settle()
+    await clock.advance(200)
+
+    assert not state.hung_up, "the watchdog kept running after an external close"
+    assert ctx.shutdowns == [], "it shut the job down on a close it did not initiate"
+
+
+@pytest.mark.asyncio
+async def test_abandoning_recovery_twice_is_harmless() -> None:
+    """`_abandon_recovery` runs from the hangup path AND the close handler."""
+    clock, session = FakeClock(), FakeSession()
+    session.reply_never_completes = True
+    state = await _watchdog(session, clock)
+
+    await clock.advance(120)
+    await _settle()
+
+    assert state.hung_up
+    handle = session.handles[0]
+    assert handle.interrupted
+    # cleared ownership: a second pass must not re-interrupt a handle we have let go of
+    handle.interrupted = False
+    session.emit("close", None)
+    await _settle()
+    assert handle.interrupted is False, "an abandoned handle was interrupted again"
+
+
+async def _settle() -> None:
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+
+async def _until(pred) -> None:
+    while not pred():
+        await asyncio.sleep(0.05)

@@ -64,6 +64,18 @@ DEAD_AIR_HANGUP_S = 60.0
 # How often the timer checks. Cheap; this is a clock, not a probe.
 TICK_S = 2.0
 
+# HOW LONG WE WAIT FOR A GRACEFUL CLOSE BEFORE FORCING THE JOB DOWN.
+#
+# `AgentSession.aclose()` force-interrupts, drains, and then explicitly awaits
+# `activity.current_speech` — UNINTERRUPTIBLE speech. If that playout is on the same wedged
+# realtime path, the close blocks forever, and an unbounded `await session.aclose()` means the
+# `finally:` holding `ctx.shutdown` is NEVER REACHED.
+#
+# That is the wedge MOVED, not removed: out of the recovery await and into the close await.
+# The graceful close is best-effort; the job coming down is not. (Yua, verified against the
+# installed source.)
+CLOSE_TIMEOUT_S = 5.0
+
 
 @dataclass
 class LivenessState:
@@ -256,18 +268,25 @@ def wire_liveness_watchdog(
         )
 
     def _abandon_recovery() -> None:
-        """Stop the prompt from holding the call open. Interrupt the speech, drop the task."""
-        nonlocal recovery_task, recovery_in_flight
-        handle = recovery_handle
+        """Stop the prompt from holding the call open. Interrupt it, drop it, FORGET it.
+
+        Ownership is cleared rather than left dangling: this runs from the hangup path AND
+        from the close handler, so without clearing it we would interrupt an already-abandoned
+        handle a second time and keep a dead task pinned. (Yua, precision note.)
+        """
+        nonlocal recovery_task, recovery_handle, recovery_in_flight
+        handle, recovery_handle = recovery_handle, None
+        task_, recovery_task = recovery_task, None
+        recovery_in_flight = False
+
         interrupt = getattr(handle, "interrupt", None)
         if callable(interrupt):
             try:
                 interrupt()
             except Exception as exc:  # noqa: BLE001
                 logger.warning("liveness: could not interrupt recovery speech: %s", exc)
-        if recovery_task is not None and not recovery_task.done():
-            recovery_task.cancel()
-        recovery_in_flight = False
+        if task_ is not None and not task_.done():
+            task_.cancel()
 
     async def _hang_up(silent_for: float) -> None:
         if state.hung_up:
@@ -288,8 +307,20 @@ def wire_liveness_watchdog(
             f"liveness: hangup after {silent_for:.0f}s no-caller call_sid={call_sid} "
             f"echo_events={state.suspected_echo_events}"
         )
+        # BOUNDED. `aclose()` awaits uninterruptible speech; if that playout is on the same
+        # wedged path it never returns, and an unbounded await here would leave the job alive
+        # forever with the caller still on a dead line. The graceful close is best-effort. The
+        # job coming down is NOT optional.
         try:
-            await session.aclose()
+            await asyncio.wait_for(session.aclose(), timeout=CLOSE_TIMEOUT_S)
+        except TimeoutError:
+            logger.error(
+                "liveness: session.aclose() did not finish in %.0fs (call_sid=%s) — the close "
+                "path is wedged on the same channel. Forcing the job down anyway.",
+                CLOSE_TIMEOUT_S,
+                call_sid,
+            )
+            trace(f"liveness: aclose timed out after {CLOSE_TIMEOUT_S:.0f}s call_sid={call_sid}")
         except Exception as exc:  # noqa: BLE001
             logger.error("liveness: session.aclose() failed: %s", exc)
         finally:
@@ -338,7 +369,18 @@ def wire_liveness_watchdog(
 
     @session.on("close")
     def _on_close(_event: Any = None) -> None:
-        task.cancel()
+        # NEVER CANCEL THE TASK THAT IS DOING THE CLOSING.
+        #
+        # `_aclose_impl` emits `close` PART WAY THROUGH — there is more cleanup after it
+        # (room_io, forward-audio tasks, toolsets). When the watchdog itself initiated the
+        # hangup, `_watch` is the task currently sitting inside `session.aclose()`. An
+        # unconditional `task.cancel()` here cancels its own caller, and the CancelledError
+        # lands at the next await INSIDE LiveKit's close, aborting the rest of the teardown.
+        #
+        # The fake never emitted `close` from `aclose()`, so the close-race test could not see
+        # this at all. (Yua, verified against the installed source.)
+        if asyncio.current_task() is not task:
+            task.cancel()
         _abandon_recovery()
         if state.suspected_echo_events:
             logger.warning(
