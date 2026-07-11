@@ -44,19 +44,46 @@ EXPECTED_ITEM = {
 }
 
 
-def _token(sub: str, scope: str) -> str:
-    """A JWT-shaped token. Signature is irrelevant — Musubi verifies that; we read claims."""
-    payload = {"iss": "test", "aud": "musubi", "sub": sub, "presence": sub, "scope": scope}
+NEVER = 2_000_000_000  # far-future exp
+
+
+def _token(sub: str, scope: str, exp: int = NEVER) -> str:
+    """A JWT-shaped token. The signature is deliberately garbage: this module's whole point
+    is that a well-formed payload proves nothing, and only the server can say otherwise."""
+    payload = {
+        "iss": "test",
+        "aud": "musubi",
+        "sub": sub,
+        "presence": sub,
+        "scope": scope,
+        "exp": exp,
+    }
     body = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
     return f"header.{body}.signature"
 
 
 def _healthy_env() -> dict[str, str]:
     """What the four bearers actually look like in production (verified on mizuki)."""
-    return {
+    env = {
         f"MUSUBI_V2_TOKEN_{a.upper()}": _token(f"{a}/voice", f"{a}/voice:r {a}/voice/*:rw **:r")
         for a in AGENTS
     }
+    env["MUSUBI_V2_BASE_URL"] = "http://musubi.invalid:8100/v1"
+    return env
+
+
+def accepts_everything(_base_url: str, _token: str) -> tuple[int, str]:
+    """A Musubi that accepts every bearer."""
+    return 200, "aoi/voice"
+
+
+def rejects_everything(_base_url: str, _token: str) -> tuple[int, str]:
+    """A Musubi that refuses the token — forged, corrupt, revoked, or wrongly signed."""
+    return 401, "Unauthorized"
+
+
+def unreachable(_base_url: str, _token: str) -> tuple[int, str]:
+    return 0, "unreachable: connection refused"
 
 
 # --- the template: WHERE each bearer comes from -----------------------------------
@@ -198,3 +225,87 @@ def test_the_verifier_never_returns_the_token() -> None:
     for value in env.values():
         assert value not in message, "the failure message leaked a bearer token"
     assert not re.search(r"\.[A-Za-z0-9_-]{20,}\.", message), "a JWT-shaped string leaked"
+
+
+# --- the claims are UNSIGNED SELF-REPORT ------------------------------------------
+#
+# decode_claims() does not verify the signature — it cannot; the secret is Musubi's. So
+# every check above answers "what does this token SAY", and none of them answers "does
+# Musubi ACCEPT it". A forged, corrupt, expired or revoked token carrying the right-looking
+# claims passed the gate, the containers booted, health went green, and the failure surfaced
+# on the first memory write of a live call. (Yua, round 2.)
+
+
+def test_a_server_rejected_bearer_is_refused() -> None:
+    """PERFECT CLAIMS, REFUSED BY MUSUBI. This is the whole point of probing."""
+    with pytest.raises(BearerIdentityError) as exc:
+        verify_env(_healthy_env(), probe=rejects_everything)
+
+    assert any("MUSUBI REJECTED" in p for p in exc.value.problems), exc.value.problems
+
+
+def test_a_corrupt_but_well_shaped_token_is_refused_by_the_server() -> None:
+    """The signature is garbage; the payload is immaculate. Only the server can tell."""
+    env = _healthy_env()
+    good = env["MUSUBI_V2_TOKEN_AOI"]
+    env["MUSUBI_V2_TOKEN_AOI"] = good.rsplit(".", 1)[0] + ".not-a-real-signature"
+
+    def only_aoi_is_rejected(_base: str, token: str) -> tuple[int, str]:
+        return (401, "bad signature") if token.endswith("not-a-real-signature") else (200, "")
+
+    with pytest.raises(BearerIdentityError) as exc:
+        verify_env(env, probe=only_aoi_is_rejected)
+
+    assert any("aoi: MUSUBI REJECTED" in p for p in exc.value.problems), exc.value.problems
+
+
+def test_an_expired_bearer_is_refused() -> None:
+    """Caught locally from `exp`, before the server has to say it — and long before a call."""
+    env = _healthy_env()
+    env["MUSUBI_V2_TOKEN_YUA"] = _token("yua/voice", "yua/voice/*:rw", exp=1_000)
+
+    with pytest.raises(BearerIdentityError) as exc:
+        verify_env(env, probe=accepts_everything, now=2_000)
+
+    assert any("EXPIRED" in p for p in exc.value.problems), exc.value.problems
+
+
+def test_an_unreachable_musubi_does_not_pass_the_gate() -> None:
+    """UNVERIFIABLE IS NOT VERIFIED — the gate does not pass a check it could not run."""
+    with pytest.raises(BearerIdentityError) as exc:
+        verify_env(_healthy_env(), probe=unreachable)
+
+    assert any("UNVERIFIABLE IS NOT VERIFIED" in p for p in exc.value.problems), exc.value.problems
+
+
+def test_a_missing_base_url_does_not_pass_the_gate() -> None:
+    env = _healthy_env()
+    del env["MUSUBI_V2_BASE_URL"]
+
+    with pytest.raises(BearerIdentityError) as exc:
+        verify_env(env, probe=accepts_everything)
+
+    assert any("MUSUBI_V2_BASE_URL is missing" in p for p in exc.value.problems), exc.value.problems
+
+
+def test_an_accepted_fleet_verifies() -> None:
+    """The control: right claims AND the server agrees."""
+    verify_env(_healthy_env(), probe=accepts_everything)
+
+
+def test_the_probe_never_leaks_the_token(monkeypatch) -> None:
+    """The probe is the one place the raw bearer touches the network. Watch what comes back."""
+    seen: list[str] = []
+
+    def capture(base_url: str, token: str) -> tuple[int, str]:
+        seen.append(token)
+        return 401, "Unauthorized"
+
+    env = _healthy_env()
+    with pytest.raises(BearerIdentityError) as exc:
+        verify_env(env, probe=capture)
+
+    assert seen, "the probe was never called — the server check did not run"
+    message = str(exc.value)
+    for token in seen:
+        assert token not in message, "the failure message leaked the bearer it probed with"

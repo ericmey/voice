@@ -39,6 +39,15 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PATH="$HOME/.local/bin:$PATH"  # cron: uv/lk live here
+
+# Overridable so the test suite can point the routing check at a fixture fleet and still run
+# the REAL comparator. A monitor whose central check is unreachable from a test is a monitor
+# nobody has ever seen go red.
+CONFIG_DIR="${LIVEKIT_CONFIG_DIR:-${REPO_ROOT}/config}"
+SECRETS_ENV="${VOICE_SECRETS_ENV:-${REPO_ROOT}/secrets/livekit-agents.env}"
+
 AGENTS=(nyla aoi yua sumi)
 # On mizuki the health-check user may not be in the docker group; fall back
 # to sudo (cron typically runs as root or a docker-group user, where the
@@ -147,7 +156,16 @@ for a in "${AGENTS[@]}"; do
     continue
   fi
   if [[ "${health}" == "starting" ]]; then
-    record "agent-${a}" ok "starting (prewarm) restarts=${restarts}"
+    # NOT READY, and therefore not ok. `starting` IS bounded by Docker (once start_period
+    # elapses, failing probes count and she flips to unhealthy) — but this script is a
+    # readiness gate, and an agent still in prewarm cannot take a call. Reporting her green
+    # would mean `make health` says yes at the exact moment the answer is "not yet".
+    # Set VOICE_HEALTH_ALLOW_STARTING=1 during a deploy, when that is expected.
+    if [[ "${VOICE_HEALTH_ALLOW_STARTING:-0}" == "1" ]]; then
+      record "agent-${a}" ok "starting (prewarm; allowed by VOICE_HEALTH_ALLOW_STARTING)"
+    else
+      record "agent-${a}" fail "STARTING — not ready to take a call yet (prewarm). Not an error if you just deployed; re-run, or set VOICE_HEALTH_ALLOW_STARTING=1."
+    fi
     continue
   fi
 
@@ -186,16 +204,32 @@ else
   record "sip-trunk" ok "inbound trunk present"
 fi
 
-live_agents="$("${DOCKER[@]}" exec voice-redis redis-cli --no-raw hvals sip_dispatch_rule 2>/dev/null \
-  | grep -o 'phone-[a-z][a-z]*' | sort -u)"
-missing=()
-for a in "${AGENTS[@]}"; do
-  grep -qx "phone-${a}" <<<"${live_agents}" || missing+=("phone-${a}")
-done
-if (( ${#missing[@]} > 0 )); then
-  record "sip-routing" fail "NOT routable: ${missing[*]} — calls to them will not reach an agent. Live: $(tr '\n' ' ' <<<"${live_agents}" | sed 's/ $//'). Run scripts/register-sip-routing.sh"
+# The live rules, compared EXACTLY against the validated candidate set — the same
+# sdk.sip_preflight the registrar runs. The previous version of this greped `phone-[a-z]+`
+# out of the protobuf blobs in Redis: format-fragile, and it could only ever answer "is this
+# name present somewhere", never "is the mapping correct". A stale rule holding one of our
+# DIDs passes a presence check. (Yua, round 2.)
+_lk_env() {
+  # LIVEKIT_API_KEY/SECRET are already in the rendered secrets file on disk, so this works
+  # under cron with no 1Password prompt.
+  set -a; . "${SECRETS_ENV}" 2>/dev/null || return 1; set +a
+  export LIVEKIT_URL="${LIVEKIT_URL:-ws://localhost:7880}"
+}
+
+if ! command -v lk >/dev/null 2>&1 || ! command -v uv >/dev/null 2>&1; then
+  # UNVERIFIABLE IS NOT VERIFIED. A monitor that cannot run its check reports that, loudly;
+  # it does not stay quiet and let the absence read as health.
+  record "sip-routing" fail "cannot verify routing — lk and/or uv not on PATH. This check did not run; that is not the same as passing."
+elif ! ( _lk_env ) 2>/dev/null; then
+  record "sip-routing" fail "cannot verify routing — ${SECRETS_ENV} is unreadable (no LiveKit credentials)"
 else
-  record "sip-routing" ok "all 4 agents live in dispatch: $(tr '\n' ' ' <<<"${live_agents}" | sed 's/ $//')"
+  routing_out="$( ( _lk_env; lk sip dispatch list --json 2>/dev/null ) \
+    | ( cd "${REPO_ROOT}" && uv run python -m sdk.sip_preflight "${CONFIG_DIR}" --live - 2>&1 ) )"
+  if [[ $? -eq 0 ]]; then
+    record "sip-routing" ok "live dispatch matches the validated set exactly (4 rules, no extras)"
+  else
+    record "sip-routing" fail "live dispatch does NOT match the validated set: $(tr '\n' ' ' <<<"${routing_out}" | sed 's/  */ /g')"
+  fi
 fi
 
 # ---- emit ----------------------------------------------------------

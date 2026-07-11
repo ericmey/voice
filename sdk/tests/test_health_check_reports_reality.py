@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -39,6 +40,25 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 HEALTH_CHECK = REPO_ROOT / "scripts" / "health-check.sh"
 
 AGENTS = ("nyla", "aoi", "yua", "sumi")
+
+# The DIDs in the tracked examples — the candidate set health compares the live table to.
+DID = {
+    "nyla": "+15550000001",
+    "aoi": "+15550000002",
+    "sumi": "+15550000003",
+    "yua": "+15550000004",
+}
+
+
+def _live_rule(agent: str, *, name: str | None = None, dids: list[str] | None = None) -> dict:
+    """One rule as LiveKit reports it."""
+    return {
+        "sipDispatchRuleId": f"SDR_{agent}",
+        "name": name or f"twilio-to-phone-{agent}",
+        "numbers": dids if dids is not None else [DID[agent]],
+        "roomConfig": {"agents": [{"agentName": f"phone-{agent}"}]},
+    }
+
 
 # A registration line in the shape the script greps for.
 REGISTERED = 'INFO livekit.agents - registered worker {"id": "AW_abc123"}'
@@ -60,8 +80,8 @@ def _healthy_fleet() -> dict:
         "logs_all": {f"voice-agent-{a}": REGISTERED for a in AGENTS},
         "redis_ping": "PONG",
         "trunk_present": 1,
-        # The live dispatch state — who LiveKit will actually route a call to.
-        "live_dispatch_agents": [f"phone-{a}" for a in AGENTS],
+        # The live dispatch table, as `lk sip dispatch list --json` returns it.
+        "live_rules": [_live_rule(a) for a in AGENTS],
     }
 
 
@@ -113,12 +133,6 @@ if argv[:1] == ["exec"]:
         print(scenario["redis_ping"]); sys.exit(0)
     if "redis-cli" in argv and "exists" in argv:
         print(scenario["trunk_present"]); sys.exit(0)
-    if "redis-cli" in argv and "hvals" in argv:
-        # LiveKit stores these protobuf-encoded; the agentName literals are legible
-        # inside the blob, which is what the script greps for.
-        for name in scenario["live_dispatch_agents"]:
-            print('\\x12\\x05phone%s"{"route":"default"}' % name.replace("phone", ""))
-        sys.exit(0)
     if "wget" in argv:
         sys.exit(0)  # livekit-server :7880 answers
     die("exec")
@@ -127,22 +141,48 @@ die("verb")
 """
 
 
+FAKE_LK = r"""#!/usr/bin/env python3
+import json, os, sys
+
+scenario = json.loads(open(os.environ["HEALTH_SCENARIO"]).read())
+if sys.argv[1:4] == ["sip", "dispatch", "list"]:
+    print(json.dumps({"items": scenario["live_rules"]}))
+    sys.exit(0)
+sys.stderr.write("fake-lk: unhandled: " + " ".join(sys.argv[1:]) + chr(10))
+sys.exit(97)
+"""
+
+
 @pytest.fixture
 def run_health_check(tmp_path):
-    """Run the REAL scripts/health-check.sh against a mocked docker."""
+    """Run the REAL scripts/health-check.sh — real comparator, mocked docker + lk."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    fake = bin_dir / "docker"
-    fake.write_text(FAKE_DOCKER)
-    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    for name, body in (("docker", FAKE_DOCKER), ("lk", FAKE_LK)):
+        fake = bin_dir / name
+        fake.write_text(body)
+        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
 
-    def _run(scenario: dict) -> tuple[int, dict]:
+    # The candidate set health compares against: the tracked examples.
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    for agent in AGENTS:
+        src = REPO_ROOT / "config" / f"sip-dispatch-{agent}.json.example"
+        shutil.copy(src, config_dir / f"sip-dispatch-{agent}.json")
+
+    secrets = tmp_path / "livekit-agents.env"
+    secrets.write_text("LIVEKIT_API_KEY=devkey\nLIVEKIT_API_SECRET=devsecret\n")
+
+    def _run(scenario: dict, **overrides: str) -> tuple[int, dict]:
         spec = tmp_path / "scenario.json"
         spec.write_text(json.dumps(scenario))
         env = {
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "HEALTH_SCENARIO": str(spec),
+            "LIVEKIT_CONFIG_DIR": str(config_dir),
+            "VOICE_SECRETS_ENV": str(secrets),
+            **overrides,
         }
         proc = subprocess.run(
             ["bash", str(HEALTH_CHECK), "--json"],
@@ -155,7 +195,21 @@ def run_health_check(tmp_path):
             f"the script asked docker something the mock does not model — the test is "
             f"lying about coverage:\n{proc.stderr}"
         )
-        return proc.returncode, json.loads(proc.stdout)
+
+        report = json.loads(proc.stdout)
+
+        # health-check sends lk's stderr to /dev/null, so a CRASHED mock lk is indistinguishable
+        # from a real routing failure: the comparator just gets empty stdin and reports "not
+        # JSON". Every test that expects a red routing check would then pass for entirely the
+        # wrong reason. (It did. That is how this assertion got written.)
+        routing = next((c for c in report["checks"] if c["name"] == "sip-routing"), None)
+        if routing and "not JSON" in routing["detail"]:
+            raise AssertionError(
+                "the mocked `lk` produced no JSON — the live-routing comparison never ran, so "
+                "this test proves nothing about routing:\n" + routing["detail"]
+            )
+
+        return proc.returncode, report
 
     return _run
 
@@ -243,19 +297,20 @@ def test_a_stale_registration_does_not_prove_the_current_process_registered(run_
     assert "registration" in _check(report, "agent-yua")["detail"].lower()
 
 
-def test_a_starting_agent_is_not_a_failure(run_health_check):
-    """Prewarm loads Silero VAD per job process. `starting` is not `unhealthy`.
+def test_a_starting_agent_is_not_ready(run_health_check):
+    """`starting` is not `unhealthy` — and it is not READY either, so it is not `ok`.
 
-    A monitor that screams during every deploy is a monitor that gets muted, and a
-    muted monitor is the one that misses the real outage.
+    An agent still in prewarm cannot take a call. Reporting her green means `make health`
+    says yes at the exact moment the honest answer is "not yet". (Yua, round 2.)
     """
     scenario = _healthy_fleet()
     scenario["containers"]["voice-agent-nyla"]["health"] = "starting"
 
     code, report = run_health_check(scenario)
 
-    assert code == 0, report
-    assert _check(report, "agent-nyla")["status"] == "ok"
+    assert code == 1
+    assert _check(report, "agent-nyla")["status"] == "fail"
+    assert "starting" in _check(report, "agent-nyla")["detail"].lower()
 
 
 def test_a_crash_looping_agent_is_reported(run_health_check):
@@ -278,26 +333,109 @@ def test_a_stopped_agent_is_reported(run_health_check):
     assert _check(report, "agent-sumi")["status"] == "fail"
 
 
-# --- SIP routing: who actually picks up -------------------------------------------
+# --- SIP routing: PRESENCE IS NOT CORRECTNESS -------------------------------------
+#
+# Every test below keeps all four expected `phone-<agent>` names live. The previous
+# postcondition asked only "are the four names present?" — so it passed every one of these
+# while the routing was ambiguous or plainly wrong. (Yua, round 2.)
 
 
 @pytest.mark.parametrize("dropped", AGENTS)
 def test_a_sister_missing_from_live_dispatch_is_reported(run_health_check, dropped):
-    """The old check asked "does the routing table exist". It does. She is not in it.
-
-    Three rules instead of four passes ``redis-cli exists``. So does four rules that all
-    point at Nyla. The call to the missing sister does not error — it reaches no agent, or
-    reaches the wrong one, and the monitor stays green through all of it.
-    """
     scenario = _healthy_fleet()
-    scenario["live_dispatch_agents"] = [f"phone-{a}" for a in AGENTS if a != dropped]
+    scenario["live_rules"] = [_live_rule(a) for a in AGENTS if a != dropped]
 
     code, report = run_health_check(scenario)
 
-    assert code == 1, f"phone-{dropped} is not in the live dispatch and `make health` exited 0"
+    assert code == 1, f"phone-{dropped} is not live and `make health` exited 0"
+    assert _check(report, "sip-routing")["status"] == "fail"
+
+
+def test_a_stale_rule_for_a_retired_agent_is_reported(run_health_check):
+    """THE ONE PRESENCE-CHECKING CANNOT SEE. All four are live. So is `phone-party`.
+
+    The registrar only ever deletes the four rule names it knows about, so it will NEVER
+    clean this up — it cannot remove what it does not look for. It sits there claiming
+    inbound calls for a worker nobody runs, and every check we had said green.
+    """
+    scenario = _healthy_fleet()
+    scenario["live_rules"].append(
+        {
+            "sipDispatchRuleId": "SDR_party",
+            "name": "twilio-to-phone-party",
+            "numbers": ["+15559999999"],
+            "roomConfig": {"agents": [{"agentName": "phone-party"}]},
+        }
+    )
+
+    code, report = run_health_check(scenario)
+
+    assert code == 1, "a stale phone-party rule is live and `make health` exited 0"
+    detail = _check(report, "sip-routing")["detail"]
+    assert "party" in detail, detail
+
+
+def test_a_duplicate_rule_for_one_agent_is_reported(run_health_check):
+    """Two live rules for Aoi. Which one routes the call is not ours to decide."""
+    scenario = _healthy_fleet()
+    scenario["live_rules"].append(
+        _live_rule("aoi", name="twilio-to-phone-aoi-old", dids=["+15558888888"])
+    )
+
+    code, report = run_health_check(scenario)
+
+    assert code == 1, "aoi has two live dispatch rules and `make health` exited 0"
+    assert _check(report, "sip-routing")["status"] == "fail"
+
+
+def test_a_live_rule_with_the_wrong_did_is_reported(run_health_check):
+    """All four names present, and Aoi's live rule carries a DID we never validated.
+
+    The rule that is actually routing is not the rule we approved.
+    """
+    scenario = _healthy_fleet()
+    scenario["live_rules"] = [
+        _live_rule("aoi", dids=["+15551110000"]) if a == "aoi" else _live_rule(a) for a in AGENTS
+    ]
+
+    code, report = run_health_check(scenario)
+
+    assert code == 1, "aoi's live DID is not the one we validated and `make health` exited 0"
+    assert _check(report, "sip-routing")["status"] == "fail"
+
+
+def test_a_stale_rule_stealing_a_real_did_is_reported(run_health_check):
+    """The worst one: a leftover rule holding Nyla's real number. Two owners, one DID."""
+    scenario = _healthy_fleet()
+    scenario["live_rules"].append(
+        {
+            "sipDispatchRuleId": "SDR_old",
+            "name": "twilio-legacy",
+            "numbers": [DID["nyla"]],
+            "roomConfig": {"agents": [{"agentName": "phone-sumi"}]},
+        }
+    )
+
+    code, report = run_health_check(scenario)
+
+    assert code == 1, "two agents are live for one DID and `make health` exited 0"
+    assert _check(report, "sip-routing")["status"] == "fail"
+
+
+def test_routing_that_cannot_be_verified_is_not_reported_as_healthy(run_health_check):
+    """UNVERIFIABLE IS NOT VERIFIED. No credentials => the check did not run => not green.
+
+    The failure mode this forecloses is the one that has bitten us most: a check that cannot
+    run, quietly not running, and its silence reading as health.
+    """
+    code, report = run_health_check(
+        _healthy_fleet(), VOICE_SECRETS_ENV="/nonexistent/livekit-agents.env"
+    )
+
+    assert code == 1
     routing = _check(report, "sip-routing")
     assert routing["status"] == "fail"
-    assert f"phone-{dropped}" in routing["detail"]
+    assert "cannot verify" in routing["detail"].lower()
 
 
 def test_a_missing_inbound_trunk_is_reported(run_health_check):

@@ -234,22 +234,21 @@ for a in "${AGENTS[@]}"; do
   register_rule "${CONFIG_DIR}/sip-dispatch-${a}.json"
 done
 
-# ---- POSTCONDITION: ask LiveKit what is actually live ---------------------------
+# ---- POSTCONDITION: the live routing must EQUAL what we validated -----------------
 #
-# "The command exited 0" is not "the four of them are routable". Delete succeeded and
-# create silently didn't is exactly the state this script can produce, and it is the
-# state that ends with a call ringing into nothing.
+# "The command exited 0" is not "the four of them are routable", and — the subtler one —
+# "all four names are present" is not "the routing is correct". A stale rule the registrar
+# never looks at (it only deletes the four names it knows) can still be sitting there
+# claiming one of our DIDs, with all four expected names present. Subset, not equality.
+#
+# So hand the live list to the SAME validator that approved the candidates and require an
+# exact match: four rules, exact identities, exact DID ownership, no extras, no duplicates.
 if ! $DRY_RUN; then
-  log "verifying live dispatch rules"
-  live="$(lk sip dispatch list --json 2>/dev/null | jq -r '[.items[]?.roomConfig.agents[]?.agentName] | .[]' || true)"
-  missing=()
-  for a in "${AGENTS[@]}"; do
-    grep -qx "phone-${a}" <<<"${live}" || missing+=("phone-${a}")
-  done
-  if (( ${#missing[@]} > 0 )); then
-    die "registration reported success but these are NOT live: ${missing[*]} — inbound calls to them will fail. Live now: $(tr '\n' ' ' <<<"${live}")"
+  log "verifying live dispatch equals the validated set"
+  if ! lk sip dispatch list --json 2>/dev/null \
+      | (cd "${REPO_ROOT}" && uv run python -m sdk.sip_preflight "${CONFIG_DIR}" --live -); then
+    die "live dispatch does NOT match what we just registered — inbound routing is not what we validated"
   fi
-  log "live: $(tr '\n' ' ' <<<"${live}")"
 fi
 
 log "done."

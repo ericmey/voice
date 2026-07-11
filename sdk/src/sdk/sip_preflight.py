@@ -240,10 +240,118 @@ def validate_dispatch_set(config_dir: Path, *, allow_example: bool = False) -> l
     return rules
 
 
+def compare_live_to_candidates(live_items: list[dict], rules: list[DispatchRule]) -> list[str]:
+    """The live routing must EQUAL the validated set. Not contain it — equal it.
+
+    The first postcondition I wrote asked: is each of the four ``phone-<agent>`` strings
+    present somewhere in the live rules? That is a SUBSET check reported as a verdict about
+    the whole, and every one of these passes it:
+
+    - a stale ``phone-party`` rule still sitting there claiming inbound calls (the registrar
+      only ever touches the four names it knows, so it never deletes an older rule with a
+      different name — it cannot remove what it does not look for);
+    - two live rules both pointing at Nyla;
+    - a leftover rule holding one of the four real DIDs, so the DID has two owners and
+      LiveKit picks one;
+    - a live rule whose DID does not match the file we just validated.
+
+    All four expected names are present in every one of those. Routing is ambiguous in every
+    one of them. Green in every one of them.
+
+    So: exact set equality, on identity AND on DID ownership. "Presence" is not "correctness",
+    and a postcondition that cannot tell them apart is decoration. (Yua, round 2.)
+    """
+    problems: list[str] = []
+
+    expected = {r.agent_name: r for r in rules}
+    expected_dids = {n: r.agent_name for r in rules for n in r.numbers}
+
+    live_by_agent: dict[str, list[dict]] = {}
+    for item in live_items:
+        for spec in item.get("roomConfig", {}).get("agents", []) or []:
+            live_by_agent.setdefault(spec.get("agentName", ""), []).append(item)
+
+    # --- extras: rules we did not put there and will never clean up ----
+    for name, items in sorted(live_by_agent.items()):
+        if name not in expected:
+            for item in items:
+                problems.append(
+                    f"STALE LIVE RULE {item.get('name')!r} routes to {name!r}, which is not one "
+                    f"of the four. The registrar only deletes the four names it knows, so it "
+                    f"will never remove this — it claims DIDs {item.get('numbers')} for a worker "
+                    f"nobody runs."
+                )
+        elif len(items) > 1:
+            problems.append(
+                f"{name} has {len(items)} live dispatch rules "
+                f"({', '.join(sorted(str(i.get('name')) for i in items))}) — two rules fighting "
+                f"over one agent; which one wins is not ours to decide"
+            )
+
+    # --- identity + DID ownership, per agent ---------------------------
+    for agent_name, rule in sorted(expected.items()):
+        items = live_by_agent.get(agent_name, [])
+        if not items:
+            problems.append(
+                f"{agent_name} is NOT LIVE — registration reported success and she is not in "
+                f"the dispatch table. Every call to {' '.join(rule.numbers)} dies."
+            )
+            continue
+
+        item = items[0]
+        if item.get("name") != rule.rule_name:
+            problems.append(
+                f"{agent_name}: live rule is named {item.get('name')!r} but we registered "
+                f"{rule.rule_name!r} — the registrar matches by name, so the rule it thinks it "
+                f"owns is not the rule that is actually routing"
+            )
+
+        live_dids = set(item.get("numbers") or [])
+        want_dids = set(rule.numbers)
+        if live_dids != want_dids:
+            problems.append(
+                f"{agent_name}: live DIDs {sorted(live_dids)} != validated {sorted(want_dids)} — "
+                f"the rule that is routing is not the rule we validated"
+            )
+
+    # --- a DID may have exactly one owner, live ------------------------
+    did_owners: dict[str, set[str]] = {}
+    for item in live_items:
+        names = {
+            spec.get("agentName", "") for spec in item.get("roomConfig", {}).get("agents", []) or []
+        }
+        for did in item.get("numbers") or []:
+            did_owners.setdefault(did, set()).update(names)
+
+    for did, owners in sorted(did_owners.items()):
+        if len(owners) > 1:
+            problems.append(
+                f"DID {did} is live for {', '.join(sorted(owners))} — one number, two answerers"
+            )
+        elif did in expected_dids and owners != {expected_dids[did]}:
+            problems.append(
+                f"DID {did} should route to {expected_dids[did]} but is live for "
+                f"{', '.join(sorted(owners))} — THE WRONG SISTER PICKS UP"
+            )
+
+    return problems
+
+
 def main(argv: list[str]) -> int:
-    """CLI the registrar shells out to: ``python -m sdk.sip_preflight <config_dir>``."""
+    """CLI for both consumers.
+
+    ``python -m sdk.sip_preflight <config_dir>``
+        Validate the candidate set on disk. Run BEFORE any delete.
+
+    ``python -m sdk.sip_preflight <config_dir> --live -``
+        Read ``lk sip dispatch list --json`` on stdin and require the live routing to EQUAL
+        the validated set. Run AFTER mutation, and by ``make health``.
+    """
     if len(argv) < 2:
-        print("usage: python -m sdk.sip_preflight <config_dir> [--allow-example]", file=sys.stderr)
+        print(
+            "usage: python -m sdk.sip_preflight <config_dir> [--allow-example] [--live <file|->]",
+            file=sys.stderr,
+        )
         return 2
 
     config_dir = Path(argv[1])
@@ -259,6 +367,27 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 1
+
+    if "--live" in argv:
+        source = argv[argv.index("--live") + 1]
+        raw = sys.stdin.read() if source == "-" else Path(source).read_text()
+        try:
+            live_items = json.loads(raw).get("items") or []
+        except json.JSONDecodeError as exc:
+            print(
+                f"live dispatch list is not JSON ({exc}) — cannot verify routing", file=sys.stderr
+            )
+            return 1
+
+        problems = compare_live_to_candidates(live_items, rules)
+        if problems:
+            print(str(SipPreflightError(problems)), file=sys.stderr)
+            return 1
+
+        for r in sorted(rules, key=lambda r: r.agent):
+            print(f"  ok  {r.agent_name:12} {r.rule_name:24} {' '.join(r.numbers)}")
+        print(f"live routing matches the validated set exactly — {len(rules)} rules, no extras")
+        return 0
 
     for r in sorted(rules, key=lambda r: r.agent):
         print(f"  ok  {r.path.name:28} {r.agent_name:12} {' '.join(r.numbers)}")

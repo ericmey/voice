@@ -37,6 +37,10 @@ import binascii
 import json
 import re
 import sys
+import time
+import urllib.error
+import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,6 +73,7 @@ class BearerClaims:
     subject: str
     presence: str
     scopes: tuple[str, ...]  # raw "<namespace>:<access>" strings
+    expires_at: int = 0  # unix seconds; 0 = no exp claim
 
 
 def decode_claims(token: str) -> BearerClaims:
@@ -88,11 +93,50 @@ def decode_claims(token: str) -> BearerClaims:
     except (binascii.Error, ValueError, UnicodeDecodeError) as exc:
         raise BearerIdentityError([f"token payload is not decodable JSON ({exc})"]) from None
 
+    try:
+        expires_at = int(body.get("exp", 0) or 0)
+    except (TypeError, ValueError):
+        expires_at = 0
+
     return BearerClaims(
         subject=str(body.get("sub", "")),
         presence=str(body.get("presence", "")),
         scopes=tuple(str(body.get("scope", "")).split()),
+        expires_at=expires_at,
     )
+
+
+def probe_bearer(base_url: str, token: str, *, timeout: float = 5.0) -> tuple[int, str]:
+    """Ask MUSUBI whether it accepts this bearer. Non-mutating (GET /namespaces).
+
+    THE CLAIMS ARE UNSIGNED SELF-REPORT. ``decode_claims`` reads the payload without
+    verifying the signature — it cannot; the secret is Musubi's. So a forged, corrupt,
+    expired or revoked token carrying exactly the right-looking claims sails through every
+    check above, the gate prints "bearer identity OK", the containers boot, health goes
+    green — and her first memory write fails authorization, at 3am, on a call.
+
+    "This token says it is Aoi" and "Musubi accepts this token as Aoi" are different
+    sentences, and only the second one is the deploy gate's business. (Yua, round 2.)
+
+    Returns (status_code, detail). Never returns or logs the token; ``base_url`` and the
+    status are the only things that come back out.
+    """
+    request = urllib.request.Request(  # noqa: S310 — fixed https/http scheme from our own config
+        f"{base_url.rstrip('/')}/namespaces",
+        headers={"Authorization": f"Bearer {token}"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+            body = json.loads(response.read() or b"{}")
+            return response.status, " ".join(body.get("items") or [])
+    except urllib.error.HTTPError as exc:
+        # 401/403 here is the whole point: the server has REFUSED this bearer.
+        return exc.code, exc.reason or "rejected"
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        # Unreachable is NOT acceptable. A gate that cannot check must not report ok —
+        # that is how "advisory" becomes "never".
+        return 0, f"unreachable: {exc}"
 
 
 def check_bearer(agent: str, claims: BearerClaims) -> list[str]:
@@ -150,10 +194,29 @@ def parse_env_file(path: Path) -> dict[str, str]:
     return out
 
 
-def verify_env(env: dict[str, str], agents: tuple[str, ...] = AGENTS) -> None:
-    """Verify every agent's resolved bearer. Raises with EVERY problem found."""
+def verify_env(
+    env: dict[str, str],
+    agents: tuple[str, ...] = AGENTS,
+    *,
+    probe: Callable[[str, str], tuple[int, str]] | None = None,
+    now: int | None = None,
+) -> None:
+    """Verify every agent's resolved bearer. Raises with EVERY problem found.
+
+    ``probe`` — if given, called as ``probe(base_url, token)`` per agent and required to
+    return 200. This is the half that claim-reading CANNOT do: prove the SERVER accepts the
+    token. Injectable so tests can drive a rejecting server without one.
+    """
     problems: list[str] = []
     subjects: dict[str, list[str]] = {}
+    now = int(time.time()) if now is None else now
+
+    base_url = env.get("MUSUBI_V2_BASE_URL", "")
+    if probe is not None and not base_url:
+        problems.append(
+            "MUSUBI_V2_BASE_URL is missing — the bearers cannot be checked against the server, "
+            "and an unverifiable bearer must not be reported as verified"
+        )
 
     for agent in agents:
         var = f"MUSUBI_V2_TOKEN_{agent.upper()}"
@@ -178,6 +241,33 @@ def verify_env(env: dict[str, str], agents: tuple[str, ...] = AGENTS) -> None:
 
         problems.extend(check_bearer(agent, claims))
         subjects.setdefault(claims.subject, []).append(agent)
+
+        # Expiry is in the claims, so we can catch it before the server does — and before
+        # the agent does, at 3am, mid-call.
+        if claims.expires_at and claims.expires_at <= now:
+            problems.append(
+                f"{agent}: bearer EXPIRED at {claims.expires_at} (now {now}) — she boots, she "
+                f"is healthy, and every memory write fails authorization"
+            )
+
+        # And the claims are unsigned self-report, so ask the server.
+        if probe is not None and base_url:
+            status, detail = probe(base_url, token)
+            if status == 200:
+                continue
+            if status == 0:
+                problems.append(
+                    f"{agent}: could not reach Musubi to verify the bearer ({detail}). "
+                    f"UNVERIFIABLE IS NOT VERIFIED — this gate does not pass on a check it "
+                    f"could not run."
+                )
+            else:
+                problems.append(
+                    f"{agent}: MUSUBI REJECTED this bearer (HTTP {status} {detail}). The claims "
+                    f"look right and the server does not accept it — forged, corrupt, revoked, "
+                    f"or signed with a key Musubi no longer trusts. She would boot healthy and "
+                    f"fail every memory call."
+                )
 
     # Two agents holding the SAME token. The check above catches it for at least one of
     # them, but say it plainly — this is the shape a copy-paste fix actually takes.
@@ -219,8 +309,13 @@ def main(argv: list[str]) -> int:
 
     env = parse_env_file(path)
 
+    # Probe by default. --no-probe is for an offline claims-only run and SAYS SO in the
+    # output, because "I checked what the token claims" and "Musubi accepts this token" are
+    # different sentences and only one of them is a deploy gate.
+    probe = None if "--no-probe" in argv else probe_bearer
+
     try:
-        verify_env(env)
+        verify_env(env, probe=probe)
     except BearerIdentityError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -229,7 +324,14 @@ def main(argv: list[str]) -> int:
         claims = decode_claims(env[f"MUSUBI_V2_TOKEN_{agent.upper()}"])
         writes = [s for s in claims.scopes if s.partition(":")[2] in WRITE_ACCESS]
         print(f"  ok  {agent:5} sub={claims.subject:12} writes={' '.join(writes) or '(none)'}")
-    print("bearer identity OK — each agent authorizes as herself, writes only to her own plane")
+
+    if probe is None:
+        print("claims OK — NOT verified against Musubi (--no-probe); this is not a deploy gate")
+    else:
+        print(
+            "bearer identity OK — each agent authorizes as herself, Musubi accepts her token, "
+            "and she may write only to her own plane"
+        )
     return 0
 
 
