@@ -44,6 +44,7 @@ from sdk.telephony import resolve_caller
 from sdk.trace import trace
 from sdk.tracing import attach_current_span_metadata, wire_otel_shutdown_flush
 from sdk.transcript import wire_transcript_logging
+from tools.base_agent import load_persona
 from tools.core import CoreToolsMixin
 from tools.memory import MusubiToolsMixin
 
@@ -60,16 +61,12 @@ _NEMO_BASE_URL = f"http://{_SUMI_HOST}:8090/v1"  # Mistral Nemo via llama.cpp
 _ORPHEUS_BASE_URL = f"http://{_SUMI_HOST}:5005/v1"  # Orpheus TTS (OpenAI-compatible)
 
 # --- persona -----------------------------------------------------------
+#
+# Sumi used to carry her OWN copy of this loader, with her OWN silent fallback
+# ("You are the Harem World host on a phone call with Eric"). Two implementations of the
+# identity path, with two different strangers to become. She now uses the one shared loader
+# in tools.base_agent, which raises rather than substituting anybody.
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
-_DEFAULT_PERSONA = "You are the Harem World host on a phone call with Eric."
-
-
-def _load_persona() -> str:
-    path = _PROMPTS_DIR / "system.md"
-    if path.exists():
-        return path.read_text(encoding="utf-8").strip()
-    logger.warning("persona file not found: %s", path)
-    return _DEFAULT_PERSONA
 
 
 # --- agent class -------------------------------------------------------
@@ -198,7 +195,7 @@ async def entrypoint(ctx: JobContext) -> None:
     ]
 
     agent = SumiAgent(
-        instructions=_load_persona(),
+        instructions=load_persona(_PROMPTS_DIR),
         caller_from=caller_from,
         extra_tools=extra_tools,
     )

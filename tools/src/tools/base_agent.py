@@ -34,15 +34,47 @@ def load_env_once() -> None:
 
 
 # --- persona -------------------------------------------------------------
-_DEFAULT_PERSONA = "You are a voice assistant on a phone call."
+#
+# There is NO default persona, deliberately.
+#
+# This used to fall back to "You are a voice assistant on a phone call." on a missing file,
+# log a warning, and carry on. So a bad image build or a bind-mount typo did not fail the
+# agent — it put a **generic assistant on Eric's phone**, wearing Nyla's number, while the
+# warning sat unread in a log.
+#
+# That is the same shape as every other identity bug here: NYLA_DEFAULT_CONFIG (a
+# misconfigured agent silently becomes Nyla), `ENV AGENT=aoi` (a container with no AGENT
+# silently becomes Aoi), a hand-typed SIP dispatch literal (a call silently routes to the
+# wrong sister). Each one had a *default* where it needed a *refusal*.
+#
+# The persona IS the identity. An agent without hers is not a degraded Nyla — she is not
+# Nyla. She is a stranger holding Nyla's phone number, mid-call, with no way to recover.
+# Refusing to start is strictly better.
 
 
 def load_persona(prompts_dir: Path) -> str:
+    """Load the agent's system prompt. Raises rather than substituting a stranger.
+
+    Raises:
+        FileNotFoundError: no ``system.md``. The agent has no identity; do not start.
+        ValueError: ``system.md`` is empty. Same failure, different hat — the file exists,
+            so a mere ``path.exists()`` check would have passed it straight through to an
+            empty system prompt.
+    """
     path = prompts_dir / "system.md"
-    if path.exists():
-        return path.read_text(encoding="utf-8").strip()
-    logger.warning("persona file not found: %s", path)
-    return _DEFAULT_PERSONA
+    if not path.exists():
+        raise FileNotFoundError(
+            f"persona file not found: {path}. This is the agent's IDENTITY — without it she "
+            f"would answer the phone as a generic assistant under her own number. Refusing "
+            f"to start. Check that prompts/system.md was copied into the image."
+        )
+    persona = path.read_text(encoding="utf-8").strip()
+    if not persona:
+        raise ValueError(
+            f"persona file is empty: {path}. An empty system prompt is the same failure as a "
+            f"missing one — the agent on the call would not be herself. Refusing to start."
+        )
+    return persona
 
 
 # --- greeting -------------------------------------------------------------
@@ -132,8 +164,15 @@ class BaseRealtimeAgent(
 GEMINI_NATIVE_AUDIO_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 
 
-def build_realtime_model(voice: str = "Leda") -> google_plugin.realtime.RealtimeModel:
-    """Gemini 2.5 Flash Native Audio — identical for voice and text.
+def build_realtime_model(*, voice: str) -> google_plugin.realtime.RealtimeModel:
+    """Gemini 2.5 Flash Native Audio.
+
+    ``voice`` is REQUIRED and keyword-only. It used to default to ``"Leda"`` — which is
+    **Yua's voice**. Every current agent passes it explicitly, so the default never fired;
+    but a new agent, or a refactor that dropped the argument, would have silently *sounded
+    like Yua* while introducing herself as someone else. A default in the identity path is a
+    stranger waiting for the first person who forgets an argument. Same lesson as
+    ``ENV AGENT=aoi`` and the default persona: refuse, do not substitute.
 
     VAD tuning notes:
     - start=HIGH: commit to user speech faster (reduces barge-in lag).
