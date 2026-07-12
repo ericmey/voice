@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import aiohttp
 from livekit.agents import Agent, function_tool
@@ -28,12 +30,46 @@ def _shared_weather_connector() -> aiohttp.TCPConnector:
 # call if that connector is closed.
 
 
+# ERIC'S TIMEZONE. Not the server's.
+#
+# `get_current_time` used `datetime.now().astimezone()` and its docstring said, out loud,
+# "the current local date and time ON THE SERVER". So on the 2026-07-11 acceptance call she
+# told Eric it was "1:48 AM UTC" — four hours wrong, because mizuki's host timezone is
+# Etc/UTC. Not the container: THE HOST. There was no correct timezone anywhere on that machine
+# to inherit, so no amount of Docker TZ plumbing would have fixed it.
+#
+# And the fleet already KNEW where he was — `get_weather` has "Carmel, Indiana" hardcoded ten
+# lines below. The system knew where ERIC was and asked the machine where IT was.
+#
+# A person asking an assistant for the time is asking what time it is WHERE THEY ARE. The
+# server's location is an accident of provisioning and has never once been the answer. So the
+# zone is now an explicit, verifiable piece of config — never ambient machine state.
+DEFAULT_TIMEZONE = "America/Indiana/Indianapolis"  # Carmel, IN — matches get_weather
+ENV_TIMEZONE = "VOICE_TIMEZONE"
+
+
+def resolve_timezone() -> ZoneInfo:
+    """Eric's zone, from config. Falls back loudly, never silently to the machine's."""
+    name = (os.environ.get(ENV_TIMEZONE) or "").strip() or DEFAULT_TIMEZONE
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        logger.error(
+            "%s=%r is not a valid IANA timezone — falling back to %s. NOT falling back to the "
+            "server's clock: the server is in Etc/UTC and would be four hours wrong.",
+            ENV_TIMEZONE,
+            name,
+            DEFAULT_TIMEZONE,
+        )
+        return ZoneInfo(DEFAULT_TIMEZONE)
+
+
 class CoreToolsMixin(Agent):
     """Provides get_current_time and get_weather tools."""
 
     @function_tool
     async def get_current_time(self) -> str:
-        """Get the current local date and time on the server.
+        """Get the current date and time where Eric is (Carmel, Indiana).
 
         Invocation Condition: Invoke this tool whenever the user asks
         what time it is, what day it is, or the current date. You MUST
@@ -41,7 +77,7 @@ class CoreToolsMixin(Agent):
         without calling this tool first.
         """
         trace("tool=get_current_time")
-        now = datetime.now().astimezone()
+        now = datetime.now(resolve_timezone())
         return now.strftime("%A, %B %-d, %Y %-I:%M:%S %p %Z")
 
     @function_tool

@@ -683,3 +683,43 @@ async def test_the_busy_clock_resets_between_turns() -> None:
         await clock.advance(1)
 
     assert not state.hung_up, "the agent-busy clock never reset — normal turns accumulated"
+
+
+# --- the bleed detector must not cry wolf -----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_caller_vad_while_she_is_THINKING_is_not_a_bleed() -> None:
+    """FROM THE 2026-07-11 ACCEPTANCE CALL. Five false alarms, all of them Eric.
+
+    `agent_busy` covers speaking OR thinking. While she is THINKING there is no agent audio —
+    so caller VAD in that window cannot be her echo. It is the tail of his own real sentence,
+    which is exactly what he was doing a moment earlier. Every one of the five fired BEFORE she
+    had made a sound.
+
+    A detector that cries wolf gets ignored. This one is the fingerprint of the very bug
+    half-duplex exists to prevent, so it must be trustworthy or it is worse than absent.
+    """
+    clock, session = FakeClock(), FakeSession()
+    state = await _watchdog(session, clock)
+
+    session.emit("conversation_item_added", _user_turn())
+    session.emit("agent_state_changed", _state("thinking"))  # no audio out yet
+    session.emit("user_state_changed", _state("speaking"))  # Eric finishing his sentence
+
+    assert state.suspected_echo_events == 0, (
+        "caller VAD during THINKING was counted as an audio bleed — she had not made a sound, "
+        "so there was nothing to echo. That is the caller, and this alarm is noise."
+    )
+
+
+@pytest.mark.asyncio
+async def test_caller_vad_while_she_is_SPEAKING_is_still_a_bleed() -> None:
+    """The real signal must survive the fix. Audio is going out; VAD hears a voice."""
+    clock, session = FakeClock(), FakeSession()
+    state = await _watchdog(session, clock)
+
+    session.emit("agent_state_changed", _state("speaking"))  # audio IS going out
+    session.emit("user_state_changed", _state("speaking"))
+
+    assert state.suspected_echo_events == 1

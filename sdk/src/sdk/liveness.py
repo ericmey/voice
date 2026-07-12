@@ -115,6 +115,19 @@ class LivenessState:
     agent_busy: bool = False
     agent_busy_since: float | None = None
 
+    # SPEAKING is not the same as BUSY, and the echo detector must key on SPEAKING.
+    #
+    # `agent_busy` covers speaking OR thinking. While she is THINKING there is NO AGENT AUDIO
+    # — so caller VAD in that window cannot possibly be her echo; it is the tail of the
+    # caller's own real speech, which is exactly what he was doing a moment ago. On the
+    # 2026-07-11 acceptance call this fired five false alarms, every one of them BEFORE she had
+    # made a sound, and every one of them was Eric finishing his sentence.
+    #
+    # A detector that cries wolf is a detector that gets ignored — and this one is the
+    # fingerprint of the very bug half-duplex exists to prevent. It has to be trustworthy or
+    # it is worse than absent.
+    agent_speaking: bool = False
+
     prompted: bool = False
     hung_up: bool = False
 
@@ -175,7 +188,9 @@ def wire_liveness_watchdog(
     @session.on("agent_state_changed")
     def _on_agent_state(event: Any) -> None:
         # Tracks whether she is mid-sentence. Deliberately does NOT touch caller_last_seen.
-        busy = str(getattr(event, "new_state", "")) in ("speaking", "thinking")
+        new = str(getattr(event, "new_state", ""))
+        busy = new in ("speaking", "thinking")
+        state.agent_speaking = new == "speaking"
 
         if busy and not state.agent_busy:
             state.agent_busy_since = now()  # a turn began
@@ -210,7 +225,7 @@ def wire_liveness_watchdog(
             # on the input path. A watchdog that trusted VAD would have been kept alive BY THE
             # ECHO, fed by the very fault it exists to catch, and Eric would still have been
             # stranded in silence.
-            if state.agent_busy:
+            if state.agent_speaking:
                 state.suspected_echo_events += 1
                 user_speaking_since = now()
                 logger.warning(
