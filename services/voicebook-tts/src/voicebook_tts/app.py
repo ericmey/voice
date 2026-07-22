@@ -19,9 +19,12 @@ Design rules, each of which exists because of a defect we actually hit:
 
 from __future__ import annotations
 
+import logging
 import threading
+import time
+import uuid
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from .registry import MasterIntegrityError, UnknownVoice, VoiceRegistry
@@ -38,6 +41,8 @@ from .synth import SynthesisError, Synthesizer
 #: either justify this number or move it. Until then it is a guess with a guard
 #: around it — the guard (typed 413, never truncate) is the part that is real.
 MAX_INPUT_CHARS = 4000
+
+logger = logging.getLogger("voicebook")
 
 
 class SpeakRequest(BaseModel):
@@ -67,8 +72,26 @@ def create_app(registry: VoiceRegistry, synthesizer: Synthesizer) -> FastAPI:
         return {"voices": reg.voice_ids}
 
     @app.post("/speak")
-    def speak(req: SpeakRequest) -> Response:
+    def speak(req: SpeakRequest, x_request_id: str | None = Header(default=None)) -> Response:
+        # Correlation only — request id, voice id, status, duration. NEVER the
+        # text. Access logs previously carried no voice_id, so a service-side
+        # log line could not be matched to a specific render; correlation
+        # rested on timestamps alone.
+        rid = x_request_id or uuid.uuid4().hex[:12]
+        t0 = time.monotonic()
+
+        def done(status: str) -> None:
+            logger.info(
+                "request_id=%s voice_id=%s status=%s chars=%d duration_ms=%d",
+                rid,
+                req.voice_id,
+                status,
+                len(req.text),
+                int((time.monotonic() - t0) * 1000),
+            )
+
         if len(req.text) > MAX_INPUT_CHARS:
+            done("413_too_long")
             raise HTTPException(
                 status_code=413,
                 detail=(
@@ -81,16 +104,19 @@ def create_app(registry: VoiceRegistry, synthesizer: Synthesizer) -> FastAPI:
         try:
             entry = reg.get(req.voice_id)
         except UnknownVoice:
+            done("404_unknown_voice")
             raise HTTPException(
                 status_code=404,
                 detail=f"unknown voice_id {req.voice_id!r}; allowed: {reg.voice_ids}",
             ) from None
         except MasterIntegrityError as exc:
+            done("500_master_integrity")
             # 500, not 4xx: the caller did nothing wrong, our deployed master is
             # not the accepted voice.
             raise HTTPException(status_code=500, detail=str(exc)) from None
 
         if not gen_lock.acquire(blocking=False):
+            done("429_busy")
             raise HTTPException(
                 status_code=429,
                 detail="a generation is already in flight; concurrency is unproven",
@@ -98,6 +124,7 @@ def create_app(registry: VoiceRegistry, synthesizer: Synthesizer) -> FastAPI:
         try:
             audio = synthesizer.speak(req.text, entry.master_path, entry.reference_transcript)
         except SynthesisError as exc:
+            done("502_synthesis")
             raise HTTPException(status_code=502, detail=f"synthesis failed: {exc}") from None
         except HTTPException:
             raise
@@ -115,8 +142,11 @@ def create_app(registry: VoiceRegistry, synthesizer: Synthesizer) -> FastAPI:
             gen_lock.release()
 
         if not audio:
+            done("502_empty")
             raise HTTPException(status_code=502, detail="backend produced empty audio")
 
-        return Response(content=audio, media_type="audio/wav")
+        done("200_ok")
+        # Echo the id so both sides can be matched from either log.
+        return Response(content=audio, media_type="audio/wav", headers={"X-Request-ID": rid})
 
     return app

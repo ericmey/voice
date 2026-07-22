@@ -49,7 +49,11 @@ def load_registry(path: Path) -> VoiceRegistry:
 
 
 def main() -> int:
+    import logging
+
     import uvicorn
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s:     voicebook %(message)s")
 
     registry_path = Path(os.environ.get("VOICEBOOK_REGISTRY", DEFAULT_REGISTRY))
     host = os.environ.get("VOICEBOOK_HOST", DEFAULT_HOST)
