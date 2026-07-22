@@ -1,0 +1,14 @@
+[Unit]
+Description=voicebook-tts source allowlist (only nyla.mey.house may reach :5055)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Idempotent: delete first (ignore failure), then insert.
+ExecStart=/bin/sh -c "iptables -D DOCKER-USER -p tcp --dport 5055 ! -s 10.0.20.20 -j DROP 2>/dev/null; iptables -D DOCKER-USER -p tcp --dport 5055 -s 10.0.20.20 -j RETURN 2>/dev/null; iptables -I DOCKER-USER 1 -p tcp --dport 5055 ! -s 10.0.20.20 -j DROP; iptables -I DOCKER-USER 1 -p tcp --dport 5055 -s 10.0.20.20 -j RETURN"
+ExecStop=/bin/sh -c "iptables -D DOCKER-USER -p tcp --dport 5055 ! -s 10.0.20.20 -j DROP 2>/dev/null; iptables -D DOCKER-USER -p tcp --dport 5055 -s 10.0.20.20 -j RETURN 2>/dev/null; true"
+
+[Install]
+WantedBy=multi-user.target
