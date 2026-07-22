@@ -107,3 +107,27 @@ typecheck: ## Run pyright across sdk/tools/agents.
 	uv run pyright
 
 verify: lint typecheck test ## Lint + typecheck + tests. Green before human testing.
+
+# ---- voicebook-tts (GPU service; separate compose file) ----------------
+.PHONY: tts-build tts-up tts-down tts-logs tts-health tts-verify
+TTS_COMPOSE = docker compose -f docker-compose.tts.yaml
+
+tts-build:
+	$(TTS_COMPOSE) build
+
+tts-up:
+	$(TTS_COMPOSE) up -d
+
+tts-down:
+	$(TTS_COMPOSE) down
+
+tts-logs:
+	$(TTS_COMPOSE) logs -f voicebook-tts
+
+tts-health:
+	curl -fsS http://127.0.0.1:5055/healthz && echo
+
+# GPU-free gate for the service package. The image smoke test is separate and
+# proves the real Qwen backend; this proves the API, registry and error paths.
+tts-verify:
+	uv run pytest services/voicebook-tts/tests -q

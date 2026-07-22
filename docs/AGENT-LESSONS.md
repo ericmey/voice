@@ -282,3 +282,40 @@ its SIP rule is missing.
 **Why:** Health checks are the operator's trust signal. If the intended system
 has four phone agents, a missing Yua worker should be visible immediately
 instead of hidden as a "partial deploy" success.
+
+## Python audio packages clobber a verified cu128 torch (Blackwell, sm_120)
+
+**2026-07-22.** Three separate packages did this in one session on mizuki:
+
+| package | what it did |
+|---|---|
+| Orpheus-FastAPI | `Dockerfile.gpu` installs torch from the **cu124** index |
+| `qwen-tts` | pulled **torchaudio cu130** against cu128 torch — hard import error |
+| `chatterbox-tts` 0.1.7 | hard-pins **`torch==2.6.0`** (cu124, arch list ends `sm_90`) |
+
+The failure is quiet. The container builds, the service starts, requests
+succeed, and the GPU is never touched. The stack trace, when there is one,
+points wherever CUDA was first used — `cudnn_rnn_flatten_weight`, `torch.min` —
+which sends you debugging the wrong layer.
+
+**Verifying cu128 BEFORE installing the package is not enough.** I did exactly
+that with chatterbox: watched `sm_120` present, installed the package, and let
+it silently undo the environment. Install order is load-bearing:
+
+```bash
+pip install <package>
+pip install --force-reinstall torch torchaudio \
+  --index-url https://download.pytorch.org/whl/cu128
+```
+
+`pip check` will then report a violated pin. Record that as **"works with
+unsupported dependency versions,"** never as "supported."
+
+**Assert it, don't trust it.** `services/voicebook-tts/Dockerfile` fails the
+*build* if `sm_120` is missing from `torch.cuda.get_arch_list()`, and
+`QwenBaseSynthesizer.__init__` fails at *construction* rather than mid-request.
+Both exist so this defect cannot recur silently.
+
+Re-check `get_arch_list()` and run a real CUDA op after **every** dependency
+change — not once at environment creation. For a running service, confirm
+residency with `nvidia-smi --query-compute-apps`, not logs.

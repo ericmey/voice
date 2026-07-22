@@ -1,0 +1,30 @@
+# Voicebook TTS. Separate from docker-compose.yaml on purpose: this is the only
+# service in the repo that needs a GPU, and mixing it into the LiveKit stack
+# would make `docker compose up` require CUDA on every host.
+services:
+  voicebook-tts:
+    container_name: voicebook-tts
+    build:
+      context: ./services/voicebook-tts
+      dockerfile: Dockerfile
+    image: voicebook-tts:cu128
+    # Private interface only. The container listens on 0.0.0.0 inside its own
+    # namespace; the PUBLISHED port is bound to loopback on the host.
+    ports:
+      - "127.0.0.1:5055:5055"
+    volumes:
+      # Masters and registry are READ-ONLY. This service never writes canon.
+      - ${VOICEBOOK_MASTERS:-/srv/voicebook}:/srv/voicebook:ro
+      - ${VOICEBOOK_REGISTRY_FILE:-/srv/voicebook/registry.json}:/etc/voicebook/registry.json:ro
+    environment:
+      - VOICEBOOK_REGISTRY=/etc/voicebook/registry.json
+      - VOICEBOOK_PORT=5055
+      - HF_HOME=/models/hf-cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped

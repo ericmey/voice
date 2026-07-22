@@ -8,7 +8,7 @@
 #   uv run pytest           # run tests across all members
 
 [tool.uv.workspace]
-members = ["sdk", "tools", "agents/*"]
+members = ["sdk", "tools", "agents/*", "services/*"]
 
 [dependency-groups]
 dev = [
@@ -45,7 +45,7 @@ ignore = ["B008", "E501"]
 # ---- pyright: static type checker -------------------------------------
 # Run via:  make typecheck  (or:  uv run pyright)
 [tool.pyright]
-include = ["sdk", "tools", "agents"]
+include = ["sdk", "tools", "agents", "services"]
 exclude = ["**/.venv", "**/__pycache__", "**/build", "**/dist"]
 venvPath = "."
 venv = ".venv"
