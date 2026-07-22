@@ -21,12 +21,18 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 
-RUN pip install --no-cache-dir . qwen-tts soundfile numpy
+# Pinned to the exact versions qualified on mizuki 2026-07-22. Install order
+# protects sm_120 today; pinning is what keeps tomorrow reproducible.
+RUN pip install --no-cache-dir . \
+        qwen-tts==0.1.1 \
+        soundfile==0.14.0 \
+        numpy==2.4.6
 
 # LAST, and deliberately after qwen-tts: restore the matched cu128 pair that
 # qwen-tts's own resolution would otherwise leave mismatched.
 RUN pip install --no-cache-dir --force-reinstall \
-        torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+        torch==2.11.0+cu128 torchaudio==2.11.0+cu128 \
+        --index-url https://download.pytorch.org/whl/cu128
 
 # Build-time assertion. If a future dependency bump clobbers cu128 again, the
 # IMAGE fails to build rather than the service failing on Nyla's first message.

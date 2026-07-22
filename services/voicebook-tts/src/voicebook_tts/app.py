@@ -27,8 +27,16 @@ from pydantic import BaseModel, Field
 from .registry import MasterIntegrityError, UnknownVoice, VoiceRegistry
 from .synth import SynthesisError, Synthesizer
 
-#: Hard ceiling on a single request. Measured against a real long-form Nyla
-#: daily summary before being set; see tests and the Phase 1 evidence package.
+#: Hard ceiling on a single request.
+#:
+#: PROVISIONAL AND UNMEASURED. An earlier version of this comment claimed the
+#: value had been "measured against a real long-form Nyla daily summary." It had
+#: not. Nothing was measured; 4000 was picked. A comment asserting a check that
+#: never ran is worse than no comment, because it stops the next reader looking.
+#:
+#: To settle it: render a real Nyla daily summary, count its characters, and
+#: either justify this number or move it. Until then it is a guess with a guard
+#: around it — the guard (typed 413, never truncate) is the part that is real.
 MAX_INPUT_CHARS = 4000
 
 
@@ -91,6 +99,18 @@ def create_app(registry: VoiceRegistry, synthesizer: Synthesizer) -> FastAPI:
             audio = synthesizer.speak(req.text, entry.master_path, entry.reference_transcript)
         except SynthesisError as exc:
             raise HTTPException(status_code=502, detail=f"synthesis failed: {exc}") from None
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 - deliberate
+            # A Protocol cannot enforce which exception type an implementation
+            # raises. Catching only SynthesisError meant a backend raising
+            # anything else (CUDA OOM, tokenizer error) escaped as an untyped
+            # 500 while this module advertised a typed 502. Caught by test, not
+            # by reading — the fake synthesizer raised the correct type and so
+            # could never have exposed it.
+            raise HTTPException(
+                status_code=502, detail=f"synthesis failed: {type(exc).__name__}: {exc}"
+            ) from None
         finally:
             gen_lock.release()
 

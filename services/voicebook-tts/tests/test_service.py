@@ -6,6 +6,7 @@ Every test here corresponds to a failure mode we hit for real today.
 from __future__ import annotations
 
 import hashlib
+import threading
 import wave
 from pathlib import Path
 
@@ -108,3 +109,61 @@ def test_backend_failure_returns_no_audio(tmp_path: Path):
 def test_empty_registry_refuses_to_start(tmp_path: Path):
     with pytest.raises(RegistryError, match="empty"):
         VoiceRegistry({}).verify_all()
+
+
+class BlockingSynth:
+    """Holds the generation lock until released, so a second request can be
+    observed hitting the concurrency guard rather than queueing invisibly."""
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def speak(self, text: str, master_path: Path, reference_transcript: str) -> bytes:
+        self.entered.set()
+        self.release.wait(timeout=5)
+        return b"RIFF" + b"\x00" * 64
+
+
+def test_second_concurrent_request_is_refused_not_queued(tmp_path: Path):
+    """The 429 guard was previously claimed but untested."""
+    master = tmp_path / "m.wav"
+    digest = _wav(master)
+    reg = VoiceRegistry({"x": VoiceEntry("x", master, "t", digest)})
+    synth = BlockingSynth()
+    client = TestClient(create_app(reg, synth))
+
+    first: dict[str, int] = {}
+
+    def run_first():
+        first["status"] = client.post("/speak", json={"voice_id": "x", "text": "a"}).status_code
+
+    t = threading.Thread(target=run_first)
+    t.start()
+    assert synth.entered.wait(timeout=5), "first request never reached the backend"
+
+    # Second request arrives while the first still holds the lock.
+    second = client.post("/speak", json={"voice_id": "x", "text": "b"})
+    assert second.status_code == 429
+    assert "concurrency is unproven" in second.json()["detail"]
+
+    synth.release.set()
+    t.join(timeout=5)
+    assert first["status"] == 200
+
+
+def test_real_backend_wraps_arbitrary_exceptions_as_typed_502(tmp_path: Path):
+    """A backend raising something OTHER than SynthesisError must still produce
+    the promised typed 502, never an untyped 500. The fake synthesizer used
+    elsewhere raises the correct type and so could never catch this."""
+    master = tmp_path / "m.wav"
+    digest = _wav(master)
+
+    class ExplodingSynth:
+        def speak(self, text, master_path, reference_transcript):
+            raise RuntimeError("CUDA out of memory")
+
+    reg = VoiceRegistry({"x": VoiceEntry("x", master, "t", digest)})
+    client = TestClient(create_app(reg, ExplodingSynth()), raise_server_exceptions=False)
+    r = client.post("/speak", json={"voice_id": "x", "text": "hi"})
+    assert r.status_code == 502, f"got {r.status_code}: arbitrary backend errors must be typed"

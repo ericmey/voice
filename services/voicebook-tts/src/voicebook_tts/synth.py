@@ -73,12 +73,27 @@ class QwenBaseSynthesizer:
         )
 
     def speak(self, text: str, master_path: Path, reference_transcript: str) -> bytes:
-        wavs, sr = self._model.generate_voice_clone(
-            text=text,
-            ref_audio=str(master_path),
-            ref_text=reference_transcript,
-            language="English",
-        )
+        # EVERY backend failure must surface as SynthesisError so the API can
+        # return the promised typed 502. Unwrapped, a CUDA OOM or a tokenizer
+        # error escapes as a generic 500 — and the test suite would not catch it,
+        # because the fake synthesizer raises the correct type while the real one
+        # did not. The fake conformed to a contract the real backend broke.
+        try:
+            wavs, sr = self._model.generate_voice_clone(
+                text=text,
+                ref_audio=str(master_path),
+                ref_text=reference_transcript,
+                language="English",
+            )
+        except SynthesisError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - deliberate: type-normalise everything
+            raise SynthesisError(f"{type(exc).__name__}: {exc}") from exc
+
         if not wavs:
             raise SynthesisError("backend returned no audio")
-        return pcm_to_wav_bytes(wavs[0], sr)
+
+        try:
+            return pcm_to_wav_bytes(wavs[0], sr)
+        except Exception as exc:
+            raise SynthesisError(f"WAV encode failed: {type(exc).__name__}: {exc}") from exc
