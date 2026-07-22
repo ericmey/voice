@@ -168,10 +168,21 @@ Nyla earlier the same day.
 
 ### Open lane
 
-Artifact remediation for Turbo, unblocked from the working system. Cheapest
-untested hypothesis: temperature 0.8 with top_k 1000 is loose sampling, and
-warble is a classic symptom — lower temperature, or raise `min_p` above 0.00.
-Single-parameter changes on seed 1002, which is already near the line.
+Artifact remediation for Turbo, unblocked from the working system.
+
+**The tuning surface is narrower than it looks.** `tts_turbo.py:290` warns and
+**ignores** `cfg_weight`, `exaggeration` **and `min_p`** — all three are inert
+for Turbo. (This also confirms pinning them to `0.0` was correct: that is the
+value which avoids the warning path.) The parameters that actually do anything
+are `temperature`, `top_p`, `top_k`, `repetition_penalty`, `norm_loudness`.
+
+Cheapest untested **hypothesis** — not an established fix: temperature 0.8 with
+top_k 1000 is loose sampling and warble is a classic symptom of that, so lower
+temperature or lower top_k are the first things to try. On seed 1002, which is
+already near the line. Whether either helps is unknown.
+
+The speed difference is an **observed comparison range** from this one
+sentence, not a promised win in any future configuration.
 
 ### Evidence scope
 

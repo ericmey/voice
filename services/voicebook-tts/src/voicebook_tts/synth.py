@@ -87,7 +87,11 @@ class QwenBaseSynthesizer:
             )
         except SynthesisError:
             raise
-        except BaseException as exc:  # noqa: BLE001 - deliberate: type-normalise everything
+        except Exception as exc:  # noqa: BLE001 - deliberate: type-normalise backend errors
+            # Exception, NOT BaseException. Catching BaseException converted
+            # KeyboardInterrupt, SystemExit and cancellation-class signals into
+            # audio 502s — a shutdown request would have been reported to the
+            # caller as a synthesis failure and swallowed by the service.
             raise SynthesisError(f"{type(exc).__name__}: {exc}") from exc
 
         if not wavs:
