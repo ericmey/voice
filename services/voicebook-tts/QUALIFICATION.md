@@ -125,3 +125,57 @@ sentence. It does not characterise Qwen Base performance in general.
 Identity retention (Eric's ear, pending), repeatability beyond the draws
 listed, long-form narration, expressive range, paralinguistics, concurrency,
 restart behaviour, or serving integration.
+
+---
+
+## Sumi identity gate — 2026-07-22
+
+Blind, R128-matched, four descendants behind a sealed key. Reference was Sumi's
+accepted voicebook master; one new neutral sentence; Qwen Base once as control,
+Chatterbox Turbo three times on recorded seeds with every parameter pinned to
+upstream's own app defaults.
+
+| audition label | runtime | Eric's ear |
+|---|---|---|
+| candidate_A | **Qwen Base** (control) | **clean direct match** |
+| candidate_B | Turbo seed 1002 | close, audible warble — nearest of the three |
+| candidate_C | Turbo seed 1003 | audible warble |
+| candidate_D | Turbo seed 1001 | audible warble |
+
+### Result
+
+**Qwen Base is the production candidate** for speaking accepted voicebook
+masters. It carried Sumi cleanly.
+
+**Chatterbox Turbo is promising but NOT READY — not rejected.** Three draws at
+upstream default parameters all carried audible warble; one was close. The
+distinction matters: this is a finding about Turbo *as configured*, not about
+Turbo as an engine.
+
+### Not a misconfiguration
+
+Checked before reporting, because it was the obvious way to be wrong. The
+pinned values match `gradio_tts_turbo_app.py` defaults exactly — temperature
+0.8, top_p 0.95, top_k 1000, repetition_penalty 1.2, min_p 0.00, norm_loudness
+True. `exaggeration` and `cfg_weight` are not surfaced by that app at all.
+
+### The trade taken
+
+Turbo measured 2.3×–3.7× faster than realtime at 3.47 GB peak. Qwen measured
+1.6× *slower* than realtime at 4.79 GB peak. **We keep the slower, heavier
+runtime because it is the one that sounds like her** — the same trade taken on
+Nyla earlier the same day.
+
+### Open lane
+
+Artifact remediation for Turbo, unblocked from the working system. Cheapest
+untested hypothesis: temperature 0.8 with top_k 1000 is loose sampling, and
+warble is a classic symptom — lower temperature, or raise `min_p` above 0.00.
+Single-parameter changes on seed 1002, which is already near the line.
+
+### Evidence scope
+
+One master, one sentence, one listener. Three Turbo draws, **one** Qwen draw.
+Three-for-three warble is a stronger signal than a single observation; the Qwen
+side remains n=1 on this sentence. This is not a general reliability ranking of
+either runtime.
