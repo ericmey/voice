@@ -51,16 +51,33 @@ Record as **"works with unsupported dependency versions,"** never "supported."
 
 ### Hard constraints found in source
 
-* **`tts_turbo.py:245` — the reference audio prompt must exceed 5.0 seconds.**
-  A hard `assert`, not a warning. Sumi's master is 11.44 s and Nyla's is 9.68 s,
-  so both pass — but any future voicebook master under 5 s would make Turbo
-  fail outright. This is a constraint on master authoring, not just serving.
+* **`tts_turbo.py:245` — reference length assert.**
 
-* **`tts_turbo.py:228` — `norm_loudness(wav, sr, target_lufs=-27)`.** When
-  enabled it normalizes the **reference**, inside `prepare_conditionals`, and
-  the output inherits that level. This fully explains Turbo raws landing at
-  −26.6 to −27.9 LUFS while the Qwen control landed at −21.3, matching the
-  master. **Intentional upstream policy, not model anomaly.**
+  ```python
+  assert len(s3gen_ref_wav) / _sr > 5.0, "Audio prompt must be longer than 5 seconds!"
+  ```
+
+  Strictly greater than. **A master of exactly 5.0 s also fails.** Sumi's
+  11.44 s and Nyla's 9.68 s both clear it. This is a constraint on **master
+  authoring**, not just serving — author future masters comfortably above five
+  seconds; 10–15 s remains the practical target.
+
+* **`tts_turbo.py:228` — `norm_loudness(wav, sr, target_lufs=-27)`.** Two
+  separate facts, deliberately not joined:
+
+  **Established from source:** when enabled, this normalizes the **reference**
+  to −27 LUFS inside `prepare_conditionals`. It is intentional upstream policy.
+
+  **Observed separately:** Turbo raw outputs measured −27.86, −26.97 and
+  −26.59 LUFS, while the Qwen control measured −21.29 against a master of
+  −21.27.
+
+  Those observations are *consistent with* the reference policy. They are not
+  proof of it — no output-normalization step was found, so the causal path from
+  conditioned reference level to output level is **unverified**. An earlier
+  draft of this file said the policy "fully explains" the outputs and that the
+  output "inherits that level." Both were causal claims the source alone does
+  not support.
 
 ### Measured — Sumi master copy, one new neutral sentence
 
