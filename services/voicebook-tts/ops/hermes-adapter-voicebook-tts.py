@@ -15,9 +15,12 @@ that sounds nearly right is worse than silence, because nobody notices.
 """
 import argparse
 import json
+import os
 import sys
+import tempfile
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 p = argparse.ArgumentParser()
 p.add_argument("--input", required=True)
@@ -30,7 +33,7 @@ a = p.parse_args()
 try:
     text = open(a.input, encoding="utf-8").read().strip()
 except OSError as exc:
-    sys.exit("voicebook-tts: cannot read %s: %s" % (a.input, exc))
+    sys.exit(f"voicebook-tts: cannot read {a.input}: {exc}")
 if not text:
     sys.exit("voicebook-tts: input text is empty")
 
@@ -46,16 +49,38 @@ try:
         audio = resp.read()
 except urllib.error.HTTPError as exc:
     body = exc.read()[:300].decode("utf-8", "replace")
-    sys.exit("voicebook-tts: HTTP %s from %s: %s" % (exc.code, a.url, body))
+    sys.exit(f"voicebook-tts: HTTP {exc.code} from {a.url}: {body}")
 except Exception as exc:
-    sys.exit("voicebook-tts: %s unreachable: %s" % (a.url, exc))
+    sys.exit(f"voicebook-tts: {a.url} unreachable: {exc}")
 
 if len(audio) < 100 or audio[:4] != b"RIFF":
-    sys.exit("voicebook-tts: response was not WAV (%d bytes)" % len(audio))
+    sys.exit(f"voicebook-tts: response was not WAV ({len(audio)} bytes)")
 
+# ATOMIC WRITE. Writing straight to a.output means a partial write — disk full,
+# interruption, crash mid-stream — leaves a truncated file behind while this
+# process exits non-zero. Hermes would then see BOTH an error AND an output
+# file. The earlier red-proof could never have caught it: unreachable-service
+# and unknown-voice both fail before any write happens.
+#
+# Temp file in the DESTINATION directory (same filesystem, so os.replace is
+# atomic), unlinked on every failure path, replaced into place only once the
+# bytes are fully on disk.
+out = Path(a.output)
+tmp = None
 try:
-    open(a.output, "wb").write(audio)
+    with tempfile.NamedTemporaryFile(
+        dir=out.parent, prefix=f".{out.name}.", suffix=".part", delete=False
+    ) as fh:
+        tmp = Path(fh.name)
+        fh.write(audio)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, out)
+    tmp = None
 except OSError as exc:
-    sys.exit("voicebook-tts: cannot write %s: %s" % (a.output, exc))
+    sys.exit(f"voicebook-tts: cannot write {a.output}: {exc}")
+finally:
+    if tmp is not None and tmp.exists():
+        tmp.unlink(missing_ok=True)
 
-print("voicebook-tts: %d bytes -> %s (voice_id=%s)" % (len(audio), a.output, a.voice_id))
+print(f"voicebook-tts: {len(audio)} bytes -> {a.output} (voice_id={a.voice_id})")

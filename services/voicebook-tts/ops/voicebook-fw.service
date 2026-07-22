@@ -2,6 +2,11 @@
 Description=voicebook-tts source allowlist (only nyla.mey.house may reach :5055)
 After=docker.service
 Requires=docker.service
+# PartOf: a Docker daemon restart FLUSHES the DOCKER-USER chain, silently
+# removing this allowlist and re-exposing the synthesis API to the whole VLAN.
+# enabled-at-boot does not cover that case. PartOf ties this unit's lifecycle
+# to docker.service so it is restarted with it.
+PartOf=docker.service
 
 [Service]
 Type=oneshot

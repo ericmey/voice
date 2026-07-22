@@ -28,8 +28,17 @@ the LAN could generate audio in either girl's voice.
 `DOCKER-USER` chain — `INPUT` is bypassed by Docker's publish path, so the rule
 must live there. Only `10.0.20.20` may reach `:5055`.
 
-Idempotent (deletes before inserting), enabled at boot, and `ExecStop` removes
-the rules — which is the rollback.
+Idempotent (deletes before inserting), enabled at boot, `PartOf=docker.service`,
+and `ExecStop` removes the rules — which is the rollback.
+
+**Why `PartOf`.** A Docker daemon restart flushes the `DOCKER-USER` chain,
+silently dropping this allowlist and re-exposing the synthesis API to the whole
+VLAN. Enabled-at-boot does not cover that case.
+
+**Daemon-restart survival is UNPROVEN.** `PartOf` is the correct mechanism, but
+restarting the Docker daemon on mizuki would disrupt shared workloads
+(harem-world-web, litellm, aetheris, shiori-tag-catalog), so it has not been
+exercised. Verify during the next scheduled maintenance window.
 
 **Proven both ways:** nyla returns `healthz`; momo, another VLAN-20 host, is
 blocked.
@@ -37,7 +46,7 @@ blocked.
 ## Hermes adapter — nyla.mey.house
 
 `~/.hermes/bin/voicebook-tts.py`
-SHA-256 `eac51193a0e2bef482ba89eeb9dc0c825815e3b355f4f3bfe7468143c01b81f1`
+SHA-256 `d3eb8e8dfe6ddaffc67cd6278c32625013fa46551ef07d960d92f003c415fb50`
 (byte-identical copy in this directory as `hermes-adapter-voicebook-tts.py`)
 
 Sends `voice_id` and nothing else — never a path, never a hash. **No fallback
@@ -47,7 +56,16 @@ path exists in the code.** Red-proofed before wiring:
 |---|---|
 | service unreachable | exit 1, **no file written** |
 | unknown `voice_id` | exit 1, **no file written** |
+| unwritable destination | exit 1, **no file, no partial, no temp left** |
 | success | exit 0, valid WAV |
+
+**Writes atomically.** An earlier version wrote straight to the output path, so
+a partial write — disk full, interruption, crash mid-stream — would have left a
+truncated file while the process exited non-zero. Hermes would have seen both an
+error *and* an output file. The original red-proof could not have caught it:
+unreachable-service and unknown-voice both fail *before* any write. Now it
+writes to a temp file in the destination directory, fsyncs, and `os.replace`s
+into position, unlinking the temp on every failure path.
 
 ## Girl configs — nyla.mey.house
 
