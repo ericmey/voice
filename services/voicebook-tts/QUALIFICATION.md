@@ -176,10 +176,11 @@ for Turbo. (This also confirms pinning them to `0.0` was correct: that is the
 value which avoids the warning path.) The parameters that actually do anything
 are `temperature`, `top_p`, `top_k`, `repetition_penalty`, `norm_loudness`.
 
-Cheapest untested **hypothesis** — not an established fix: temperature 0.8 with
-top_k 1000 is loose sampling and warble is a classic symptom of that, so lower
-temperature or lower top_k are the first things to try. On seed 1002, which is
-already near the line. Whether either helps is unknown.
+Cheapest untested **hypothesis** — not an established fix, and not a diagnosis:
+lowering `temperature` or `top_k` **may** reduce the observed warble. Untested.
+No causal attribution of the warble to sampling looseness has been established
+here; that was an earlier draft's claim and it was not earned. Seed 1002 is the
+draw nearest the line and would be where to start.
 
 The speed difference is an **observed comparison range** from this one
 sentence, not a promised win in any future configuration.

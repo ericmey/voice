@@ -22,6 +22,17 @@ services:
       - voicebook-hf-cache:/models/hf-cache
     environment:
       - VOICEBOOK_REGISTRY=/etc/voicebook/registry.json
+      # PINNED SNAPSHOT PATH, not a repo id. qwen_tts's from_pretrained calls
+      # the HF API model_info() even with weights fully cached, and
+      # local_files_only=True is NOT honoured — so a repo id makes startup
+      # require network. Proven by a 13-restart crash loop. A resolved snapshot
+      # path loads fully offline AND pins the exact checkpoint.
+      # Prefetch once (needs network):
+      #   docker run --rm -v voicebook-hf-cache:/models/hf-cache \
+      #     -e HF_HOME=/models/hf-cache --entrypoint python voicebook-tts:cu128 \
+      #     -c "from huggingface_hub import snapshot_download as d; print(d('Qwen/Qwen3-TTS-12Hz-1.7B-Base'))"
+      - VOICEBOOK_MODEL=${VOICEBOOK_MODEL:-/models/hf-cache/hub/models--Qwen--Qwen3-TTS-12Hz-1.7B-Base/snapshots/fd4b254389122332181a7c3db7f27e918eec64e3}
+      - HF_HUB_OFFLINE=1
       - VOICEBOOK_PORT=5055
       - HF_HOME=/models/hf-cache
     deploy:

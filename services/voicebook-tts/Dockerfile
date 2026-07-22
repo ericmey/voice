@@ -34,14 +34,24 @@ RUN pip install --no-cache-dir --force-reinstall \
         torch==2.11.0+cu128 torchaudio==2.11.0+cu128 \
         --index-url https://download.pytorch.org/whl/cu128
 
-# Build-time assertion. If a future dependency bump clobbers cu128 again, the
-# IMAGE fails to build rather than the service failing on Nyla's first message.
+# Build-time assertion — what is ACTUALLY checkable without a GPU.
+#
+# An earlier version asserted sm_120 was in torch.cuda.get_arch_list() here.
+# That can never pass: `docker build` has no GPU, CUDA never initialises, and
+# get_arch_list() returns []. The gate was not strict, it was impossible — it
+# would have failed every build on every machine forever.
+#
+# What IS verifiable at build time is which wheel got installed, which is the
+# thing the clobber defect actually changes.
 RUN python -c "\
 import torch, torchaudio, sys; \
-print('torch', torch.__version__, 'torchaudio', torchaudio.__version__); \
-arch = torch.cuda.get_arch_list(); \
-print('arch', arch); \
-sys.exit(0 if 'sm_120' in arch else 'FATAL: sm_120 missing — cu128 was clobbered')"
+print('torch', torch.__version__, '| torchaudio', torchaudio.__version__, '| cuda', torch.version.cuda); \
+ok = torch.version.cuda == '12.8' and '+cu128' in torch.__version__ and '+cu128' in torchaudio.__version__; \
+sys.exit(0 if ok else 'FATAL: expected matched cu128 builds, got torch %s / torchaudio %s / cuda %s' % (torch.__version__, torchaudio.__version__, torch.version.cuda))"
+
+# The sm_120 kernel assertion runs at STARTUP, in QwenBaseSynthesizer.__init__,
+# where the nvidia runtime has actually attached a device. That is the only
+# place the question can be answered.
 
 EXPOSE 5055
 ENV VOICEBOOK_HOST=0.0.0.0
