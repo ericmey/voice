@@ -27,7 +27,9 @@ STAGING_DIR="${STAGING_DIR:-$HOME/vbs-drill-a6a9c4e}"
 # CANONICAL-HOME PIN — the single durable lifecycle home (Yua's decision): a dedicated
 # DETACHED git worktree created from /home/ericmey/voice at the reviewed final commit,
 # NOT the existing sumi-local-voice checkout. CANON_DIR must physically resolve to exactly this.
-EXPECT_CANON_DIR="${EXPECT_CANON_DIR:-/home/ericmey/voicebook-stream-deploy}"
+# LITERAL, NOT environment-derived: a caller CANNOT redefine the lifecycle authority via the
+# environment (no `${EXPECT_CANON_DIR:-}`). A test may override it only by reassigning AFTER source.
+EXPECT_CANON_DIR=/home/ericmey/voicebook-stream-deploy
 PARAKEET_READY=http://127.0.0.1:9000/v1/health/ready
 PARAKEET_LIVE=http://127.0.0.1:9000/v1/health/live
 VRAM_FLOOR=800

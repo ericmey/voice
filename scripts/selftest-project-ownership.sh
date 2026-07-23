@@ -28,11 +28,15 @@ run_scenario() { # $1 runbook  $2 setup-fn
     m_up_n=0; m_up1_rc=0; m_up2_rc=0; m_up_health_rb=healthy; m_up_img_rb="$IMGX"
     m_canon_abs="$LOGDIR"; m_staging_abs="/no/vbs-drill-a6a9c4e"; m_canon_home="$LOGDIR"
     "$setup"
+    # simulate launching WITH an EXPECT_CANON_DIR in the environment (must be ignored by the literal pin)
+    [ "${m_skip_pin_override:-0}" = 1 ] && EXPECT_CANON_DIR="${m_env_pin:-/x}"
     source "$rb"
-    CANON_DIR="$LOGDIR"; STAGING_DIR="/no/vbs-drill-a6a9c4e"; EXPECT_CANON_DIR="$m_canon_home"
+    CANON_DIR="$LOGDIR"; STAGING_DIR="/no/vbs-drill-a6a9c4e"
     PARAKEET_READY=http://127.0.0.1:9000/v1/health/ready; PARAKEET_LIVE=http://127.0.0.1:9000/v1/health/live; VRAM_FLOOR=800
+    # normal scenarios override the pin AFTER source (Yua-sanctioned test seam); the env-red-proof does NOT
+    [ "${m_skip_pin_override:-0}" = 1 ] || EXPECT_CANON_DIR="$m_canon_home"
 
-    realpath() { case "$1" in *vbs-drill*) echo "$m_staging_abs";; *MISMATCH*) echo /different/home;; *) echo "$m_canon_abs";; esac; }
+    realpath() { case "$1" in *vbs-drill*) echo "$m_staging_abs";; *MISMATCH*) echo /different/home;; *voicebook-stream-deploy*) echo /home/ericmey/voicebook-stream-deploy;; *) echo "$m_canon_abs";; esac; }
     shasum() { echo "$m_sha  ${!#}"; }
     stat() { echo "$m_bytes"; }
     sleep() { :; }
@@ -108,6 +112,7 @@ s_vram_empty()   { m_vram=""; }                                 # GATE2: empty r
 s_vram_nonnum()  { m_vram=oops; }                               # GATE2: non-numeric -> fail-closed
 s_vram_below()   { m_vram=500; }                                # GATE2: below floor -> fail-closed
 s_home_mismatch(){ m_canon_home=/x/MISMATCH/home; }             # CANON pin: arg resolves != EXPECT_CANON_DIR
+s_env_pin()      { m_skip_pin_override=1; m_env_pin="$m_canon_abs"; }  # env EXPECT_CANON_DIR set to CANON_DIR's path; literal pin must IGNORE it
 
 echo "=============================================================="
 echo " OWNERSHIP-MIGRATION SELF-TEST — migrate-project-ownership.sh"
@@ -127,6 +132,7 @@ expect "PREFLIGHT_ABORT/vram-empty(G2)"          "$RUNBOOK" s_vram_empty  1 PREF
 expect "PREFLIGHT_ABORT/vram-nonnumeric(G2)"     "$RUNBOOK" s_vram_nonnum 1 PREFLIGHT_ABORT "VRAM"
 expect "PREFLIGHT_ABORT/vram-below-floor(G2)"    "$RUNBOOK" s_vram_below  1 PREFLIGHT_ABORT "VRAM"
 expect "PREFLIGHT_ABORT/canon-home-mismatch"     "$RUNBOOK" s_home_mismatch 1 PREFLIGHT_ABORT "EXPECT_CANON_DIR"
+expect "PIN-IGNORES-ENV/env-cannot-move-pin"     "$RUNBOOK" s_env_pin       1 PREFLIGHT_ABORT "EXPECT_CANON_DIR"
 
 echo "--- meta-red-proofs ---"
 M_NOHASH=$(mutant '/\[ "\$sha" = "\$EXPECT_COMPOSE_SHA" \]/d')
@@ -146,6 +152,8 @@ M_NOVFLOOR=$(mutant 's/\[ "\$1" -ge "\$VRAM_FLOOR" \]/true/')                # G
 meta_detects "lost-vram-floor detected"        "$M_NOVFLOOR" s_vram_below 1 PREFLIGHT_ABORT
 M_NOHOME=$(mutant '/CANON_DIR (\$canon_abs) != pinned EXPECT_CANON_DIR/d')   # drop the home-pin assertion line
 meta_detects "lost-canon-home-pin detected"    "$M_NOHOME" s_home_mismatch 1 PREFLIGHT_ABORT
+M_ENVPIN=$(mutant 's#^EXPECT_CANON_DIR=/home/ericmey/voicebook-stream-deploy#EXPECT_CANON_DIR="${EXPECT_CANON_DIR:-/home/ericmey/voicebook-stream-deploy}"#')  # reintroduce env-derived pin
+meta_detects "env-overridable-pin detected"    "$M_ENVPIN" s_env_pin 1 PREFLIGHT_ABORT
 
 echo "=============================================================="
 echo "PASS=$PASS FAIL=$FAIL"
