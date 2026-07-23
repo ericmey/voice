@@ -23,19 +23,20 @@ run_scenario() { # $1 runbook  $2 setup-fn
     m_stable_present=1; m_stable_running=true; m_stable_health=healthy; m_stable_img="$IMGX"
     m_stable_project=vbs-drill-a6a9c4e; m_5056=200; m_dns=OK
     m_qual_status=exited; m_qual_img="$IMGX"; m_qual_running=false; m_qual_5060=000
-    m_tts_running=false; m_parakeet=200; m_sha="$SHAX"; m_render_name=voicebook-stream
+    m_tts_running=false; m_parakeet_ready=200; m_parakeet_live=200; m_vram=8000; m_sha="$SHAX"; m_render_name=voicebook-stream
     m_old_ps="voicebook-stream"; m_canon_ps=""; m_ps_rc=0; m_render=200; m_bytes=40000
     m_up_n=0; m_up1_rc=0; m_up2_rc=0; m_up_health_rb=healthy; m_up_img_rb="$IMGX"
-    m_canon_abs="$LOGDIR"; m_staging_abs="/no/vbs-drill-a6a9c4e"
+    m_canon_abs="$LOGDIR"; m_staging_abs="/no/vbs-drill-a6a9c4e"; m_canon_home="$LOGDIR"
     "$setup"
     source "$rb"
-    CANON_DIR="$LOGDIR"; STAGING_DIR="/no/vbs-drill-a6a9c4e"; PARAKEET=http://127.0.0.1:9000/v1/health/ready
+    CANON_DIR="$LOGDIR"; STAGING_DIR="/no/vbs-drill-a6a9c4e"; EXPECT_CANON_DIR="$m_canon_home"
+    PARAKEET_READY=http://127.0.0.1:9000/v1/health/ready; PARAKEET_LIVE=http://127.0.0.1:9000/v1/health/live; VRAM_FLOOR=800
 
-    realpath() { case "$1" in *vbs-drill*) echo "$m_staging_abs";; *) echo "$m_canon_abs";; esac; }
+    realpath() { case "$1" in *vbs-drill*) echo "$m_staging_abs";; *MISMATCH*) echo /different/home;; *) echo "$m_canon_abs";; esac; }
     shasum() { echo "$m_sha  ${!#}"; }
     stat() { echo "$m_bytes"; }
     sleep() { :; }
-    nvidia-smi() { echo 8000; }
+    nvidia-smi() { echo "$m_vram"; }
     docker() { local s="$1"; shift; case "$s" in
         inspect) local fmt="" name=""
           while [ $# -gt 0 ]; do case "$1" in -f|--format) fmt="$2"; shift 2;; *) name="$1"; shift;; esac; done
@@ -67,7 +68,7 @@ run_scenario() { # $1 runbook  $2 setup-fn
       esac; }
     curl() { local o="" url=""
       while [ $# -gt 0 ]; do case "$1" in -o) o="$2"; shift 2;; -X|-H|-d|-m|-w) shift 2;; -*) shift;; *) url="$1"; shift;; esac; done
-      local c=000; case "$url" in *5056/healthz) c=$m_5056;; *5060/healthz) c=$m_qual_5060;; *5056/speak) c=$m_render;; *health/ready) c=$m_parakeet;; esac
+      local c=000; case "$url" in *5056/healthz) c=$m_5056;; *5060/healthz) c=$m_qual_5060;; *5056/speak) c=$m_render;; *health/ready) c=$m_parakeet_ready;; *health/live) c=$m_parakeet_live;; esac
       [ -n "$o" ] && : > "$o" 2>/dev/null; printf '%s' "$c"; }
 
     main
@@ -101,6 +102,12 @@ s_state_c()      { m_up1_rc=1; m_up2_rc=1; }                    # migrate up fai
 s_fail_running() { m_render=500; m_up_health_rb=starting; }     # rollback leaves stable running+unhealthy -> refuse qual
 s_fail_unknown() { m_up1_rc=1; m_up2_rc=1; m_ps_rc=1; }         # stable gone but readback UNKNOWN -> refuse qual
 s_wrongdigest()  { m_render=500; m_up_img_rb=sha256:BADD; }     # rollback stable healthy+canonical but WRONG digest -> not A
+s_par_ready()    { m_parakeet_ready=500; }                      # GATE1: ready fails independently of live
+s_par_live()     { m_parakeet_live=500; }                       # GATE1: live fails independently of ready
+s_vram_empty()   { m_vram=""; }                                 # GATE2: empty readback -> fail-closed
+s_vram_nonnum()  { m_vram=oops; }                               # GATE2: non-numeric -> fail-closed
+s_vram_below()   { m_vram=500; }                                # GATE2: below floor -> fail-closed
+s_home_mismatch(){ m_canon_home=/x/MISMATCH/home; }             # CANON pin: arg resolves != EXPECT_CANON_DIR
 
 echo "=============================================================="
 echo " OWNERSHIP-MIGRATION SELF-TEST — migrate-project-ownership.sh"
@@ -114,6 +121,12 @@ expect "ROLLBACK_OK/STATE_C-qual"      "$RUNBOOK" s_state_c     1 ROLLBACK_OK "S
 expect_no_qual_start "ROLLBACK_FAILED/stable-running-unhealthy" "$RUNBOOK" s_fail_running
 expect_no_qual_start "ROLLBACK_FAILED/readback-unknown"        "$RUNBOOK" s_fail_unknown
 expect "ROLLBACK_FAILED/incomplete-A(wrong-digest)" "$RUNBOOK" s_wrongdigest 2 ROLLBACK_FAILED
+expect "PREFLIGHT_ABORT/parakeet-ready-only(G1)" "$RUNBOOK" s_par_ready 1 PREFLIGHT_ABORT "Parakeet"
+expect "PREFLIGHT_ABORT/parakeet-live-only(G1)"  "$RUNBOOK" s_par_live  1 PREFLIGHT_ABORT "Parakeet"
+expect "PREFLIGHT_ABORT/vram-empty(G2)"          "$RUNBOOK" s_vram_empty  1 PREFLIGHT_ABORT "VRAM"
+expect "PREFLIGHT_ABORT/vram-nonnumeric(G2)"     "$RUNBOOK" s_vram_nonnum 1 PREFLIGHT_ABORT "VRAM"
+expect "PREFLIGHT_ABORT/vram-below-floor(G2)"    "$RUNBOOK" s_vram_below  1 PREFLIGHT_ABORT "VRAM"
+expect "PREFLIGHT_ABORT/canon-home-mismatch"     "$RUNBOOK" s_home_mismatch 1 PREFLIGHT_ABORT "EXPECT_CANON_DIR"
 
 echo "--- meta-red-proofs ---"
 M_NOHASH=$(mutant '/\[ "\$sha" = "\$EXPECT_COMPOSE_SHA" \]/d')
@@ -125,6 +138,14 @@ meta_qual_started "no-two-model gate: running stable" "$M_NOGATE" s_fail_running
 meta_qual_started "no-two-model gate: unknown readback" "$M_NOGATE" s_fail_unknown
 M_NOADIGEST=$(mutant 's/ \[ "\$img" = "\$IMG" \] && \[ "\$lbl" = "\$PROJECT" \]/ [ "$lbl" = "$PROJECT" ]/')
 meta_detects "incomplete-STATE_A (drop digest) detected" "$M_NOADIGEST" s_wrongdigest 2 ROLLBACK_FAILED
+M_NOREADY=$(mutant 's/\[ "\$(hc "\$PARAKEET_READY")" = 200 \] && //')       # GATE1: drop ready check
+meta_detects "lost-parakeet-ready detected"    "$M_NOREADY" s_par_ready 1 PREFLIGHT_ABORT
+M_NOLIVE=$(mutant 's/ && \[ "\$(hc "\$PARAKEET_LIVE")" = 200 \]//')          # GATE1: drop live check
+meta_detects "lost-parakeet-live detected"     "$M_NOLIVE" s_par_live 1 PREFLIGHT_ABORT
+M_NOVFLOOR=$(mutant 's/\[ "\$1" -ge "\$VRAM_FLOOR" \]/true/')                # GATE2: drop below-floor check
+meta_detects "lost-vram-floor detected"        "$M_NOVFLOOR" s_vram_below 1 PREFLIGHT_ABORT
+M_NOHOME=$(mutant '/CANON_DIR (\$canon_abs) != pinned EXPECT_CANON_DIR/d')   # drop the home-pin assertion line
+meta_detects "lost-canon-home-pin detected"    "$M_NOHOME" s_home_mismatch 1 PREFLIGHT_ABORT
 
 echo "=============================================================="
 echo "PASS=$PASS FAIL=$FAIL"
