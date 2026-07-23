@@ -17,3 +17,4 @@ from .synth import (
     Synthesizer,
     pcm16_to_wav,
 )
+from .server import load_registry, main

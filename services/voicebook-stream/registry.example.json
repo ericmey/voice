@@ -1,0 +1,12 @@
+{
+  "sumi-v1": {
+    "master_path": "/srv/voicebook/sumi/sumi-voice-master.wav",
+    "reference_transcript": "Welcome home. I have aired the west rooms and put fresh flowers in the hall. There is tea waiting in the kitchen whenever you would like it, and I saved you the last of the pastries.",
+    "sha256": "0a8146eb8d36656d0bdd5a0dbae67beedf81b7c214141c76efbd951b9c41c0d6"
+  },
+  "nyla-v1": {
+    "master_path": "/srv/voicebook/nyla/nyla-voice-master-v1.wav",
+    "reference_transcript": "Morning, Eric. I checked the overnight reports, cleared the urgent messages, and put the three decisions that need you at the top. Coffee is ready whenever you are.",
+    "sha256": "3dcc3f1dfdd6c7544f37be3ee06ba4b046ed79bdf3178da0d6e184dc19609653"
+  }
+}
