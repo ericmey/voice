@@ -1,0 +1,72 @@
+# Voicebook-stream — the accepted F1 streaming TTS as a MANAGED service.
+#
+# Separate from docker-compose.yaml (GPU) like tts. UNLIKE tts, this service
+# joins the voice Compose network `voice_default` so the Sumi agent reaches it
+# by DNS at http://voicebook-stream:5060 (container port). The host publish is
+# loopback-only for ops/health; Sumi never uses host loopback.
+#
+# Pinned to the accepted F1 image by IMMUTABLE DIGEST; pull disabled. Replaces
+# the temporary externally-watched `voicebook-stream-qual` container — Compose
+# (restart policy + healthcheck) is the service manager, not the qual watcher.
+services:
+  voicebook-stream:
+    container_name: voicebook-stream
+    image: voicebook-stream@sha256:3b28aa8102d69b3214687a7e732dcdeca35b8a11ab0d34187e1dad3f9b4472f7
+    pull_policy: never
+    # Host ops/health ONLY (loopback). livekit-sip owns host 5060; this maps
+    # host 5056 -> container 5060. Sumi's path is the service DNS, not this.
+    ports:
+      - "127.0.0.1:5056:5060"
+    volumes:
+      # Masters + registry READ-ONLY; this service never writes canon.
+      - ${VOICEBOOK_MASTERS:-/srv/voicebook}:/srv/voicebook:ro
+      - ${VOICEBOOK_REGISTRY_FILE:-/srv/voicebook/registry.json}:/etc/voicebook/registry.json:ro
+      # Model cache READ-ONLY (weights already resident; offline load, no writes;
+      # proven RO in the qual run).
+      - voicebook-hf-cache:/models/hf-cache:ro
+    environment:
+      - VOICEBOOK_REGISTRY=/etc/voicebook/registry.json
+      # Pinned snapshot path (not a repo id) so from_pretrained loads fully
+      # offline; same pin as tts.
+      - VOICEBOOK_MODEL=${VOICEBOOK_MODEL:-/models/hf-cache/hub/models--Qwen--Qwen3-TTS-12Hz-1.7B-Base/snapshots/fd4b254389122332181a7c3db7f27e918eec64e3}
+      - HF_HUB_OFFLINE=1
+      - HF_HOME=/models/hf-cache
+      - VOICEBOOK_HOST=0.0.0.0
+      - VOICEBOOK_PORT=5060
+    networks:
+      - voice_default
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      # curl/wget are NOT guaranteed in the slim CUDA python image; use stdlib
+      # urllib (proven present in the qual's offline synthesis test). The server
+      # binds 5060 only AFTER model load + CUDA-graph warmup, so pre-ready probes
+      # get connection-refused — tolerated during start_period.
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5060/healthz',timeout=3).status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
+networks:
+  # Owned by the `voice` Compose project (docker-compose.yaml `name: voice`).
+  # External so this file joins it without recreating it.
+  voice_default:
+    external: true
+    name: voice_default
+
+volumes:
+  # Owned by the tts service; reuse read-only, do not recreate.
+  voicebook-hf-cache:
+    external: true
+    name: voicebook-hf-cache
