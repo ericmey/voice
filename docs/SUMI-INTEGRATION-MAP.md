@@ -195,7 +195,11 @@ Not all agent-config. Record the exact action + a pre-mutation readback for each
 
 ## Implementation slices (locked order; NO implementation until map green)
 
-1. **Stable TTS service** (compose, digest-pinned, 5056, healthcheck) →
+1. **Stable TTS service** (compose, digest-pinned, 5056, healthcheck) —
+   **✅ COMPLETE (2026-07-23, Yua final signoff).** Managed `voicebook-stream`
+   Compose service, canonical project + detached-worktree lifecycle authority at
+   `87f1f5e`, proven via mock self-tests → real rollback drill → clean migration →
+   ownership re-own. See `docs/SLICE-1-LANDING.md`. →
 2. **Sumi identity/package** (fork, freeze, fail-loud, memory isolation) →
 3. **STT adapter** (nvidia Riva plugin vs parakeet 50051) →
 4. **LLM adapter/route** (new readable Sumi route, zero cloud fallback) →
