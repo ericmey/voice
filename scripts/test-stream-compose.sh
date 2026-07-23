@@ -1,26 +1,31 @@
 #!/usr/bin/env bash
-# Rendered-config assertions for docker-compose.stream.yaml (Slice 1 artifact).
-# Renders the compose and asserts the frozen Slice-1 contract invariants.
+# Renders docker-compose.stream.yaml to JSON and runs structured assertions
+# (scripts/assert_stream_compose.py). RED-PROOFS the security boundary: a
+# 0.0.0.0 host bind and a writable masters mount MUST fail the assertions.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-R=$(docker compose -f docker-compose.stream.yaml config 2>&1) || { echo "FAIL: compose config did not render"; echo "$R"; exit 2; }
-fail=0
-check() { if echo "$R" | grep -qE "$1"; then echo "OK   $2"; else echo "FAIL $2"; fail=1; fi; }
-check 'image: voicebook-stream@sha256:3b28aa8102d69b3214687a7e732dcdeca35b8a11ab0d34187e1dad3f9b4472f7' "image pinned by immutable digest"
-check 'pull_policy: never'          "pull disabled"
-check 'published: "5056"'           "host ops publish 5056"
-check 'target: 5060'                "container port 5060"
-check 'voice_default'               "attached to voice_default"
-check 'external: true'              "voice_default/volume external (join, not recreate)"
-# `docker compose config` renders short `:ro` as long-form `read_only: true`.
-roc=$(echo "$R" | grep -c 'read_only: true')
-if [ "$roc" = 3 ]; then echo "OK   all 3 mounts read_only (masters/registry/cache)"; else echo "FAIL read_only count=$roc (expect 3)"; fail=1; fi
-check 'source: /srv/voicebook$'               "masters mount present"
-check 'target: /etc/voicebook/registry.json'  "registry mount present"
-check 'source: voicebook-hf-cache'            "model cache mount present"
-check 'HF_HUB_OFFLINE'              "offline env"
-check 'restart: unless-stopped'     "restart policy"
-check 'urllib.request.urlopen'      "python-stdlib healthcheck (no curl/wget dependency)"
-if echo "$R" | grep -iqE 'api_key|secret|gemini|openai|elevenlabs|password|momo_api'; then echo "FAIL no-secrets"; fail=1; else echo "OK   no secrets/cloud in rendered config"; fi
-[ "$fail" = 0 ] && echo "== STREAM_COMPOSE_TEST=PASS ==" || echo "== STREAM_COMPOSE_TEST=FAIL =="
-exit "$fail"
+render() { docker compose -f "$1" config --format json 2>/dev/null; }
+
+echo "--- structured assertions (real compose, must PASS) ---"
+render docker-compose.stream.yaml > /tmp/stream.json || { echo "FAIL: compose did not render"; exit 2; }
+python3 scripts/assert_stream_compose.py /tmp/stream.json
+rc=$?
+
+rp() { # $1 sed-expr  $2 label  $3 expect-reject-msg
+  local tmp="/tmp/stream-rp-$$.yaml"
+  sed "$1" docker-compose.stream.yaml > "$tmp"
+  render "$tmp" > /tmp/stream-rp.json 2>/dev/null
+  if python3 scripts/assert_stream_compose.py /tmp/stream-rp.json >/dev/null 2>&1; then
+    echo "RED-PROOF $2: FAIL — mutation was NOT rejected ($3)"; rc=1
+  else
+    echo "RED-PROOF $2: OK — $3 correctly rejected"
+  fi
+  rm -f "$tmp"
+}
+
+echo "--- red-proofs (mutations MUST be rejected) ---"
+rp 's/127.0.0.1:5056:5060/0.0.0.0:5056:5060/'   host_ip   "0.0.0.0 exposure"
+rp 's#:/srv/voicebook:ro#:/srv/voicebook:rw#'    read_only "writable masters mount"
+
+[ "$rc" = 0 ] && echo "== SLICE1_TEST=PASS ==" || echo "== SLICE1_TEST=FAIL =="
+exit "$rc"
