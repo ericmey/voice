@@ -1,31 +1,29 @@
 """HTTP surface for the streaming voicebook service.
 
-Two routes, one identity, one lease:
-    POST /speak/stream  {"voice_id","text"} -> 24kHz mono PCM16 stream (LiveKit)
+    POST /speak/stream  {"voice_id","text"} -> raw s16le PCM stream (LiveKit)
     POST /speak         {"voice_id","text"} -> completed audio/wav (Hermes)
-    GET  /healthz       -> green ONLY after CUDA-graph warmup
+    GET  /healthz       -> 503 while warming, 200 only after CUDA-graph warmup
 
-Lease ownership is the whole game here (three review cycles found three
-lifecycle traps in it):
+Lease ownership is the whole game (multiple review cycles found lifecycle traps):
+  * Acquisition is SYNCHRONOUS in the route, before the response is built.
+  * The reservation is owned by the ROUTE until the response is constructed AND
+    returned; any failure before that handoff — including the response
+    constructor — closes the generator then the reservation.
+  * Release lives in a response __call__ finally (not a body-generator finally,
+    which does not run for an unstarted generator). Teardown is NESTED:
+    try close(generator) / finally reservation.close(), so a raising close()
+    cannot leak the lease.
 
-  * Acquisition is SYNCHRONOUS in the route, before the response is built, so a
-    collision is a clean typed 429 — never a half-sent 200.
-  * The reservation is owned by the ROUTE until the response is successfully
-    constructed and returned, then handed to the RESPONSE. If anything throws
-    between acquire and that handoff, the route closes it immediately.
-  * For the stream, release lives in a response __call__ finally — NOT a body-
-    generator finally, which does not run when the generator is never started.
-    That finally also closes the underlying faster-qwen generator, so a
-    disconnect deterministically tears down the GPU pull.
-
-Pre-header failures (Busy, not-ready, unknown-voice, over-limit, bad-hash) are
-typed HTTP errors because headers are not yet sent. Post-header failures
-(backend error mid-stream, disconnect) cannot change the status; the stream
-terminates and the reservation closes via the response finally.
+Wire format: the stream is little-endian s16le PCM. It is NOT labelled audio/L16
+— RFC 2586 L16 is big-endian network order, and mislabelling it would be a
+false wire contract. It is application/octet-stream with explicit
+X-Audio-Format / X-Sample-Rate / X-Channels headers.
 """
 
 from __future__ import annotations
 
+import logging
+import time
 import uuid
 from typing import TYPE_CHECKING
 
@@ -43,6 +41,8 @@ if TYPE_CHECKING:
     from starlette.types import Receive, Scope, Send
 
 MAX_INPUT_CHARS = 4000
+MAX_REQUEST_ID = 64
+logger = logging.getLogger("voicebook.stream")
 
 
 class SpeakRequest(BaseModel):
@@ -50,67 +50,80 @@ class SpeakRequest(BaseModel):
     text: str = Field(min_length=1)
 
 
-class ReservationStreamingResponse(StreamingResponse):
-    """StreamingResponse that owns a Reservation and a sync PCM generator.
+def _safe_rid(raw: str | None) -> str:
+    """Cap and sanitize a client-supplied request id; generate if absent."""
+    if not raw:
+        return uuid.uuid4().hex[:12]
+    cleaned = "".join(c for c in raw if c.isalnum() or c in "-_")[:MAX_REQUEST_ID]
+    return cleaned or uuid.uuid4().hex[:12]
 
-    __call__'s finally releases the lease and closes the generator on EVERY
-    exit: response-start failure, client disconnect (OSError from send),
-    backend error during iteration, and normal completion — and even if the
-    body iterator was never started."""
+
+class ReservationStreamingResponse(StreamingResponse):
+    """StreamingResponse that owns a Reservation and a sync PCM generator, and
+    releases both on EVERY exit path with teardown that cannot itself leak."""
 
     def __init__(
-        self,
-        reservation: Reservation,
-        sync_gen: Iterator[bytes],
-        *,
-        request_id: str,
+        self, reservation: Reservation, sync_gen: Iterator[bytes], *, request_id: str
     ) -> None:
         self._reservation = reservation
         self._sync_gen = sync_gen
+        self._rid = request_id
         super().__init__(
             content=sync_gen,
-            media_type=f"audio/L16; rate={SAMPLE_RATE}; channels=1",
-            headers={"X-Request-ID": request_id, "Cache-Control": "no-store"},
+            media_type="application/octet-stream",
+            headers={
+                "X-Request-ID": request_id,
+                "X-Audio-Format": "s16le",
+                "X-Sample-Rate": str(SAMPLE_RATE),
+                "X-Channels": "1",
+                "Cache-Control": "no-store",
+            },
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        outcome = "ok"
         try:
             await super().__call__(scope, receive, send)
+        except BaseException as exc:  # noqa: BLE001 - log then re-raise
+            outcome = f"post-header:{type(exc).__name__}"
+            raise
         finally:
-            close = getattr(self._sync_gen, "close", None)
-            if callable(close):
-                close()  # deterministic GPU teardown, even mid-stream
-            self._reservation.close()  # idempotent — safe on any exit path
+            # NESTED teardown: a raising generator close() must NOT prevent the
+            # lease release. reproduced leak otherwise.
+            try:
+                close = getattr(self._sync_gen, "close", None)
+                if callable(close):
+                    close()
+            finally:
+                self._reservation.close()  # idempotent
+            logger.info("stream request_id=%s outcome=%s", self._rid, outcome)
 
 
 def create_app(registry: VoiceRegistry, synthesizer: Synthesizer, lease: OneFlightLease) -> FastAPI:
     app = FastAPI(title="voicebook-stream", version="0.1.0")
     reg = registry
-    is_ready = getattr(synthesizer, "ready", True)
 
     @app.get("/healthz")
-    def healthz() -> dict:
-        # Green ONLY after warmup. ready is a live property on the real backend.
-        ready = getattr(synthesizer, "ready", True)
-        return {
-            "status": "ok" if ready else "warming",
-            "ready": ready,
-            "voices": reg.voice_ids,
-            "max_input_chars": MAX_INPUT_CHARS,
-            "sample_rate": SAMPLE_RATE,
-        }
+    def healthz() -> Response:
+        ready = synthesizer.ready  # fail-closed: Protocol requires it
+        body = (
+            f'{{"status":"{"ok" if ready else "warming"}","ready":{str(ready).lower()},'
+            f'"voices":{reg.voice_ids!r},"max_input_chars":{MAX_INPUT_CHARS},'
+            f'"sample_rate":{SAMPLE_RATE}}}'
+        ).replace("'", '"')
+        return Response(
+            content=body,
+            media_type="application/json",
+            status_code=200 if ready else 503,
+        )
 
     def _pre_header_checks(req: SpeakRequest) -> None:
-        """Everything that can be a typed error BEFORE any response is built."""
         if len(req.text) > MAX_INPUT_CHARS:
             raise HTTPException(
                 status_code=413,
-                detail=(
-                    f"text is {len(req.text)} chars; limit {MAX_INPUT_CHARS}. "
-                    "Refused, never truncated."
-                ),
+                detail=f"text is {len(req.text)} chars; limit {MAX_INPUT_CHARS}. Refused, never truncated.",
             )
-        if not getattr(synthesizer, "ready", True):
+        if not synthesizer.ready:
             raise HTTPException(status_code=503, detail="warming up; not ready")
 
     def _resolve(voice_id: str):
@@ -128,50 +141,73 @@ def create_app(registry: VoiceRegistry, synthesizer: Synthesizer, lease: OneFlig
     def speak_stream(
         req: SpeakRequest, x_request_id: str | None = Header(default=None)
     ) -> Response:
-        rid = x_request_id or uuid.uuid4().hex[:12]
+        rid = _safe_rid(x_request_id)
         _pre_header_checks(req)
         try:
-            reservation = lease.reserve()  # Busy -> 429, no reservation held
+            reservation = lease.reserve()
         except Busy:
+            logger.info("stream request_id=%s outcome=429_busy", rid)
             raise HTTPException(
                 status_code=429, detail="a generation is already in flight"
             ) from None
-        # Reservation now held by the ROUTE. Any failure before handoff closes it.
+        # Reservation held by the ROUTE. Any failure before the response is
+        # RETURNED — including the response constructor — closes gen then lease.
         try:
             entry = _resolve(req.voice_id)
             sync_gen = synthesizer.synthesize_stream(
                 req.text, entry.master_path, entry.reference_transcript
             )
+            resp = ReservationStreamingResponse(reservation, sync_gen, request_id=rid)
         except BaseException:
-            reservation.close()
+            try:
+                g = locals().get("sync_gen")
+                if g is not None and callable(getattr(g, "close", None)):
+                    g.close()
+            finally:
+                reservation.close()
             raise
-        # Ownership handed to the response; its __call__ finally releases.
-        return ReservationStreamingResponse(reservation, sync_gen, request_id=rid)
+        return resp
 
     @app.post("/speak")
     def speak(req: SpeakRequest, x_request_id: str | None = Header(default=None)) -> Response:
-        rid = x_request_id or uuid.uuid4().hex[:12]
+        rid = _safe_rid(x_request_id)
+        t0 = time.monotonic()
         _pre_header_checks(req)
         try:
             reservation = lease.reserve()
         except Busy:
+            logger.info("unary request_id=%s outcome=429_busy", rid)
             raise HTTPException(
                 status_code=429, detail="a generation is already in flight"
             ) from None
+        outcome = "ok"
         try:
             entry = _resolve(req.voice_id)
             wav = synthesizer.synthesize(req.text, entry.master_path, entry.reference_transcript)
             if not wav:
+                outcome = "502_empty"
                 raise HTTPException(status_code=502, detail="backend produced no audio")
-            return Response(
-                content=wav,
-                media_type="audio/wav",
-                headers={"X-Request-ID": rid},
-            )
+            return Response(content=wav, media_type="audio/wav", headers={"X-Request-ID": rid})
+        except HTTPException as exc:
+            outcome = f"{exc.status_code}"
+            raise
         except SynthesisError as exc:
+            outcome = "502_synth"
             raise HTTPException(status_code=502, detail=f"synthesis failed: {exc}") from None
+        except Exception as exc:  # noqa: BLE001 - normalize, preserve BaseException
+            outcome = "502_other"
+            raise HTTPException(
+                status_code=502, detail=f"synthesis failed: {type(exc).__name__}: {exc}"
+            ) from None
         finally:
-            reservation.close()  # unary path: always releases before returning
+            reservation.close()
+            logger.info(
+                "unary request_id=%s voice_id=%s chars=%d outcome=%s duration_ms=%d",
+                rid,
+                req.voice_id,
+                len(req.text),
+                outcome,
+                int((time.monotonic() - t0) * 1000),
+            )
 
-    _ = is_ready  # documents that readiness is captured per-request, not cached
     return app

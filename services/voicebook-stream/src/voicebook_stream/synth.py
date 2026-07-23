@@ -29,6 +29,11 @@ class SynthesisError(RuntimeError):
 
 
 class Synthesizer(Protocol):
+    @property
+    def ready(self) -> bool:
+        """Fail-closed readiness. Health is 503 until this is True."""
+        ...
+
     def synthesize(self, text: str, master_path: Path, reference_transcript: str) -> bytes: ...
     def synthesize_stream(
         self, text: str, master_path: Path, reference_transcript: str

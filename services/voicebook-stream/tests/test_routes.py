@@ -107,9 +107,13 @@ def test_healthz_red_until_ready(tmp_path):
     synth = FakeSynth()
     synth.ready = False
     client = TestClient(create_app(reg, synth, OneFlightLease()))
-    assert client.get("/healthz").json()["ready"] is False
+    warming = client.get("/healthz")
+    assert warming.status_code == 503  # curl -f / docker healthcheck fail
+    assert warming.json()["ready"] is False
     synth.ready = True
-    assert client.get("/healthz").json()["ready"] is True
+    ok = client.get("/healthz")
+    assert ok.status_code == 200
+    assert ok.json()["ready"] is True
 
 
 # --- streaming happy path -----------------------------------------------------
@@ -120,8 +124,10 @@ def test_stream_returns_pcm_and_releases_after(env):
     with client.stream("POST", "/speak/stream", json={"voice_id": "sumi-v1", "text": "hi"}) as r:
         body = b"".join(r.iter_bytes())
     assert r.status_code == 200
-    assert body == b"pcm0pcm1pcm2"
-    assert r.headers["content-type"].startswith("audio/L16")
+    assert body == b"pcm0pcm1pcm2"  # decoded bytes, not content-type
+    assert r.headers["content-type"] == "application/octet-stream"
+    assert r.headers["x-audio-format"] == "s16le"
+    assert r.headers["x-sample-rate"] == "24000"
     assert lease.locked is False  # released after completion
     assert synth.closed is True  # generator closed
 
@@ -205,3 +211,123 @@ def test_active_collision_returns_429(env):
     lease.reserve()  # simulate request 1 actively holding the lease
     r = client.post("/speak/stream", json={"voice_id": "sumi-v1", "text": "hi"})
     assert r.status_code == 429
+
+
+# --- blocker fixes: close-raises, constructor failure, empty stream ------------
+
+
+class _ExplodingCloseIter:
+    """Iterator whose close() raises. A generator's close is read-only, so use
+    a real object to prove the nested-teardown ordering."""
+
+    def __init__(self):
+        self._items = iter([b"one"])
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._items)
+
+    def close(self):
+        raise RuntimeError("teardown blew up")
+
+
+class ExplodingCloseSynth:
+    ready = True
+
+    def synthesize_stream(self, text, master_path, reference_transcript):
+        return _ExplodingCloseIter()
+
+    def synthesize(self, text, master_path, reference_transcript):
+        return b"RIFF"
+
+
+def test_lease_releases_even_if_generator_close_raises(env):
+    """Blocker 1: a raising gen.close() must NOT leak the lease."""
+    reg, _synth, lease, _ = env
+    r = reg.get("sumi-v1")
+    res = lease.reserve()
+    gen = ExplodingCloseSynth().synthesize_stream("hi", r.master_path, r.reference_transcript)
+    resp = ReservationStreamingResponse(res, gen, request_id="rid")
+    with pytest.raises(RuntimeError, match="teardown blew up"):
+        _drive(resp, [])
+    assert lease.locked is False, "lease leaked when close() raised"
+
+
+class EmptyStreamSynth:
+    ready = True
+    closed = False
+
+    def synthesize_stream(self, text, master_path, reference_transcript):
+        def gen():
+            self.closed = True
+            return
+            yield  # unreachable — empty stream
+
+        return gen()
+
+    def synthesize(self, text, master_path, reference_transcript):
+        return b""
+
+
+def test_empty_stream_still_releases(tmp_path):
+    """Blocker: empty stream returns 200 with no body but must still release."""
+    m = tmp_path / "s.wav"
+    d = _wav(m)
+    reg = VoiceRegistry({"x": VoiceEntry("x", m, "t", d)})
+    lease = OneFlightLease()
+    client = TestClient(create_app(reg, EmptyStreamSynth(), lease))
+    with client.stream("POST", "/speak/stream", json={"voice_id": "x", "text": "hi"}) as r:
+        body = b"".join(r.iter_bytes())
+    assert r.status_code == 200
+    assert body == b""
+    assert lease.locked is False
+
+
+def test_unary_arbitrary_exception_maps_to_502(tmp_path):
+    """Blocker: a non-SynthesisError backend exception -> typed 502, not 500."""
+    m = tmp_path / "s.wav"
+    d = _wav(m)
+    reg = VoiceRegistry({"x": VoiceEntry("x", m, "t", d)})
+
+    class Boom:
+        ready = True
+
+        def synthesize(self, text, master_path, reference_transcript):
+            raise RuntimeError("cuda oom")
+
+        def synthesize_stream(self, text, master_path, reference_transcript):
+            yield b""
+
+    client = TestClient(create_app(reg, Boom(), OneFlightLease()), raise_server_exceptions=False)
+    r = client.post("/speak", json={"voice_id": "x", "text": "hi"})
+    assert r.status_code == 502
+
+
+def test_request_id_is_capped_and_sanitized(env):
+    from voicebook_stream.app import MAX_REQUEST_ID, _safe_rid
+
+    assert len(_safe_rid("x" * 500)) <= MAX_REQUEST_ID
+    assert _safe_rid("../etc/passwd\n") == "etcpasswd"
+    assert _safe_rid("") and len(_safe_rid("")) == 12
+
+
+def test_constructor_failure_after_reserve_releases(tmp_path, monkeypatch):
+    """Blocker 2: if the response constructor raises AFTER reserve, the lease
+    must not leak. The route re-raises, so use a client that surfaces 500."""
+    import voicebook_stream.app as appmod
+
+    m = tmp_path / "s.wav"
+    d = _wav(m)
+    reg = VoiceRegistry({"sumi-v1": VoiceEntry("sumi-v1", m, "ref", d)})
+    lease = OneFlightLease()
+    client = TestClient(create_app(reg, FakeSynth(), lease), raise_server_exceptions=False)
+
+    def boom(*a, **k):
+        raise RuntimeError("constructor blew up")
+
+    monkeypatch.setattr(appmod, "ReservationStreamingResponse", boom)
+    r = client.post("/speak/stream", json={"voice_id": "sumi-v1", "text": "hi"})
+    assert r.status_code == 500
+    assert lease.locked is False, "lease leaked on constructor failure"
