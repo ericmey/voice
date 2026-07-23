@@ -20,6 +20,33 @@ implementation performed. F1 TTS container stays healthy + guarded.
 - Bring up LiveKit **only after** the 5060 conflict is removed and a clean
   preflight passes.
 
+## Container reachability contract (agent-sumi runs on the `voice_default` network)
+
+Inside agent-sumi, `127.0.0.1` = the container, NOT mizuki host. **Never point
+Sumi at host loopback.** Proven from a `voice_default` throwaway (`--rm`,
+ephemeral diagnostic within recon bounds — no mounts/secrets/GPUs/ports),
+DNS/TCP/application checked separately:
+
+| Service | Sumi reaches via | proof | restart-proof by |
+|---|---|---|---|
+| voicebook-stream (TTS) | `http://voicebook-stream:5060` (service DNS) | LIVE-prove at Slice 1 (not yet on voice_default) | add the stream service to the **voice compose** (joins voice_default). Host ops bind `127.0.0.1:5056`→container `5060` kept for host-side ops/health ONLY. |
+| Parakeet (Riva gRPC) | `parakeet-ctl:50051` (service DNS) | LIVE-prove at Slice 3 (currently **NOREACH**) | parakeet-ctl **declaratively** attached to voice_default (compose `networks:` stanza) — NOT a one-time `docker network connect`. It is on `bridge` ONLY with `127.0.0.1` publish → unreachable from voice_default (proven NOREACH via host-loopback AND cross-net 172.17.0.3). |
+| LiteLLM | `http://10.0.20.25:4000` (mizuki private IP; 0.0.0.0 publish) | TCP REACH + **HTTP 200** (now) | host IP + 0.0.0.0 publish (stable) |
+| Musubi | `http://musubi.mey.house:8100/v1` (external DNS) | TCP REACH (now) | external DNS (stable) |
+| Momo direct (control) | `http://momo.mey.house:8083` | TCP REACH + **HTTP 200** (now) | external DNS (stable) |
+| LiveKit | `ws://livekit-server:7880` (service DNS) | DNS resolves on voice_default (service down now) | voice compose member |
+
+voicebook-stream + parakeet reachability are LIVE-proven from INSIDE the Sumi
+(or an equivalent voice_default) container at Slices 1 and 3 before use.
+
+## Temporary fifth-agent deploy/health (qualification only)
+
+During qualification Sumi runs as a **fifth agent BESIDE unchanged Party**. The
+supported-agent health contract is temporarily FIVE (aoi, nyla, yua, party,
+sumi). **After real-call acceptance, retire Party** and restore the steady-state
+health contract to the supported FOUR. Party stays untouched as rollback until
+that retirement.
+
 ## 1. Sumi identity (item 5 of 2nd-read) — FROZEN, fail-loud, isolated
 
 Fork `agents/sumi` from `agents/party`. FREEZE and assert-at-startup:
@@ -49,12 +76,14 @@ Fork `agents/sumi` from `agents/party`. FREEZE and assert-at-startup:
 - **RUNNING**: F1 image `sha256:3b28aa8102d6…` as the temp `voicebook-stream-qual`
   (docker-run). Endpoint `/speak/stream` (raw s16le PCM 24k mono), `/speak`
   (wav), `/healthz`.
-- **STABLE SERVICE DEF (build first slice):** managed compose — pin image by
-  **digest 3b28aa8102d6**, `pull_policy: never`, RO mounts (hf-cache,
-  `/srv/voicebook`, registry), **healthcheck**, `restart: unless-stopped`, bind
-  **`127.0.0.1:5056`** (NOT 5060 — livekit-sip owns host 5060), startup **image
-  readback** asserting the digest. The external qual watcher is NOT the final
-  service manager.
+- **STABLE SERVICE DEF (build first slice):** defined **IN the voice compose
+  project** so it joins `voice_default` (Sumi reaches it at
+  `http://voicebook-stream:5060` by DNS). Managed: pin image by **digest
+  3b28aa8102d6**, `pull_policy: never`, RO mounts (hf-cache, `/srv/voicebook`,
+  registry), **healthcheck**, `restart: unless-stopped`, host ops bind
+  **`127.0.0.1:5056`→container `5060`** (host-side ops ONLY; NOT Sumi's path;
+  livekit-sip owns host 5060), startup **image readback** asserting the digest.
+  The external qual watcher is NOT the final service manager.
 - **TTS ADAPTER (custom — the real gap):** a `livekit.agents.tts.TTS` subclass
   wrapping `POST /speak/stream`, with **cancellation** (close the HTTP stream on
   interrupt) and **backpressure**. No official plugin covers this raw endpoint.
@@ -78,11 +107,16 @@ Fork `agents/sumi` from `agents/party`. FREEZE and assert-at-startup:
   (aggregate ÷ slots, NOT per-conversation), `-fa 1 -cb`.
 - LiteLLM route exists (`qwen/qwen3.6-35b-a3b`, `-fast`) but its params are
   **SALT-encrypted / unreadable** via admin `/v1/model/info` (GAP).
-- **DECISION:** create a **NEW readable Sumi LiteLLM route** — defined
-  timeout/retry, explicit `cache_prompt`, **ZERO automatic cloud fallback** — as
-  primary (observability). **Do NOT mutate the opaque existing route.** Direct
-  `momo:8083` (with `MOMO_API_KEY`) is the control comparison. Verify what
-  `-fast` actually is before using it (don't choose by name).
+- **DECISION:** create a **NEW readable Sumi LiteLLM route** as a **versioned,
+  declarative, non-secret route spec** (checked into the repo) — defined
+  timeout/retry, explicit `cache_prompt`, **ZERO automatic cloud fallback**,
+  `api_base` = momo, the secret held **by reference** (`MOMO_API_KEY`, never
+  inlined). Its **creation, readback, and behavior are captured as receipts** so
+  DB encryption can never make the contract unknowable again. **Do NOT mutate
+  the opaque existing route.** Direct `http://momo.mey.house:8083` (with
+  `MOMO_API_KEY`) is the control comparison. Verify what `-fast` actually is
+  before using it. **Sumi LLM rollback = direct Momo OR remove the NEW route —
+  NEVER the opaque old route.**
 - **Two-slot concurrency test (acceptance gate):** real 2-caller contention,
   per-slot latency, KV **cache reuse**, and **eviction** proof — under a
   **host-memory watcher** (below).
@@ -154,8 +188,8 @@ Not all agent-config. Record the exact action + a pre-mutation readback for each
 |---|---|---|---|
 | Agent | agents/sumi | stop sumi worker, start party worker | current running worker list |
 | STT | nvidia Riva plugin | agent config → Whisper; restart worker | agent stt config |
-| LLM | new Sumi LiteLLM route | agent → old route / direct momo | route id + params |
-| TTS | voicebook-stream 5056 (F1) | restart voicebook-tts 5055 (unchanged) | container id/digest + health |
+| LLM | new Sumi LiteLLM route | agent → DIRECT momo:8083 (control) OR remove the new route, then restart worker — **NEVER the opaque old route** | route spec id + params |
+| TTS | voicebook-stream (svc DNS `:5060`) F1 | **BOTH**: restart voicebook-tts on 5055 AND switch the Sumi adapter endpoint/config, THEN restart the worker (starting the old container alone is NOT rollback) | container id/digest + health + current adapter config |
 | SIP | dispatch-sumi (in **Redis**) | re-apply party's preserved rule body | dump current SIP rules from Redis |
 | LLM route (LiteLLM) | new route (DB) | delete new route row (never touch opaque one) | DB row snapshot before insert |
 
