@@ -58,9 +58,17 @@ ck(env.get("VOICEBOOK_HOST") == "0.0.0.0", "VOICEBOOK_HOST=0.0.0.0 (container-in
 ck(env.get("VOICEBOOK_REGISTRY") == "/etc/voicebook/registry.json", "VOICEBOOK_REGISTRY path")
 ck("snapshots/fd4b254389122332181a7c3db7f27e918eec64e3" in str(env.get("VOICEBOOK_MODEL", "")),
    "VOICEBOOK_MODEL pinned snapshot path")
+# env keys allowlisted — any unexpected key (e.g. an injected secret) fails
+ALLOWED_ENV = {"VOICEBOOK_REGISTRY", "VOICEBOOK_MODEL", "HF_HUB_OFFLINE", "HF_HOME",
+               "VOICEBOOK_HOST", "VOICEBOOK_PORT"}
+extra_env = sorted(set(env) - ALLOWED_ENV)
+ck(not extra_env, f"env keys allowlisted (unexpected rejected: {extra_env})")
 blob = json.dumps(env).lower()
 ck(not any(s in blob for s in ("api_key", "secret", "gemini", "openai", "elevenlabs", "password", "momo_api", "sk-")),
-   "no secrets/cloud in env")
+   "no secret-shaped env values")
+# the secrets: section (service or top-level) must be ABSENT — red-proofed
+ck(not svc.get("secrets"), "service has NO secrets: block")
+ck(not d.get("secrets"), "top-level config has NO secrets: section")
 
 hc = " ".join((svc.get("healthcheck") or {}).get("test") or [])
 ck("urllib.request.urlopen" in hc and "/healthz" in hc, "python-stdlib healthcheck -> /healthz")
