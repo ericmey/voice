@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 # Slice-1 migration runbook — replace `voicebook-stream-qual` with the managed
 # `voicebook-stream` Compose service. Run ON mizuki in the dir holding
-# docker-compose.stream.yaml + scripts/, with the guard at
-# /home/ericmey/vbs-qual/watcher.sh present.
+# docker-compose.stream.yaml + scripts/, guard at /home/ericmey/vbs-qual/watcher.sh.
 #
-# Source-able for the no-container fault-injection self-test:
-#   * external commands (docker/curl/ss/nvidia-smi/pgrep/kill/sleep/stat) are
-#     called bare so a test can shadow them with mock functions;
-#   * `main` runs only when EXECUTED, not when sourced;
-#   * FAILPOINTS (space-separated allowlist, default empty) injects deterministic
-#     failures at named points for the supervised rollback drill.
+# MODE=clean (default) runs the real migration. MODE=drill injects the
+# before_render failpoint for the supervised rollback drill. MODE is validated
+# in preflight BEFORE any mutation — an unknown value aborts with no mutation
+# (a drill typo can NEVER fall through to the clean migration).
 #
-# Failure/recovery is as executable as the happy path: set -Eeuo pipefail + a
-# phase-aware trap armed after preflight; guard liveness checked every loop; a
-# VERIFIED rollback that re-arms + proves the qual watcher and distinguishes
-# ROLLBACK_OK from ROLLBACK_FAILED.
+# Source-able for the no-container self-test: external commands are called bare
+# so a test can shadow them; `main` runs only when executed, not sourced.
+#
+# Invariants held on the failure/recovery path:
+#   * no-two-model: rollback proves voicebook-stream is gone BEFORE starting qual;
+#   * watcher death is PROVEN (bounded TERM/kill -9/confirm) on both rollback and
+#     handoff — a lingering guard still targets voicebook-stream;
+#   * ROLLBACK_OK requires dc==0 AND ds==0, qual restored+guarded, tts stopped,
+#     and the migration watcher dead; else ROLLBACK_FAILED.
 set -Eeuo pipefail
 
 IMG=sha256:3b28aa8102d69b3214687a7e732dcdeca35b8a11ab0d34187e1dad3f9b4472f7
@@ -24,8 +26,9 @@ LOG=/home/ericmey/vbs-qual/migrate.log
 QUAL_LOG=/home/ericmey/vbs-qual/qual.log
 VRAM_FLOOR=800
 PARAKEET=http://127.0.0.1:9000/v1/health/ready
-DIAG_IMG=alpine
-FAILPOINTS="${FAILPOINTS:-}"
+DIAG_IMG="$IMG"                 # seam 4: diagnostic == the accepted immutable digest (python present), NOT a mutable tag
+MODE="${MODE:-clean}"
+FAILPOINTS=""                   # derived from MODE in preflight; never taken raw from env
 
 PHASE=preflight
 MIG_PID=""
@@ -35,15 +38,26 @@ QUAL_WPID=""
 failpoint() { case " $FAILPOINTS " in *" $1 "*) echo "FAILPOINT[$1] injected"; return 1;; esac; return 0; }
 die() { echo "PREFLIGHT_FAIL: $*"; echo "== MIGRATE_RESULT=PREFLIGHT_ABORT =="; exit 1; }
 hc() { curl -s -m5 -o /dev/null -w '%{http_code}' "$1" 2>/dev/null; }
-dns_probe() { docker run --rm --pull=never --network voice_default "$DIAG_IMG" sh -c \
-  'wget -q -T5 -O /dev/null http://voicebook-stream:5060/healthz && echo OK || echo NO' 2>/dev/null; }
+# seam 4: run the probe inside the accepted immutable image by digest, python stdlib (no wget dependency, no mutable tag)
+dns_probe() { docker run --rm --pull=never --network voice_default --entrypoint python "$DIAG_IMG" -c \
+  'import urllib.request; urllib.request.urlopen("http://voicebook-stream:5060/healthz",timeout=5); print("OK")' 2>/dev/null || echo NO; }
 arm_watcher() { : > "$2"; nohup bash "$W" "$1" "$VRAM_FLOOR" 2 "$2" no >/dev/null 2>&1 & local p=$!; disown "$p" 2>/dev/null || true; echo "$p"; }
+# seam 2: PROVE the watcher is dead — bounded TERM, then kill -9, then confirm
+stop_watcher() {
+  local p="$1" i
+  [ -z "$p" ] && return 0
+  kill "$p" 2>/dev/null || true
+  for i in 1 2 3 4 5; do kill -0 "$p" 2>/dev/null || return 0; sleep 1; done
+  kill -9 "$p" 2>/dev/null || true
+  for i in 1 2 3; do kill -0 "$p" 2>/dev/null || return 0; sleep 1; done
+  return 1
+}
 guard_ok() { # $1 pid  $2 log
   if [ -z "$1" ] || ! kill -0 "$1" 2>/dev/null; then echo "GUARD_DEAD(pid=$1)"; return 1; fi
   if grep -q '^WATCHER_TRIGGER' "$2" 2>/dev/null; then echo "GUARD_TRIGGERED"; return 1; fi
   return 0
 }
-wait_health() { # $1 container — guard-checked each iteration (seam 4)
+wait_health() { # $1 container — guard-checked each iteration
   local i
   for i in $(seq 1 150); do
     [ "$(docker inspect -f '{{.State.Health.Status}}' "$1" 2>/dev/null)" = healthy ] && return 0
@@ -58,8 +72,19 @@ rollback() {
   trap - ERR HUP INT TERM
   set +e
   echo "ROLLBACK: ${1:-unspecified}"
-  [ -n "$MIG_PID" ] && kill "$MIG_PID" 2>/dev/null
+  # seam 2: stop the migration guard and PROVE it dead before touching state
+  stop_watcher "$MIG_PID"; local mwdead=$?
+  [ "$mwdead" = 0 ] && echo "migration watcher $MIG_PID confirmed dead" || echo "WARN: migration watcher $MIG_PID NOT confirmed dead"
   docker compose -f "$COMPOSE" down >/dev/null 2>&1; local dc=$?
+  # seam 1: no-two-model — never start qual while the stable is still running
+  local stable_gone=1
+  if docker inspect voicebook-stream >/dev/null 2>&1; then
+    [ "$(docker inspect -f '{{.State.Running}}' voicebook-stream 2>/dev/null)" = true ] && stable_gone=0
+  fi
+  if [ "$stable_gone" != 1 ]; then
+    echo "ROLLBACK_ABORT_NO_START: voicebook-stream still running after down (dc=$dc) — refusing to start qual (no-two-model)"
+    echo "== MIGRATE_RESULT=ROLLBACK_FAILED =="; exit 2
+  fi
   docker start voicebook-stream-qual >/dev/null 2>&1; local ds=$?
   local ok=0 i
   for i in $(seq 1 150); do [ "$(hc http://127.0.0.1:5060/healthz)" = 200 ] && { ok=1; break; }; sleep 1; done
@@ -71,11 +96,10 @@ rollback() {
   qimg=$(docker inspect -f '{{.Image}}' voicebook-stream-qual 2>/dev/null)
   qrun=$(docker inspect -f '{{.State.Running}}' voicebook-stream-qual 2>/dev/null)
   par=$(hc "$PARAKEET")
-  docker inspect voicebook-tts >/dev/null 2>&1 && ttsexist=1 || ttsexist=0   # seam 2
+  docker inspect voicebook-tts >/dev/null 2>&1 && ttsexist=1 || ttsexist=0
   ttsr=$(docker inspect -f '{{.State.Running}}' voicebook-tts 2>/dev/null)
-  echo "rollback: down_rc=$dc start_rc=$ds qual_ready=$ok qual_img=$qimg qual_running=$qrun parakeet=$par tts_exist=$ttsexist tts_running=${ttsr:-NA} qual_watcher=$gstat(pid=$QUAL_WPID)"
-  # seam 1+2+3: success requires down AND start succeeded, qual restored+guarded, tts exists+stopped
-  if [ "$dc" = 0 ] && [ "$ds" = 0 ] && [ "$ok" = 1 ] && [ "$qimg" = "$IMG" ] && [ "$qrun" = true ] \
+  echo "rollback: mwdead=$mwdead down_rc=$dc start_rc=$ds qual_ready=$ok qual_img=$qimg qual_running=$qrun parakeet=$par tts_exist=$ttsexist tts_running=${ttsr:-NA} qual_watcher=$gstat(pid=$QUAL_WPID)"
+  if [ "$mwdead" = 0 ] && [ "$dc" = 0 ] && [ "$ds" = 0 ] && [ "$ok" = 1 ] && [ "$qimg" = "$IMG" ] && [ "$qrun" = true ] \
      && [ "$par" = 200 ] && [ "$ttsexist" = 1 ] && [ "$ttsr" = false ] && [ "$gstat" = OK ]; then
     echo "== MIGRATE_RESULT=ROLLBACK_OK =="; exit 1
   fi
@@ -85,8 +109,14 @@ on_err() { if [ "$PHASE" = preflight ]; then echo "aborted in preflight (no muta
 
 main() {
   echo "=== PREFLIGHT (fail-closed) ==="
-  docker image inspect "$IMG" >/dev/null 2>&1 || die "F1 image $IMG not present"
-  docker image inspect "$DIAG_IMG" >/dev/null 2>&1 || die "diagnostic image $DIAG_IMG not present (dns_probe uses --pull=never)"   # seam 8
+  # validate MODE before ANY mutation — a drill typo cannot run the clean migration
+  case "$MODE" in
+    clean) FAILPOINTS="";;
+    drill) FAILPOINTS="before_render";;
+    *) die "MODE must be 'clean' or 'drill' (got '$MODE')";;
+  esac
+  echo "MODE=$MODE (failpoints='$FAILPOINTS')"
+  docker image inspect "$IMG" >/dev/null 2>&1 || die "F1/diagnostic image $IMG not present"   # seam 4: covers DIAG_IMG (== IMG)
   [ "$(docker inspect -f '{{.Image}}' voicebook-stream-qual 2>/dev/null)" = "$IMG" ] || die "qual not on accepted digest"
   [ "$(docker inspect -f '{{.State.Running}}' voicebook-stream-qual 2>/dev/null)" = true ] || die "qual not running"
   [ "$(hc http://127.0.0.1:5060/healthz)" = 200 ] || die "qual not healthy on 5060"
@@ -98,12 +128,13 @@ main() {
   mkdir -p "$(dirname "$LOG")" && : > "$LOG" 2>/dev/null || die "log dir not writable"
   [ "$(hc "$PARAKEET")" = 200 ] || die "Parakeet not healthy"
   if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE '(:|\.)5056$'; then die "a :5056 listener already exists"; fi
-  local n; n=$(pgrep -fc 'watcher.sh voicebook-stream-qual' 2>/dev/null || true)   # seam 5
+  local n; n=$(pgrep -fc 'watcher.sh voicebook-stream-qual' 2>/dev/null || true)
   [ "$n" = 1 ] || die "expected exactly 1 qual watcher, found ${n:-0}"
   OLD_WPID=$(pgrep -f 'watcher.sh voicebook-stream-qual' | head -1)
-  bash scripts/test-stream-compose.sh >/tmp/slice1test.out 2>&1 || true   # seam 9: wrapped, diagnostic reachable
-  if ! grep -q 'SLICE1_TEST=PASS' /tmp/slice1test.out; then cat /tmp/slice1test.out; die "structured compose test did not pass"; fi
-  echo "PREFLIGHT OK (qual=accepted+running+healthy, tts exists+stopped, net/vol/guard/log ok, 5056 free, Parakeet 200, 1 qual watcher pid=$OLD_WPID, compose test PASS)"
+  # structured compose contract — require BOTH exit 0 AND the PASS sentinel
+  local tc; if bash scripts/test-stream-compose.sh >/tmp/slice1test.out 2>&1; then tc=0; else tc=$?; fi
+  if [ "$tc" != 0 ] || ! grep -q 'SLICE1_TEST=PASS' /tmp/slice1test.out; then cat /tmp/slice1test.out; die "structured compose test failed (rc=$tc)"; fi
+  echo "PREFLIGHT OK (qual=accepted+running+healthy, tts exists+stopped, net/vol/guard/log ok, 5056 free, 1 qual watcher pid=$OLD_WPID, compose test rc=0+PASS)"
 
   echo "=== APPLY (arm trap, retire old guard by exact PID, arm migration guard BEFORE stop) ==="
   PHASE=apply
@@ -132,7 +163,7 @@ main() {
   [ "$(hc http://127.0.0.1:5056/healthz)" = 200 ] || rollback "host 5056 not 200"
   [ "$(dns_probe)" = OK ] || rollback "service DNS voicebook-stream:5060 unreachable"
   echo "host 5056 + service DNS OK"
-  failpoint before_render || rollback "failpoint before_render (drill point)"   # seam 6
+  failpoint before_render || rollback "failpoint before_render (drill point)"
   local code sz
   code=$(curl -s -m60 -X POST http://127.0.0.1:5056/speak -H 'Content-Type: application/json' \
     -d '{"voice_id":"sumi-v1","text":"Slice one migration render check."}' -o /tmp/mig.wav -w '%{http_code}' || true)
@@ -158,8 +189,13 @@ main() {
   echo "=== HANDOFF ==="
   PHASE=done
   trap - ERR HUP INT TERM
-  kill "$MIG_PID" 2>/dev/null || true
-  echo "migration guard pid=$MIG_PID stood down; Compose is the service manager"
+  # seam 2: SUCCESS requires the migration watcher PROVEN dead (else it can later delete the managed service)
+  local mwdead; if stop_watcher "$MIG_PID"; then mwdead=0; else mwdead=1; fi
+  if [ "$mwdead" != 0 ]; then
+    echo "HANDOFF ANOMALY: migration watcher $MIG_PID would not die; it still targets voicebook-stream and could delete it"
+    echo "== MIGRATE_RESULT=HANDOFF_WATCHER_ALIVE =="; exit 3
+  fi
+  echo "migration watcher $MIG_PID confirmed dead; Compose is the service manager"
   echo "qual STOPPED + intact: $(docker inspect -f '{{.State.Status}}' voicebook-stream-qual)"
   echo "voicebook-tts: $(docker inspect -f '{{.State.Status}}' voicebook-tts 2>/dev/null)"
   echo "== MIGRATE_RESULT=SUCCESS =="
