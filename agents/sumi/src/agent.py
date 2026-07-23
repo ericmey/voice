@@ -1,13 +1,11 @@
-"""Sumi voice agent — forked from Party (the chained STT/LLM/TTS scaffold).
+"""Sumi voice agent — forked from Party, now on a FULLY LOCAL pipeline.
 
-Registers as "phone-sumi" with LiveKit. This is Slice 2 of the Sumi
-integration: her IDENTITY and PACKAGE only. The pipeline below is still the
-inherited CHAINED cloud scaffold (Whisper / Silero / Gemini / ElevenLabs) so
-the package compiles and tests; it is NOT run for Sumi. Her local pipeline —
-Parakeet STT (Slice 3, done), Momo LLM (Slice 4, done), voicebook-stream TTS in
-her own master voice (Slice 5) — is wired one component per slice. STT and the
-LLM now reach local self-hosted services; only TTS remains the inherited cloud
-scaffold. No container, worker, or Musubi write happens in these wiring slices.
+Registers as "phone-sumi" with LiveKit. Her pipeline is her own, end to end, and
+runs entirely on self-hosted services — no cloud provider on the speaking path:
+  - Slice 3 STT: Parakeet/Riva (streaming) via the official LiveKit NVIDIA plugin;
+  - Slice 4 LLM: Momo (qwen3.6-35b-a3b) via the explicit LiteLLM `sumi` route;
+  - Slice 5 TTS: voicebook-stream in Sumi's own accepted master voice (`sumi-v1`).
+The inherited Gemini/ElevenLabs scaffold is gone. (VAD stays silero — local.)
 
 What IS Sumi's, now and permanently:
   - identity: agent_name "sumi", registration "phone-sumi";
@@ -16,8 +14,8 @@ What IS Sumi's, now and permanently:
     Party's or Nyla's buckets;
   - persona: HER frozen identity from promoted canon, fail-loud (no fallback).
 
-Greeting uses session.say() — the chained scaffold's Gemini text LLM rejects
-generate_reply() at session start. Slices 3-5 replace the pipeline.
+Greeting uses session.say() — a deterministic fixed opener (Sumi's exact first
+line), not a generated reply, so her first breath is always hers verbatim.
 """
 
 from __future__ import annotations
@@ -30,7 +28,6 @@ from livekit.agents import Agent, AgentSession, APIConnectOptions, JobContext, c
 from livekit.agents.beta import EndCallTool
 from livekit.agents.voice.agent_session import SessionConnectOptions
 from livekit.agents.worker import AgentServer
-from livekit.plugins import elevenlabs as elevenlabs_plugin
 from livekit.plugins import nvidia as nvidia_plugin
 from livekit.plugins import openai as openai_plugin
 from livekit.plugins import silero as silero_plugin
@@ -51,21 +48,21 @@ from sdk.tracing import attach_current_span_metadata, wire_otel_shutdown_flush
 from sdk.transcript import wire_transcript_logging
 from tools.core import CoreToolsMixin
 from tools.memory import MusubiToolsMixin
+from voicebook_tts import VoicebookTTS
 
 # --- env ---------------------------------------------------------------
 load_env()
 
 logger = logging.getLogger("voice.agent")
 
-# --- SCAFFOLD pipeline (inherited from Party; NOT Sumi's) --------------
-# What remains scaffold: only TTS. It is a placeholder that keeps the package
-# importable/testable and is never run on the cloud provider below:
-#   Slice 5 TTS: elevenlabs (Nyla's id) -> voicebook-stream in Sumi's own
-#                accepted master voice (canon/people/sumi/voicebook).
-# (Slice 3 STT and Slice 4 LLM are done — both now reach local self-hosted
-#  services; see the LOCAL blocks below.)
-_ELEVENLABS_VOICE_ID = "AEW6JTgnyoPaoB9zlK3S"  # SCAFFOLD ONLY — Nyla's id; Slice 5 swaps to Sumi's master
-_ELEVENLABS_MODEL = "eleven_flash_v2_5"
+# Slice 5 — LOCAL TTS: Sumi's own master voice via the managed voicebook-stream
+# service (custom LiveKit TTS adapter in voicebook_tts.py). Reaches
+# voicebook-stream:5060 by service DNS on voice_default; raw s16le PCM @ 24kHz mono.
+# `sumi-v1` is her frozen registered voice (server-owned registry; an unknown id
+# fails loud 404 — she never speaks in a substitute voice). Base URL + voice id
+# are env-overridable.
+_TTS_VOICE_ID = os.environ.get("SUMI_TTS_VOICE_ID", "sumi-v1")
+_TTS_BASE_URL = os.environ.get("SUMI_TTS_BASE_URL", "http://voicebook-stream:5060")
 
 # Slice 3 — LOCAL STT: self-hosted Parakeet/Riva via the official LiveKit NVIDIA plugin
 # (streaming). Reaches parakeet-ctl:50051 by service DNS on voice_default; insecure — the
@@ -181,8 +178,8 @@ class SumiAgent(
         self._caller_from: str | None = caller_from
 
     async def on_enter(self) -> None:
-        # Fixed-string greeting via session.say() (the scaffold text LLM cannot
-        # generate_reply() at session start). Sumi's opener, not Party's.
+        # Deterministic fixed opener via session.say() — Sumi's exact first line,
+        # synthesized in her own voice, never a generated reply. Her breath is hers.
         await self.session.say(_GREETING)
 
 
@@ -238,11 +235,9 @@ async def entrypoint(ctx: JobContext) -> None:
         max_retries=0,
         timeout=30,
     )
-    tts = elevenlabs_plugin.TTS(
-        voice_id=_ELEVENLABS_VOICE_ID,
-        model=_ELEVENLABS_MODEL,
-        language="en",
-    )
+    # Slice 5 — LOCAL TTS: Sumi's master voice via voicebook-stream (was the
+    # elevenlabs scaffold on Nyla's id). No cloud, no substitute voice.
+    tts = VoicebookTTS(voice_id=_TTS_VOICE_ID, base_url=_TTS_BASE_URL)
 
     extra_tools = [
         EndCallTool(delete_room=True, end_instructions=None),
@@ -298,7 +293,7 @@ async def entrypoint(ctx: JobContext) -> None:
         lk_job_id=getattr(ctx.job, "id", None),
     )
     annotate_call_audio_recording(audio_recording)
-    trace("sumi session: silero-vad -> parakeet-riva(local STT) -> momo/sumi-route(local LLM) -> elevenlabs(scaffold)")
+    trace("sumi session: silero-vad -> parakeet-riva(local STT) -> momo/sumi-route(local LLM) -> voicebook-stream/sumi-v1(local TTS)")
     trace("sumi: entrypoint complete, greeting scheduled via on_enter")
 
 

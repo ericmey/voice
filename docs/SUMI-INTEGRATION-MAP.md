@@ -215,7 +215,13 @@ Not all agent-config. Record the exact action + a pre-mutation readback for each
    group found"). Worker wired to `openai_plugin.LLM` at `10.0.20.25:4000/v1`,
    fail-loud key, and `llm_conn_options max_retry=0` (the livekit retry layer that
    would otherwise double-speak). See `docs/SLICE-4-LLM.md`. →
-5. **TTS adapter** (custom livekit TTS, cancellation/backpressure) →
+5. **TTS adapter** (custom livekit TTS, cancellation/backpressure) —
+   **✅ COMPLETE (2026-07-23)**: `VoicebookTTS` custom LiveKit plugin
+   (`agents/sumi/src/voicebook_tts.py`) over voicebook-stream `/speak/stream`
+   (`sumi-v1`, s16le 24kHz mono). Live-proven: raw contract (2.72s non-silent
+   speech) + adapter-object through the AudioEmitter (TTFA 0.254s, RTF 0.589,
+   24kHz mono). Elevenlabs scaffold removed — pipeline now FULLY LOCAL. 6 CI unit
+   tests + 29 total pass. See `docs/SLICE-5-TTS.md`. →
 6. **SIP/LiveKit bring-up** (after 5060 clear + clean preflight) →
 7. **Single-client synthetic E2E** (latency marks) →
 8. **Eric human-mic call** — the demo; proves ONE Sumi call.
