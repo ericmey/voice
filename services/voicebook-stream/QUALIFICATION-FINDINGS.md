@@ -4,8 +4,12 @@
 
 **Class:** observability. **Severity:** non-blocking for component qualification
 (automated GO stands); **MUST be fixed/bounded before deployment-observability
-acceptance** (Yua, 2026-07-23). **Status: FIX IMPLEMENTED + TESTED — pending
-second-read and image rebuild.**
+acceptance** (Yua, 2026-07-23). **Status: RUNTIME-VERIFIED — fix accepted on
+second read; image `cu128-f1` (sha256:3b28aa8102d6…) built from clean f086999
+with exact context-mirror; real-uvicorn 2.3 regression PASSED (complete
+stream → outcome=ok — the exact case that logged disconnect on the pre-F1 image;
+real cancellation → outcome=disconnect + lease recovery). Pending only Yua's
+final deployment-observability sign-off acceptance.**
 
 **Resolution (2026-07-23):** `ReservationStreamingResponse.__call__` now wraps
 `send` and marks the body complete ONLY after the terminal
