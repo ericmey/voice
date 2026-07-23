@@ -7,17 +7,14 @@
 # running container to the canonical pinned project `voicebook-stream`, operated
 # from a DURABLE canonical home, with no artifact edits.
 #
-# It is a brief-blip operation: container_name is fixed (`voicebook-stream`), so
-# the old-project container is removed before the canonical-project one is created
-# (Compose cannot own the same container_name under two projects). The service is
-# NOT live yet, so a few seconds of gap is acceptable; still, it is fail-closed and
-# rolls back to a healthy serving container.
+# Brief-blip op: container_name is fixed, so the old-project container is removed
+# before the canonical one is created. Fail-closed; rollback proves ONE complete
+# restored tier (A canonical / B old-project / C qual) or reports ROLLBACK_FAILED,
+# and NEVER starts qual beside a running/unknown stable (no-two-model).
 #
 # Usage:  migrate-project-ownership.sh <CANON_DIR>
-#   CANON_DIR must hold the hash-identical a6a9c4e docker-compose.stream.yaml WITH
-#   the `name: voicebook-stream` pin. Establish it first (durable home, e.g.
-#   ~/voice or a repo checkout), mirror the artifact, verify the hash — do NOT
-#   point this at the vbs-drill staging dir.
+#   CANON_DIR: the DURABLE home holding the pinned (81dc60e) docker-compose.stream.yaml.
+#   It is physically resolved (realpath) and must NOT be the drill staging dir.
 #
 # Source-able for a no-container self-test (BASH_SOURCE guard); `main` runs only
 # when executed.
@@ -25,7 +22,8 @@ set -Eeuo pipefail
 
 IMG=sha256:3b28aa8102d69b3214687a7e732dcdeca35b8a11ab0d34187e1dad3f9b4472f7
 PROJECT=voicebook-stream
-EXPECT_COMPOSE_SHA=c8789f0d3462a0901eedf200438208884055457498de218863777a1a1ceea042
+EXPECT_COMPOSE_SHA=cb3dc23449aafebbc5e4c4d2d3c16c1adc8d2cba2bec4e781b2c0f1fc12f3899   # the PINNED (81dc60e) compose
+STAGING_DIR="${STAGING_DIR:-$HOME/vbs-drill-a6a9c4e}"
 PARAKEET=http://127.0.0.1:9000/v1/health/ready
 CANON_DIR="${1:-}"
 COMPOSE=""
@@ -36,9 +34,10 @@ die() { echo "PREFLIGHT_FAIL: $*"; echo "== OWNERSHIP_RESULT=PREFLIGHT_ABORT =="
 hc() { curl -s -m5 -o /dev/null -w '%{http_code}' "$1" 2>/dev/null; }
 proj_label() { docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$1" 2>/dev/null; }
 health() { docker inspect -f '{{.State.Health.Status}}' "$1" 2>/dev/null; }
+running() { docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null; }
 dns_probe() { docker run --rm --pull=never --network voice_default --entrypoint python "$IMG" -c \
   'import urllib.request; urllib.request.urlopen("http://voicebook-stream:5060/healthz",timeout=5); print("OK")' 2>/dev/null || echo NO; }
-# TRI-STATE fail-closed absence check (never infer absence from a failed command)
+# TRI-STATE fail-closed: yes=definitively absent, no=present, unknown=readback errored (never infer absence)
 stable_gone() {
   local rows rrc
   rows=$(docker ps -a --filter 'name=^voicebook-stream$' --format '{{.State}}' 2>/dev/null); rrc=$?
@@ -51,59 +50,87 @@ wait_health() { local i; for i in $(seq 1 150); do [ "$(health "$1")" = healthy 
 rollback() {
   trap - ERR HUP INT TERM; set +e
   echo "OWNERSHIP_ROLLBACK: ${1:-unspecified}"
-  # goal: a healthy SERVING voicebook-stream. Re-create under canonical (idempotent, same a6a9c4e image/config).
-  docker compose -f "$COMPOSE" up -d >/dev/null 2>&1
-  local ok=0 i
-  for i in $(seq 1 150); do [ "$(health voicebook-stream)" = healthy ] && { ok=1; break; }; sleep 1; done
-  local lbl; lbl=$(proj_label voicebook-stream)
-  if [ "$ok" = 1 ]; then
-    echo "rollback: voicebook-stream healthy, project=$lbl (service restored)"
-    echo "== OWNERSHIP_RESULT=ROLLBACK_OK =="; exit 1
+  # try to restore a healthy SERVING voicebook-stream under canonical (idempotent, same image/config)
+  docker compose -f "$COMPOSE" up -d >/dev/null 2>&1; local up_rc=$?
+  local ok=0 i; for i in $(seq 1 150); do [ "$(health voicebook-stream)" = healthy ] && { ok=1; break; }; sleep 1; done
+  local lbl img h5056 dns par ttsr qstat
+  lbl=$(proj_label voicebook-stream); img=$(docker inspect -f '{{.Image}}' voicebook-stream 2>/dev/null)
+  h5056=$(hc http://127.0.0.1:5056/healthz); dns=$(dns_probe); par=$(hc "$PARAKEET")
+  ttsr=$(running voicebook-tts); qstat=$(docker inspect -f '{{.State.Status}}' voicebook-stream-qual 2>/dev/null)
+  # STATE A — canonical stable fully restored
+  if [ "$up_rc" = 0 ] && [ "$ok" = 1 ] && [ "$img" = "$IMG" ] && [ "$lbl" = "$PROJECT" ] \
+     && [ "$h5056" = 200 ] && [ "$dns" = OK ] && [ "$par" = 200 ] && [ "$ttsr" = false ] && [ "$qstat" = exited ]; then
+    echo "rollback: STATE_A canonical stable restored (project=$PROJECT)"; echo "== OWNERSHIP_RESULT=ROLLBACK_OK =="; exit 1
   fi
-  # last-resort tier: bring the dormant qual back so 5060 serves; flag for a human
-  docker start voicebook-stream-qual >/dev/null 2>&1
-  echo "rollback: canonical up FAILED; started dormant qual as interim (5060). MANUAL intervention required."
+  # STATE B — old-project stable still healthy (valid tier, explicitly classified)
+  if [ "$ok" = 1 ] && [ "$img" = "$IMG" ] && [ -n "$OLD_PROJECT" ] && [ "$lbl" = "$OLD_PROJECT" ] \
+     && [ "$h5056" = 200 ] && [ "$dns" = OK ] && [ "$par" = 200 ] && [ "$ttsr" = false ] && [ "$qstat" = exited ]; then
+    echo "rollback: STATE_B old-project stable healthy (project=$OLD_PROJECT); re-own NOT completed"; echo "== OWNERSHIP_RESULT=ROLLBACK_OK =="; exit 1
+  fi
+  # STATE C — qual fallback, ONLY if stable is definitively absent OR definitively non-running (no-two-model, tri-state)
+  local g; g=$(stable_gone)
+  if [ "$g" = yes ] || { [ "$g" = no ] && [ "$(running voicebook-stream)" = false ]; }; then
+    docker start voicebook-stream-qual >/dev/null 2>&1
+    local qready=0; for i in $(seq 1 150); do [ "$(hc http://127.0.0.1:5060/healthz)" = 200 ] && { qready=1; break; }; sleep 1; done
+    local qimg qrun par2 tts2
+    qimg=$(docker inspect -f '{{.Image}}' voicebook-stream-qual 2>/dev/null); qrun=$(running voicebook-stream-qual)
+    par2=$(hc "$PARAKEET"); tts2=$(running voicebook-tts)
+    if [ "$qready" = 1 ] && [ "$qimg" = "$IMG" ] && [ "$qrun" = true ] && [ "$par2" = 200 ] && [ "$tts2" = false ]; then
+      echo "rollback: STATE_C qual fallback serving 5060 (stable definitively gone/non-running)"; echo "== OWNERSHIP_RESULT=ROLLBACK_OK =="; exit 1
+    fi
+    echo "rollback: STATE_C attempted, qual not fully healthy"; echo "== OWNERSHIP_RESULT=ROLLBACK_FAILED =="; exit 2
+  fi
+  echo "rollback: stable present/unknown (state=$g running=$(running voicebook-stream) health=$(health voicebook-stream) project=$lbl), not a clean A/B; REFUSING qual start (no-two-model)"
   echo "== OWNERSHIP_RESULT=ROLLBACK_FAILED =="; exit 2
 }
 on_err() { [ "$PHASE" = preflight ] && { echo "aborted in preflight (no mutation)"; exit 1; }; rollback "trap: unexpected exit/signal in phase=$PHASE"; }
 
 main() {
   echo "=== PREFLIGHT (fail-closed) ==="
-  [ -n "$CANON_DIR" ] || die "usage: migrate-project-ownership.sh <CANON_DIR with pinned a6a9c4e compose>"
-  COMPOSE="$CANON_DIR/docker-compose.stream.yaml"
+  [ -n "$CANON_DIR" ] || die "usage: migrate-project-ownership.sh <durable CANON_DIR with pinned compose>"
+  # BLOCKER 4: resolve the target PHYSICALLY; require an exact durable path, not a substring check
+  local canon_abs staging_abs
+  canon_abs=$(realpath "$CANON_DIR" 2>/dev/null) || die "CANON_DIR does not resolve: $CANON_DIR"
+  [ -d "$canon_abs" ] || die "CANON_DIR is not a directory: $canon_abs"
+  staging_abs=$(realpath "$STAGING_DIR" 2>/dev/null || echo "$STAGING_DIR")
+  [ "$canon_abs" != "$staging_abs" ] || die "CANON_DIR resolves to the drill staging dir ($canon_abs) — refuse"
+  case "$canon_abs" in *drill*) die "CANON_DIR resolved path contains a 'drill' component: $canon_abs";; esac
+  echo "canonical home resolved: $canon_abs"
+  COMPOSE="$canon_abs/docker-compose.stream.yaml"
   [ -f "$COMPOSE" ] || die "no compose at $COMPOSE"
   local sha; sha=$(shasum -a 256 "$COMPOSE" | awk '{print $1}')
-  [ "$sha" = "$EXPECT_COMPOSE_SHA" ] || die "compose hash $sha != a6a9c4e $EXPECT_COMPOSE_SHA"
+  [ "$sha" = "$EXPECT_COMPOSE_SHA" ] || die "compose hash $sha != pinned $EXPECT_COMPOSE_SHA"
   local rendered; rendered=$(docker compose -f "$COMPOSE" config --format json 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin).get("name",""))')
-  [ "$rendered" = "$PROJECT" ] || die "canonical compose renders project '$rendered' != $PROJECT (pin missing)"
-  # the canonical dir must NOT be the staging dir
-  case "$CANON_DIR" in *vbs-drill*) die "CANON_DIR must be a durable home, not the vbs-drill staging dir";; esac
-  # running service must exist, be the accepted digest, healthy, serving
-  docker inspect voicebook-stream >/dev/null 2>&1 || die "voicebook-stream not running (nothing to re-own)"
+  [ "$rendered" = "$PROJECT" ] || die "canonical compose renders project '$rendered' != $PROJECT"
+  # running service present, accepted digest, RUNNING and healthy, serving
+  docker inspect voicebook-stream >/dev/null 2>&1 || die "voicebook-stream not present (nothing to re-own)"
+  [ "$(running voicebook-stream)" = true ] || die "voicebook-stream not State.Running=true"   # BLOCKER 4
   [ "$(docker inspect -f '{{.Image}}' voicebook-stream)" = "$IMG" ] || die "running stable not accepted digest"
   [ "$(health voicebook-stream)" = healthy ] || die "running stable not healthy"
   [ "$(hc http://127.0.0.1:5056/healthz)" = 200 ] || die "host 5056 not 200"
   [ "$(dns_probe)" = OK ] || die "service DNS not reachable"
   OLD_PROJECT=$(proj_label voicebook-stream)
   [ -n "$OLD_PROJECT" ] || die "could not read current project label"
-  [ "$OLD_PROJECT" != "$PROJECT" ] || { echo "already canonical (project=$PROJECT); nothing to do"; echo "== OWNERSHIP_RESULT=ALREADY_CANONICAL =="; exit 0; }
+  [ "$OLD_PROJECT" != "$PROJECT" ] || { echo "already canonical (project=$PROJECT)"; echo "== OWNERSHIP_RESULT=ALREADY_CANONICAL =="; exit 0; }
   # rollback tier + peers intact
-  [ "$(docker inspect -f '{{.State.Status}}' voicebook-stream-qual 2>/dev/null)" = exited ] || die "qual not stopped-intact (rollback tier)"
+  [ "$(docker inspect -f '{{.State.Status}}' voicebook-stream-qual 2>/dev/null)" = exited ] || die "qual not stopped-intact"
   [ "$(docker inspect -f '{{.Image}}' voicebook-stream-qual 2>/dev/null)" = "$IMG" ] || die "qual not accepted digest"
-  [ "$(docker inspect -f '{{.State.Running}}' voicebook-tts 2>/dev/null)" = false ] || die "voicebook-tts not stopped"
+  [ "$(running voicebook-tts)" = false ] || die "voicebook-tts not stopped"
   [ "$(hc "$PARAKEET")" = 200 ] || die "Parakeet not ready"
-  local vram; vram=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | tr -d ' ')
-  echo "PREFLIGHT OK (running stable healthy+accepted, OLD project=$OLD_PROJECT -> canonical $PROJECT, qual stopped-intact, tts stopped, Parakeet 200, VRAM ${vram}MiB)"
+  echo "PREFLIGHT OK (stable running+healthy+accepted, OLD project=$OLD_PROJECT -> $PROJECT, qual stopped-intact, tts stopped, Parakeet 200)"
 
-  echo "=== MIGRATE (remove old-project container, recreate under canonical) ==="
+  echo "=== MIGRATE (prove exact target, remove old-project container, recreate canonical) ==="
   PHASE=migrate
   trap on_err ERR HUP INT TERM
-  # remove the mislabelled container via ITS project (‑p overrides the file name:)
+  # BLOCKER 4: prove the down target is EXACTLY voicebook-stream under OLD_PROJECT, and canonical owns none
+  local old_ps canon_ps
+  old_ps=$(docker compose -p "$OLD_PROJECT" -f "$COMPOSE" ps --format '{{.Name}}' 2>/dev/null | sort | tr '\n' ',' )
+  [ "$old_ps" = "voicebook-stream," ] || rollback "OLD project ps != exactly {voicebook-stream} (got '$old_ps')"
+  canon_ps=$(docker compose -f "$COMPOSE" ps --format '{{.Name}}' 2>/dev/null | tr -d '[:space:]')
+  [ -z "$canon_ps" ] || rollback "canonical project already owns containers ('$canon_ps') before migrate"
   docker compose -p "$OLD_PROJECT" -f "$COMPOSE" down >/dev/null 2>&1 || rollback "down of old project $OLD_PROJECT failed"
-  # prove it is definitively gone before recreating (tri-state fail-closed)
   local g; g=$(stable_gone)
   [ "$g" = yes ] || rollback "voicebook-stream not PROVEN gone after down (state=$g)"
-  # create under the canonical project (compose name: -> project voicebook-stream)
   docker compose -f "$COMPOSE" up -d >/dev/null 2>&1 || rollback "canonical up failed"
 
   echo "=== VERIFY ==="
@@ -120,13 +147,13 @@ main() {
   { [ "$code" = 200 ] && [ "$sz" -gt 20000 ]; } || rollback "render failed after re-own (http=$code bytes=$sz)"
   [ "$(hc "$PARAKEET")" = 200 ] || rollback "Parakeet degraded after re-own"
   [ "$(docker inspect -f '{{.State.Status}}' voicebook-stream-qual 2>/dev/null)" = exited ] || rollback "qual disturbed"
-  [ "$(docker inspect -f '{{.State.Running}}' voicebook-tts 2>/dev/null)" = false ] || rollback "tts disturbed"
+  [ "$(running voicebook-tts)" = false ] || rollback "tts disturbed"
 
   echo "=== DONE ==="
   PHASE=done
   trap - ERR HUP INT TERM
   echo "re-owned: voicebook-stream project=$PROJECT (was $OLD_PROJECT), healthy, accepted digest, render OK, DNS OK, qual+tts undisturbed"
-  echo "canonical lifecycle home: $CANON_DIR (durable). Old staging dir may now be retired."
+  echo "canonical lifecycle home: $canon_abs. Old staging dir may now be retired."
   echo "== OWNERSHIP_RESULT=SUCCESS =="
 }
 
