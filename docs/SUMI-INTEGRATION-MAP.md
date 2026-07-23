@@ -200,8 +200,13 @@ Not all agent-config. Record the exact action + a pre-mutation readback for each
    Compose service, canonical project + detached-worktree lifecycle authority at
    `87f1f5e`, proven via mock self-tests → real rollback drill → clean migration →
    ownership re-own. See `docs/SLICE-1-LANDING.md`. →
-2. **Sumi identity/package** (fork, freeze, fail-loud, memory isolation) →
-3. **STT adapter** (nvidia Riva plugin vs parakeet 50051) →
+2. **Sumi identity/package** (fork, freeze, fail-loud, memory isolation) —
+   **✅ COMPLETE (2026-07-23, 9fc3dfa)**: agents/sumi forked, SUMI_CONFIG, phone-sumi, fail-loud
+   person-first persona from canon, sumi/voice memory fence, entrypoint MUSUBI_V2_TOKEN_SUMI. →
+3. **STT adapter** (nvidia Riva plugin vs parakeet 50051) —
+   **✅ COMPLETE (2026-07-23)**: official `livekit-plugins-nvidia` 1.6.5 streaming STT, transcript
+   PASS over voice_default DNS `parakeet-ctl:50051`; Parakeet given a managed digest-pinned
+   definition on voice_default (was an unmanaged bare run). See `docs/SLICE-3-STT.md`. →
 4. **LLM adapter/route** (new readable Sumi route, zero cloud fallback) →
 5. **TTS adapter** (custom livekit TTS, cancellation/backpressure) →
 6. **SIP/LiveKit bring-up** (after 5060 clear + clean preflight) →

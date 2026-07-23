@@ -1,0 +1,60 @@
+# Parakeet / Riva STT — canonical MANAGED deployment.
+#
+# Parakeet-ctl was an UNMANAGED bare `docker run` (restart=no, no compose/systemd) — it did not
+# survive reboot and was itself a launch blocker. This is now its authoritative definition:
+#   - pinned to the immutable image DIGEST (no floating :latest);
+#   - attached to the external `voice_default` network so the Sumi worker reaches it by service
+#     DNS at `parakeet-ctl:50051` (the STT contract);
+#   - loopback publishes (127.0.0.1:50051 / :9000) PRESERVED for host-side riva clients + ops;
+#   - `restart: unless-stopped` so it survives recreate/reboot.
+#
+# Reproduces ONLY the real docker-run overrides diffed against the image Config — NIM_MODEL_PROFILE,
+# the model-cache bind, the GPU request, shm, and the loopback ports. Entrypoint/cmd, ExposedPorts,
+# and the other ~93 env vars are image defaults and are intentionally NOT copied.
+name: parakeet
+services:
+  parakeet-ctl:
+    container_name: parakeet-ctl
+    image: nvcr.io/nim/nvidia/parakeet-1-1b-ctc-en-us@sha256:5f30bb5fbb6eb2bf4d57bdfa0740c29d787001100f5d185bedc0bbb486376f81
+    restart: unless-stopped
+    shm_size: "64m"
+    environment:
+      # the ONE real run-override (selects the served model profile:
+      # parakeet-1.1b-en-US-asr-streaming). Everything else is an image default.
+      - NIM_MODEL_PROFILE=28d9961db43ac9078bca3f35c97e8ababbcfb9f37c23ec4c2949ccc4831ed958
+    volumes:
+      - /home/ericmey/models/nim-cache:/opt/nim/.cache
+    ports:
+      # loopback-only, preserved verbatim from the bare run. Sumi uses service DNS, not this.
+      - "127.0.0.1:50051:50051"
+      - "127.0.0.1:9000:9000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - voice_default
+    healthcheck:
+      # BOTH Riva surfaces must be 200 (ready AND live); curl is present in the image.
+      test:
+        - "CMD-SHELL"
+        - "curl -sf http://127.0.0.1:9000/v1/health/ready && curl -sf http://127.0.0.1:9000/v1/health/live"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      # Conservatively ABOVE the observed one-time cold-build (~45 min riva-deploy: .rmir ->
+      # Triton repo + FP8/TensorRT engine on this GPU). A shorter window marks a legitimately
+      # BUILDING container "unhealthy" — the same misclassify-an-expected-state defect we fixed in
+      # monitoring today. NOTE: the live container from the 2026-07-23 migration still carries the
+      # original 180s (it was NOT recreated just to change a healthcheck-timing field); this 900s is
+      # the canonical value for the next genuine recreate. That live/canonical drift is intentional.
+      start_period: 900s
+
+networks:
+  # Owned by the voice Compose project; external so this file joins it without recreating it.
+  voice_default:
+    external: true
+    name: voice_default

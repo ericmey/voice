@@ -22,6 +22,7 @@ generate_reply() at session start. Slices 3-5 replace the pipeline.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from livekit.agents import Agent, AgentSession, JobContext, cli
@@ -29,7 +30,7 @@ from livekit.agents.beta import EndCallTool
 from livekit.agents.worker import AgentServer
 from livekit.plugins import elevenlabs as elevenlabs_plugin
 from livekit.plugins import google as google_plugin
-from livekit.plugins import openai as openai_plugin
+from livekit.plugins import nvidia as nvidia_plugin
 from livekit.plugins import silero as silero_plugin
 from sdk.audio_recording import (
     annotate_call_audio_recording,
@@ -66,6 +67,17 @@ logger = logging.getLogger("voice.agent")
 _ELEVENLABS_VOICE_ID = "AEW6JTgnyoPaoB9zlK3S"  # SCAFFOLD ONLY — Nyla's id; Slice 5 swaps to Sumi's master
 _ELEVENLABS_MODEL = "eleven_flash_v2_5"
 _CHAINED_LLM_MODEL = "gemini-3.1-flash-lite-preview"  # SCAFFOLD ONLY — Slice 4 swaps to Momo
+
+# Slice 3 — LOCAL STT: self-hosted Parakeet/Riva via the official LiveKit NVIDIA plugin
+# (streaming). Reaches parakeet-ctl:50051 by service DNS on voice_default; insecure — the
+# self-hosted Riva speaks plaintext gRPC (no TLS, no api-key). 16 kHz mono is the model's
+# contract (streaming transcription proven word-for-word 2026-07-23; offline mode unsupported).
+# The plugin's default model name (…-silero-vad-sortformer) is NOT what our self-hosted
+# NIM serves — parakeet-ctl advertises exactly one ASR model, `parakeet-1.1b-en-US-asr-
+# streaming` (streaming/online/16kHz/en-US), verified via GetRivaSpeechRecognitionConfig.
+# Using the plugin default would fail "model unavailable"; pin the served name.
+_STT_SERVER = os.environ.get("SUMI_STT_SERVER", "parakeet-ctl:50051")
+_STT_MODEL = os.environ.get("SUMI_STT_MODEL", "parakeet-1.1b-en-US-asr-streaming")
 
 # --- persona -----------------------------------------------------------
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
@@ -168,9 +180,18 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     trace(f"caller source={caller.source} from={caller_from!r} call_id={call_sid!r}")
 
-    # SCAFFOLD pipeline — Slices 3-5 replace these with Parakeet / Momo /
-    # voicebook-stream. Never run on the cloud providers in this slice.
-    stt = openai_plugin.STT(model="whisper-1", language="en")
+    # Slice 3 — LOCAL STT: Parakeet/Riva streaming via the official NVIDIA plugin (was
+    # Whisper). LLM + TTS below are still the inherited SCAFFOLD (Slices 4-5 swap them to
+    # Momo + voicebook-stream); never run on the cloud providers in this slice.
+    stt = nvidia_plugin.STT(
+        server=_STT_SERVER,
+        use_ssl=False,
+        api_key="",
+        model=_STT_MODEL,
+        language_code="en-US",
+        sample_rate=16000,
+        punctuate=True,
+    )
     vad = silero_plugin.VAD.load(
         min_speech_duration=0.1,
         min_silence_duration=0.65,
@@ -223,7 +244,7 @@ async def entrypoint(ctx: JobContext) -> None:
         lk_job_id=getattr(ctx.job, "id", None),
     )
     annotate_call_audio_recording(audio_recording)
-    trace("sumi SCAFFOLD session: silero-vad -> whisper-1 -> gemini -> elevenlabs (Slices 3-5 swap to local)")
+    trace("sumi session: silero-vad -> parakeet-riva(local STT) -> gemini(scaffold) -> elevenlabs(scaffold)")
     trace("sumi: entrypoint complete, greeting scheduled via on_enter")
 
 
