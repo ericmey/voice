@@ -12,9 +12,12 @@ check 'published: "5056"'           "host ops publish 5056"
 check 'target: 5060'                "container port 5060"
 check 'voice_default'               "attached to voice_default"
 check 'external: true'              "voice_default/volume external (join, not recreate)"
-check '/srv/voicebook:ro'           "masters read-only"
-check 'registry.json:ro'            "registry read-only"
-check '/models/hf-cache:ro'         "model cache read-only"
+# `docker compose config` renders short `:ro` as long-form `read_only: true`.
+roc=$(echo "$R" | grep -c 'read_only: true')
+if [ "$roc" = 3 ]; then echo "OK   all 3 mounts read_only (masters/registry/cache)"; else echo "FAIL read_only count=$roc (expect 3)"; fail=1; fi
+check 'source: /srv/voicebook$'               "masters mount present"
+check 'target: /etc/voicebook/registry.json'  "registry mount present"
+check 'source: voicebook-hf-cache'            "model cache mount present"
 check 'HF_HUB_OFFLINE'              "offline env"
 check 'restart: unless-stopped'     "restart policy"
 check 'urllib.request.urlopen'      "python-stdlib healthcheck (no curl/wget dependency)"
