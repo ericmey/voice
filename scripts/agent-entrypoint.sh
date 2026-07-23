@@ -9,7 +9,7 @@
 # selection happens here, once, at container start.
 set -eu
 
-: "${AGENT:?AGENT must be set (aoi|nyla|yua|party)}"
+: "${AGENT:?AGENT must be set (aoi|nyla|yua|party|sumi)}"
 
 case "$AGENT" in
 	aoi) token_var=MUSUBI_V2_TOKEN_AOI ;;
@@ -19,6 +19,11 @@ case "$AGENT" in
 	# bearer (no longer shared with Nyla). Its persona is still Nyla-cloned
 	# until it graduates into Sumi, but its memory is separated.
 	party) token_var=MUSUBI_V2_TOKEN_PARTY ;;
+	# Sumi is the graduation of Party: her own sumi/voice namespace + dedicated
+	# bearer. Selecting only MUSUBI_V2_TOKEN_SUMI (never Party's) is the
+	# artifact-side half of her memory isolation; the live bearer-identity gate
+	# (sub=sumi/voice, cross-write 403) is a later deploy check.
+	sumi) token_var=MUSUBI_V2_TOKEN_SUMI ;;
 	*)
 		echo "agent-entrypoint: no Musubi token mapping for AGENT=$AGENT" >&2
 		exit 64
