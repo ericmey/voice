@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voicebook-stream"
+version = "0.1.0"
+description = "Streaming voicebook TTS: speaks a girl's accepted master as streamed PCM (faster-qwen3-tts)"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    "pydantic>=2",
+]
+
+# The GPU runtime (torch/torchaudio/faster-qwen3-tts) is DELIBERATELY NOT declared
+# It lives only in the service image. Adding it would force cu128 torch into
+# every root `uv sync`, and a package install silently clobbering a verified
+# cu128 environment is a defect this repo has already been bitten by three
+# times in one day. See docs/AGENT-LESSONS.md.
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
