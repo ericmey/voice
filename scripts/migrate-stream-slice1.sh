@@ -76,18 +76,18 @@ rollback() {
   stop_watcher "$MIG_PID"; local mwdead=$?
   [ "$mwdead" = 0 ] && echo "migration watcher $MIG_PID confirmed dead" || echo "WARN: migration watcher $MIG_PID NOT confirmed dead"
   docker compose -f "$COMPOSE" down >/dev/null 2>&1; local dc=$?
-  # seam 1: no-two-model, TRI-STATE FAIL-CLOSED. Only two states are safe to start
-  # qual: the stable is definitively ABSENT, or definitively running=false. A
-  # running=true OR any unknown/empty/errored readback must NOT start qual.
-  local stable_gone
-  if ! docker inspect voicebook-stream >/dev/null 2>&1; then
-    stable_gone=1                                                  # definitively absent -> safe
-  else
-    local sr; sr=$(docker inspect -f '{{.State.Running}}' voicebook-stream 2>/dev/null)
-    if [ "$sr" = false ]; then stable_gone=1; else stable_gone=0; fi   # false=safe; true/unknown/empty=UNSAFE
-  fi
+  # seam 1: no-two-model, TRI-STATE FAIL-CLOSED — and NEVER infer absence from a
+  # FAILED command. A `docker inspect` that errors (daemon/transient/permission)
+  # is not proof the container is gone. Use a readback whose SUCCESSFUL execution
+  # distinguishes absence (zero exact rows) from state; a nonzero rc is UNKNOWN.
+  local rows rrc stable_gone
+  rows=$(docker ps -a --filter 'name=^voicebook-stream$' --format '{{.State}}' 2>/dev/null); rrc=$?
+  if [ "$rrc" != 0 ]; then stable_gone=0                 # readback FAILED -> UNKNOWN -> unsafe (never infer absence)
+  elif [ -z "$rows" ]; then stable_gone=1               # rc0 + zero exact rows -> definitively absent -> safe
+  elif [ "$rows" = exited ]; then stable_gone=1         # rc0 + single exited row -> definitively non-running -> safe
+  else stable_gone=0; fi                                # running/restarting/created/removing/dead/paused/ambiguous/multi -> unsafe
   if [ "$stable_gone" != 1 ]; then
-    echo "ROLLBACK_ABORT_NO_START: voicebook-stream present and not-definitively-stopped after down (dc=$dc, running='${sr:-?}') — refusing to start qual (no-two-model, fail-closed)"
+    echo "ROLLBACK_ABORT_NO_START: voicebook-stream not PROVEN gone (readback_rc=$rrc rows='${rows:-<none>}') — refusing to start qual (no-two-model, fail-closed)"
     echo "== MIGRATE_RESULT=ROLLBACK_FAILED =="; exit 2
   fi
   docker start voicebook-stream-qual >/dev/null 2>&1; local ds=$?

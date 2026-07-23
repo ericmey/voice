@@ -35,7 +35,7 @@ run_scenario() { # $1 runbook  $2 setup-fn-name
     m_5056=000; m_dns=OK; m_parakeet=200; m_vram=8000; m_nvidia_rc=0
     m_5056_listener=0; m_old_watcher_n=1; m_diag_present=1; m_composetest_rc=0
     m_render=200; m_wav_bytes=40000; m_down_rc=0; m_start_rc=0; m_guard_samples=1
-    m_qual_never_ready=0; m_running_names="voicebook-stream-qual"; m_stable_running_unknown=0
+    m_qual_never_ready=0; m_running_names="voicebook-stream-qual"; m_ps_rc=0
     m_dead_pids=" "; m_unkillable=" "; m_guard_budget=""   # pids alive by default; kill adds to dead set
     "$setup"
     source "$rb"                       # defines funcs; BASH_SOURCE guard => no auto-run
@@ -50,7 +50,14 @@ run_scenario() { # $1 runbook  $2 setup-fn-name
     docker() { local s="$1"; shift; case "$s" in
         image) return "$([ "$1" = inspect ] && shift; { [ "$1" = "$IMGX" ] && echo 0; } || { [ "$1" = alpine ] && [ "$m_diag_present" = 1 ] && echo 0; } || echo 1)";;
         volume|network) return 0;;
-        ps) printf '%s\n' $m_running_names;;
+        ps) case "$*" in
+            # exact-name inventory readback: rc distinguishes UNKNOWN from a real answer
+            *-a*) [ "$m_ps_rc" != 0 ] && return "$m_ps_rc"
+                  if [ "$m_stable_exists" = 1 ]; then
+                    case "$m_stable_running" in true) echo running;; false) echo exited;; *) echo "$m_stable_running";; esac
+                  fi; return 0;;
+            *) printf '%s\n' $m_running_names;;   # plain ps --format Names (wait_health)
+          esac;;
         stop) m_qual_running=false; m_qual_health=000; return 0;;
         start) echo "START $*" >> "$SCF"; [ "$m_qual_never_ready" = 1 ] || { m_qual_running=true; m_qual_health=200; }; return "$m_start_rc";;
         run) echo "$m_dns";;
@@ -72,7 +79,7 @@ run_scenario() { # $1 runbook  $2 setup-fn-name
                 "") if [ "$PHASE" = preflight ]; then return 0; else [ "$m_tts_exists" = 1 ] && return 0 || return 1; fi;; esac;;
             voicebook-stream) case "$fmt" in
                 *Image*) echo "$m_stable_img";; *Health.Status*) echo "$m_stable_health";;
-                *State.Running*) [ "${m_stable_running_unknown:-0}" = 1 ] && echo "" || echo "$m_stable_running";;
+                *State.Running*) echo "$m_stable_running";;
                 *Networks*) [ "$m_stable_onnet" = 1 ] && echo "voice_default " || echo "";;
                 "") [ "$m_stable_exists" = 1 ] && return 0 || return 1;; esac;;
           esac;;
@@ -156,7 +163,7 @@ s_guard_death()  { MODE=clean; m_guard_budget=2; }      # MIG guard dies at the 
 s_failpoint()    { MODE=drill; }                        # before_render failpoint, restore healthy
 s_fail_ds()      { MODE=drill; m_start_rc=1; }          # down ok(stable gone)->start fails: ds!=0 predicate
 s_two_model()    { MODE=drill; m_down_rc=1; }           # down fails->stable running->NO_START abort (BarB #1)
-s_stable_unknown(){ MODE=drill; m_down_rc=1; m_stable_running_unknown=1; }  # stable readback UNKNOWN -> fail-closed, no start (BarB #1 tri-state)
+s_readback_error(){ MODE=drill; m_down_rc=1; m_ps_rc=1; }  # FIRST readback ERRORS while stable actually running -> UNKNOWN -> fail-closed (BarB #1 final)
 s_fail_notready(){ MODE=drill; m_qual_never_ready=1; }  # rollback: qual never 5060-ready
 s_fail_tts()     { MODE=drill; m_tts_running=true; }    # rollback: tts running (v3 seam 2)
 s_fail_qualwatch(){ MODE=clean; m_guard_samples=0; }    # qual watcher won't sample => gstat BAD (v3 seam 3)
@@ -176,7 +183,7 @@ expect "GUARD-DEATH->ROLLBACK_OK"        "$RUNBOOK" s_guard_death    1 ROLLBACK_
 expect "FAILPOINT->ROLLBACK_OK"          "$RUNBOOK" s_failpoint      1 ROLLBACK_OK   "before_render"
 expect "ROLLBACK_FAILED/start-rc"        "$RUNBOOK" s_fail_ds        2 ROLLBACK_FAILED
 expect_no_start "NO-TWO-MODEL/running(B#1)"  "$RUNBOOK" s_two_model
-expect_no_start "NO-TWO-MODEL/unknown-fail-closed(B#1)" "$RUNBOOK" s_stable_unknown
+expect_no_start "NO-TWO-MODEL/readback-error-fail-closed(B#1)" "$RUNBOOK" s_readback_error
 expect "ROLLBACK_FAILED/qual-not-ready"  "$RUNBOOK" s_fail_notready  2 ROLLBACK_FAILED
 expect "ROLLBACK_FAILED/tts-running"     "$RUNBOOK" s_fail_tts       2 ROLLBACK_FAILED
 expect "ROLLBACK_FAILED/qual-watcher"    "$RUNBOOK" s_fail_qualwatch 2 ROLLBACK_FAILED
@@ -201,8 +208,8 @@ M_NOHANDOFF=$(mutant '/rollback "handoff: migration watcher/d')  # BarB #3: lose
 meta_detects "lost-handoff-recovery detected" "$M_NOHANDOFF" s_unkill_handoff 2 ROLLBACK_FAILED
 M_NO2MODEL=$(mutant 's/\[ "\$stable_gone" != 1 \]/false/')     # BarB #1: neuter the no-two-model guard
 meta_start_called "no-two-model-guard: mutant actually starts qual" "$M_NO2MODEL" s_two_model
-M_FAILOPEN=$(mutant 's/\[ "\$sr" = false \]/[ "$sr" != true ]/')  # BarB #1: fail-OPEN on unknown readback
-meta_start_called "tri-state-fail-closed: mutant starts qual on unknown" "$M_FAILOPEN" s_stable_unknown
+M_FAILOPEN=$(mutant 's/\[ "\$rrc" != 0 \]; then stable_gone=0/[ "$rrc" != 0 ]; then stable_gone=1/')  # BarB #1: infer ABSENCE from a failed readback
+meta_start_called "never-infer-absence: mutant starts qual on readback error" "$M_FAILOPEN" s_readback_error
 
 echo "=========================================================="
 echo "PASS=$PASS FAIL=$FAIL"
