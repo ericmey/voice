@@ -230,7 +230,12 @@ Not all agent-config. Record the exact action + a pre-mutation readback for each
    up (gated until the synthetic turn passes). Fixed a latent agent-image build
    break (services/ not copied since it joined the workspace, b8e6ce9). See
    `docs/SLICE-6-LIVEKIT-PLANE.md`. →
-7. **Single-client synthetic E2E** (latency marks) →
+7. **Single-client synthetic E2E** (latency marks) —
+   **✅ PASSED (2026-07-23)** — the guardrail threshold. Full local loop proven in
+   one shot: synthetic LiveKit caller → Parakeet STT (word-for-word) → Momo LLM
+   (fully in-character reply, her canon) → voicebook TTS → Sumi's voice. No SIP.
+   Captured `logs/voice/sumi_turn_full.wav`. Harness: `scripts/synthetic-turn.py`.
+   See `docs/SLICE-7-SYNTHETIC-TURN.md`. →
 8. **Eric human-mic call** — the demo; proves ONE Sumi call.
 
 Then, gating 2-caller **capacity** only (NOT the demo):
