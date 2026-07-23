@@ -41,7 +41,7 @@ from .synth import SAMPLE_RATE, SynthesisError, Synthesizer
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from starlette.types import Receive, Scope, Send
+    from starlette.types import Message, Receive, Scope, Send
 
 MAX_INPUT_CHARS = 4000
 MAX_REQUEST_ID = 64
@@ -126,27 +126,52 @@ class ReservationStreamingResponse(StreamingResponse):
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        # Production (uvicorn HTTP) advertises ASGI spec_version 2.3, whose
+        # StreamingResponse handles disconnect via a task group: it observes
+        # http.disconnect on receive() and returns __call__ NORMALLY. So a
+        # disconnect raises nothing here — we must detect it by watching
+        # receive(), or the outcome would wrongly log "ok". (Spec >=2.4 instead
+        # raises ClientDisconnect from send; both branches are covered by tests.)
+        disconnected = {"seen": False}
+
+        async def watching_receive() -> Message:
+            msg = await receive()
+            if msg.get("type") == "http.disconnect":
+                disconnected["seen"] = True
+            return msg
+
         outcome = "ok"
         try:
-            await super().__call__(scope, receive, send)
+            await super().__call__(scope, watching_receive, send)
         except BaseException as exc:  # noqa: BLE001 - record then re-raise
             outcome = f"post-header:{type(exc).__name__}"
             raise
         finally:
+            close_exc: BaseException | None = None
             try:
                 close = getattr(self._body, "close", None)
                 if callable(close):
                     close()
-            finally:
-                self._reservation.close()  # idempotent
-                logger.info(
-                    "stream request_id=%s voice_id=%s chars=%d outcome=%s duration_ms=%d",
-                    self._rid,
-                    self._voice_id,
-                    self._chars,
-                    outcome,
-                    int((time.monotonic() - self._start) * 1000),
-                )
+            except BaseException as exc:  # noqa: BLE001 - capture, log, release
+                close_exc = exc
+            # Final outcome precedence: a teardown failure is the most important
+            # thing to correlate; then a normal-return disconnect (2.3 branch);
+            # otherwise whatever the body path recorded.
+            if close_exc is not None:
+                outcome = f"teardown:{type(close_exc).__name__}"
+            elif outcome == "ok" and disconnected["seen"]:
+                outcome = "disconnect"
+            self._reservation.close()  # idempotent — always releases
+            logger.info(
+                "stream request_id=%s voice_id=%s chars=%d outcome=%s duration_ms=%d",
+                self._rid,
+                self._voice_id,
+                self._chars,
+                outcome,
+                int((time.monotonic() - self._start) * 1000),
+            )
+            if close_exc is not None:
+                raise close_exc
 
 
 def create_app(registry: VoiceRegistry, synthesizer: Synthesizer, lease: OneFlightLease) -> FastAPI:

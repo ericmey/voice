@@ -414,3 +414,98 @@ def test_unary_resolve_failure_logged_once(env, caplog):
         client.post("/speak", json={"voice_id": "nobody", "text": "hi"})
     records = [r for r in caplog.records if "404" in r.getMessage()]
     assert len(records) == 1, f"expected one 404 log, got {len(records)}"
+
+
+# --- review-5: production runs ASGI spec_version 2.3, not 2.4 -----------------
+
+
+def _drive_23(resp, *, disconnect_after_chunk: bool):
+    """Drive __call__ through the ASGI 2.3 task-group branch that uvicorn HTTP
+    actually uses. Disconnect is delivered via receive() (http.disconnect),
+    and __call__ returns NORMALLY — not via an OSError from send()."""
+    import asyncio
+
+    chunk_sent = asyncio.Event()
+    disconnect_now = asyncio.Event()
+
+    async def receive():
+        if disconnect_after_chunk:
+            await chunk_sent.wait()  # let one body chunk go out first
+        disconnect_now.set()
+        return {"type": "http.disconnect"}
+
+    async def send(msg):
+        if msg["type"] == "http.response.body" and msg.get("body"):
+            chunk_sent.set()
+            if not disconnect_after_chunk:
+                # disconnect-before-chunk: block body until disconnect fires,
+                # so the stream is cancelled before delivering audio
+                await disconnect_now.wait()
+
+    return asyncio.get_event_loop().run_until_complete(
+        resp({"type": "http", "asgi": {"spec_version": "2.3"}}, receive, send)
+    )
+
+
+def test_23_disconnect_before_chunk_closes_backend_and_logs_disconnect(env, caplog):
+    import logging
+
+    reg, synth, lease, _ = env
+    r = reg.get("sumi-v1")
+    backend = synth.synthesize_stream("hi", r.master_path, r.reference_transcript)
+    first = next(iter(backend))
+    from voicebook_stream.app import _PrependIter
+
+    body = _PrependIter(first, backend)
+    res = lease.reserve()
+    resp = ReservationStreamingResponse(
+        res, body, request_id="rid", voice_id="sumi-v1", chars=2, start=0.0
+    )
+    with caplog.at_level(logging.INFO, logger="voicebook.stream"):
+        _drive_23(resp, disconnect_after_chunk=False)
+    assert lease.locked is False
+    assert synth.closed is True  # backend torn down on the 2.3 branch
+    assert any("outcome=disconnect" in r.getMessage() for r in caplog.records), (
+        "2.3 disconnect logged as ok, not disconnect"
+    )
+
+
+def test_23_disconnect_after_chunk_closes_backend_and_logs_disconnect(env, caplog):
+    import logging
+
+    reg, synth, lease, _ = env
+    r = reg.get("sumi-v1")
+    backend = synth.synthesize_stream("hi", r.master_path, r.reference_transcript)
+    first = next(iter(backend))
+    from voicebook_stream.app import _PrependIter
+
+    body = _PrependIter(first, backend)
+    res = lease.reserve()
+    resp = ReservationStreamingResponse(
+        res, body, request_id="rid", voice_id="sumi-v1", chars=2, start=0.0
+    )
+    with caplog.at_level(logging.INFO, logger="voicebook.stream"):
+        _drive_23(resp, disconnect_after_chunk=True)
+    assert lease.locked is False
+    assert synth.closed is True
+    assert any("outcome=disconnect" in r.getMessage() for r in caplog.records)
+
+
+def test_teardown_close_failure_logs_teardown_outcome(env, caplog):
+    """If body.close() raises, the record must say teardown:X, not ok — while
+    still releasing the lease."""
+    import logging
+
+    _reg, _s, lease, _ = env
+    body = _ExplodingCloseIter()  # yields "one", close() raises
+    res = lease.reserve()
+    resp = ReservationStreamingResponse(
+        res, body, request_id="rid", voice_id="sumi-v1", chars=2, start=0.0
+    )
+    with caplog.at_level(logging.INFO, logger="voicebook.stream"):
+        with pytest.raises(RuntimeError, match="teardown blew up"):
+            _drive(resp, [])
+    assert lease.locked is False
+    assert any("outcome=teardown:RuntimeError" in r.getMessage() for r in caplog.records), (
+        "teardown failure logged as success"
+    )
