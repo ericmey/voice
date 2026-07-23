@@ -4,7 +4,19 @@
 
 **Class:** observability. **Severity:** non-blocking for component qualification
 (automated GO stands); **MUST be fixed/bounded before deployment-observability
-acceptance** (Yua, 2026-07-23). **Status: OPEN.**
+acceptance** (Yua, 2026-07-23). **Status: FIX IMPLEMENTED + TESTED — pending
+second-read and image rebuild.**
+
+**Resolution (2026-07-23):** `ReservationStreamingResponse.__call__` now wraps
+`send` and marks the body complete ONLY after the terminal
+`http.response.body(more_body=False)` send returns; `outcome=disconnect` is set
+only when a disconnect was observed AND the body did not complete. Red-proofed
+against all four event orders (see `tests/test_routes.py::test_f1_*`): full
+delivery→ok; disconnect-before-final→disconnect; final-send-raises→post-header
+error with lease/backend cleanup; clean completion→ok exactly once. The order-1
+test was confirmed to FAIL against the pre-fix code and pass after. Gates:
+42 passed, ruff clean, pyright 0. Remaining: second-read acceptance, then a new
+immutable image + targeted runtime regression before deployment sign-off.
 
 **Observed:** 2026-07-23, runtime qualification T5/T6. Under ASGI spec_version
 2.3 (uvicorn serves 2.3 over HTTP), a streaming client that closes the

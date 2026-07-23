@@ -509,3 +509,139 @@ def test_teardown_close_failure_logs_teardown_outcome(env, caplog):
     assert any("outcome=teardown:RuntimeError" in r.getMessage() for r in caplog.records), (
         "teardown failure logged as success"
     )
+
+
+# --- F1: outcome must reflect whether the body actually completed --------------
+# A client closing AFTER full delivery yields http.disconnect but is a SUCCESS.
+# outcome=disconnect is correct ONLY when the body did not complete. These drive
+# the exact ASGI message order through a controlled parent __call__, because the
+# real Starlette 2.3 task group mutually-cancels completion vs disconnect, so the
+# "both observed" production race cannot be forced deterministically through it.
+
+
+def _mk_f1_resp(env, rid="rid"):
+    reg, synth, lease, _ = env
+    r = reg.get("sumi-v1")
+    backend = synth.synthesize_stream("hi", r.master_path, r.reference_transcript)
+    first = next(iter(backend))
+    from voicebook_stream.app import _PrependIter
+
+    body = _PrependIter(first, backend)
+    res = lease.reserve()
+    resp = ReservationStreamingResponse(
+        res, body, request_id=rid, voice_id="sumi-v1", chars=2, start=0.0
+    )
+    return resp, lease, synth
+
+
+def test_f1_full_delivery_then_disconnect_logs_ok(env, caplog, monkeypatch):
+    """Order 1: final http.response.body(more_body=False) send SUCCEEDS, then an
+    http.disconnect is observed -> outcome=ok (not disconnect)."""
+    import logging
+
+    from starlette.responses import StreamingResponse
+
+    async def fake_parent(self, scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"AAAA", "more_body": True})
+        await send({"type": "http.response.body", "body": b"", "more_body": False})  # completes
+        msg = await receive()  # then the client-close disconnect is observed
+        assert msg["type"] == "http.disconnect"
+
+    monkeypatch.setattr(StreamingResponse, "__call__", fake_parent)
+    resp, lease, synth = _mk_f1_resp(env)
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(msg):
+        pass
+
+    with caplog.at_level(logging.INFO, logger="voicebook.stream"):
+        asyncio.get_event_loop().run_until_complete(
+            resp({"type": "http", "asgi": {"spec_version": "2.3"}}, receive, send)
+        )
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("outcome=ok" in m for m in msgs), "full delivery + trailing disconnect misclassified"
+    assert not any("outcome=disconnect" in m for m in msgs), (
+        "a client closing after full delivery was wrongly logged outcome=disconnect (F1)"
+    )
+    assert lease.locked is False
+
+
+def test_f1_disconnect_before_final_logs_disconnect(env, caplog, monkeypatch):
+    """Order 2: http.disconnect observed BEFORE the final body send -> disconnect."""
+    import logging
+
+    from starlette.responses import StreamingResponse
+
+    async def fake_parent(self, scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"AAAA", "more_body": True})
+        msg = await receive()  # disconnect arrives mid-stream, before completion
+        assert msg["type"] == "http.disconnect"
+        # body never completes (no more_body=False send)
+
+    monkeypatch.setattr(StreamingResponse, "__call__", fake_parent)
+    resp, lease, synth = _mk_f1_resp(env)
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(msg):
+        pass
+
+    with caplog.at_level(logging.INFO, logger="voicebook.stream"):
+        asyncio.get_event_loop().run_until_complete(
+            resp({"type": "http", "asgi": {"spec_version": "2.3"}}, receive, send)
+        )
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("outcome=disconnect" in m for m in msgs), "true early disconnect not logged as disconnect"
+    assert lease.locked is False
+
+
+def test_f1_final_send_raises_not_ok_and_cleans_up(env, caplog, monkeypatch):
+    """Order 3: the final body send itself raises -> not falsely ok; lease and
+    backend still cleaned up. completed must NOT be set before the send returns."""
+    import logging
+
+    from starlette.responses import StreamingResponse
+
+    async def fake_parent(self, scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"AAAA", "more_body": True})
+        await send({"type": "http.response.body", "body": b"", "more_body": False})  # this raises
+
+    monkeypatch.setattr(StreamingResponse, "__call__", fake_parent)
+    resp, lease, synth = _mk_f1_resp(env)
+
+    async def receive():
+        return {"type": "http.request"}
+
+    async def send(msg):
+        if msg["type"] == "http.response.body" and not msg.get("more_body", False):
+            raise OSError("final send failed")
+
+    with caplog.at_level(logging.INFO, logger="voicebook.stream"):
+        with pytest.raises(OSError, match="final send failed"):
+            asyncio.get_event_loop().run_until_complete(
+                resp({"type": "http", "asgi": {"spec_version": "2.3"}}, receive, send)
+            )
+    msgs = [r.getMessage() for r in caplog.records]
+    assert not any("outcome=ok" in m for m in msgs), "failed final send falsely logged outcome=ok"
+    assert any("outcome=post-header:OSError" in m for m in msgs), "failed final send not recorded as error"
+    assert lease.locked is False, "lease leaked when the final send failed"
+    assert synth.closed is True, "backend not torn down when the final send failed"
+
+
+def test_f1_clean_completion_logs_ok_exactly_once(env, caplog):
+    """Order 4: ordinary successful stream, no disconnect -> outcome=ok exactly once."""
+    import logging
+
+    resp, lease, synth = _mk_f1_resp(env)
+    with caplog.at_level(logging.INFO, logger="voicebook.stream"):
+        _drive(resp, [])  # all sends succeed, receive never disconnects
+    oks = [m for m in (r.getMessage() for r in caplog.records) if "outcome=ok" in m]
+    assert len(oks) == 1, f"expected exactly one outcome=ok, got {len(oks)}: {oks}"
+    assert not any("outcome=disconnect" in r.getMessage() for r in caplog.records)
+    assert lease.locked is False and synth.closed is True

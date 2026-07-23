@@ -133,6 +133,7 @@ class ReservationStreamingResponse(StreamingResponse):
         # receive(), or the outcome would wrongly log "ok". (Spec >=2.4 instead
         # raises ClientDisconnect from send; both branches are covered by tests.)
         disconnected = {"seen": False}
+        completed = {"body": False}
 
         async def watching_receive() -> Message:
             msg = await receive()
@@ -140,9 +141,22 @@ class ReservationStreamingResponse(StreamingResponse):
                 disconnected["seen"] = True
             return msg
 
+        async def watching_send(message: Message) -> None:
+            # Mark the body complete ONLY AFTER the terminal http.response.body
+            # (more_body False) send actually returns. If that final send raises
+            # or is cancelled, delivery was not proven complete — completed stays
+            # False and the outcome remains disconnect/error, never a false
+            # success. (F1, 2026-07-23.)
+            is_final = message.get("type") == "http.response.body" and not message.get(
+                "more_body", False
+            )
+            await send(message)
+            if is_final:
+                completed["body"] = True
+
         outcome = "ok"
         try:
-            await super().__call__(scope, watching_receive, send)
+            await super().__call__(scope, watching_receive, watching_send)
         except BaseException as exc:  # noqa: BLE001 - record then re-raise
             outcome = f"post-header:{type(exc).__name__}"
             raise
@@ -159,7 +173,10 @@ class ReservationStreamingResponse(StreamingResponse):
             # otherwise whatever the body path recorded.
             if close_exc is not None:
                 outcome = f"teardown:{type(close_exc).__name__}"
-            elif outcome == "ok" and disconnected["seen"]:
+            elif outcome == "ok" and disconnected["seen"] and not completed["body"]:
+                # A disconnect is a real ABORT only if the body never completed.
+                # A client closing AFTER full delivery also yields http.disconnect
+                # but is a success, so completed["body"] takes precedence. (F1.)
                 outcome = "disconnect"
             self._reservation.close()  # idempotent — always releases
             logger.info(
