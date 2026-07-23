@@ -222,7 +222,14 @@ Not all agent-config. Record the exact action + a pre-mutation readback for each
    speech) + adapter-object through the AudioEmitter (TTFA 0.254s, RTF 0.589,
    24kHz mono). Elevenlabs scaffold removed — pipeline now FULLY LOCAL. 6 CI unit
    tests + 29 total pass. See `docs/SLICE-5-TTS.md`. →
-6. **SIP/LiveKit bring-up** (after 5060 clear + clean preflight) →
+6. **SIP/LiveKit bring-up** (after 5060 clear + clean preflight) —
+   **✅ COMPLETE (2026-07-23, media plane only)**: redis + livekit-server up on
+   voice_default (HTTP 200 on :7880); isolated `voice-agent:sumi` image + single
+   `voice-agent-sumi` container registered as `phone-sumi` (restarts=0, scoped
+   LLM key, all fail-loud gates passed). livekit-sip/DID deliberately NOT brought
+   up (gated until the synthetic turn passes). Fixed a latent agent-image build
+   break (services/ not copied since it joined the workspace, b8e6ce9). See
+   `docs/SLICE-6-LIVEKIT-PLANE.md`. →
 7. **Single-client synthetic E2E** (latency marks) →
 8. **Eric human-mic call** — the demo; proves ONE Sumi call.
 
