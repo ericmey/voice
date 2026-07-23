@@ -207,7 +207,14 @@ Not all agent-config. Record the exact action + a pre-mutation readback for each
    **✅ COMPLETE (2026-07-23)**: official `livekit-plugins-nvidia` 1.6.5 streaming STT, transcript
    PASS over voice_default DNS `parakeet-ctl:50051`; Parakeet given a managed digest-pinned
    definition on voice_default (was an unmanaged bare run). See `docs/SLICE-3-STT.md`. →
-4. **LLM adapter/route** (new readable Sumi route, zero cloud fallback) →
+4. **LLM adapter/route** (new readable Sumi route, zero cloud fallback) —
+   **✅ COMPLETE (2026-07-23)**: NEW explicit LiteLLM `sumi` route (mirrors the `-fast`
+   no-think contract, opaque `-fast` untouched); `enable_thinking:false`,
+   `num_retries:0`, bounded timeout, no cloud fallback. Proven `finish=stop`,
+   `reason_len=0`, TTFT 0.321s/total 0.385s, and fail-closed ("No fallback model
+   group found"). Worker wired to `openai_plugin.LLM` at `10.0.20.25:4000/v1`,
+   fail-loud key, and `llm_conn_options max_retry=0` (the livekit retry layer that
+   would otherwise double-speak). See `docs/SLICE-4-LLM.md`. →
 5. **TTS adapter** (custom livekit TTS, cancellation/backpressure) →
 6. **SIP/LiveKit bring-up** (after 5060 clear + clean preflight) →
 7. **Single-client synthetic E2E** (latency marks) →
@@ -221,6 +228,8 @@ Then, gating 2-caller **capacity** only (NOT the demo):
 ## Open GAPs to resolve during slices
 
 - Exact `livekit-plugins-nvidia` version vs 1.6.5 + Riva-gRPC config (STT slice).
-- `-fast` alias semantics (LLM slice).
+- ~~`-fast` alias semantics (LLM slice).~~ **RESOLVED 2026-07-23:** `-fast` = same
+  backend (`qwen3.6-35b-a3b` @ momo:8083) with `chat_template_kwargs.enable_thinking=false`.
+  That no-think flag is the whole difference; the `sumi` route mirrors it.
 - Momo Intel per-GPU VRAM readback method (non-blocking).
 - Opaque existing LiteLLM qwen route params (do not read by mutation; build new).
