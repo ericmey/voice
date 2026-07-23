@@ -350,3 +350,67 @@ def test_constructor_failure_after_reserve_releases(tmp_path, monkeypatch):
     r = client.post("/speak/stream", json={"voice_id": "sumi-v1", "text": "hi"})
     assert r.status_code == 500
     assert lease.locked is False, "lease leaked on constructor failure"
+
+
+# --- review-4: prefetch must not leak the STARTED backend generator ----------
+
+
+def test_prefetch_wrapper_closes_backend_when_never_iterated(env):
+    """The unstarted-generator trap, one layer down. After prefetch the backend
+    is STARTED; if the response never iterates the wrapper (response-start
+    fails), the wrapper's close() must still close the backend."""
+    from voicebook_stream.app import _PrependIter
+
+    reg, synth, lease, _ = env
+    r = reg.get("sumi-v1")
+    backend = synth.synthesize_stream("hi", r.master_path, r.reference_transcript)
+    first = next(iter(backend))  # backend STARTED
+    body = _PrependIter(first, backend)  # wrapper, never iterated further
+    res = lease.reserve()
+    resp = ReservationStreamingResponse(
+        res, body, request_id="rid", voice_id="sumi-v1", chars=2, start=0.0
+    )
+    with pytest.raises(ClientDisconnect):
+        _drive(resp, ["raise"])  # response-start fails, body never iterated
+    assert synth.closed is True, "STARTED backend generator leaked (wrapper close skipped)"
+    assert lease.locked is False
+
+
+def test_prefetch_iter_order_and_close_once(env):
+    """Wrapper yields first-then-rest in order, and closing it closes the
+    backend exactly once."""
+    from voicebook_stream.app import _PrependIter
+
+    reg, synth, lease, _ = env
+    r = reg.get("sumi-v1")
+    backend = synth.synthesize_stream("hi", r.master_path, r.reference_transcript)
+    first = next(iter(backend))
+    body = _PrependIter(first, backend)
+    assert list(body) == [b"pcm0", b"pcm1", b"pcm2"]  # order, no loss, no dup
+    body.close()
+    body.close()  # idempotent, no double-close error
+    assert synth.closed is True
+
+
+def test_stream_backend_failure_on_first_chunk_is_502(tmp_path):
+    """A backend that raises on the first chunk -> typed 502, released."""
+    m = tmp_path / "s.wav"
+    d = _wav(m)
+    reg = VoiceRegistry({"sumi-v1": VoiceEntry("sumi-v1", m, "ref", d)})
+    lease = OneFlightLease()
+    synth = FakeSynth(fail=True)  # raises SynthesisError on first iteration
+    client = TestClient(create_app(reg, synth, lease), raise_server_exceptions=False)
+    r = client.post("/speak/stream", json={"voice_id": "sumi-v1", "text": "hi"})
+    assert r.status_code == 502
+    assert lease.locked is False
+
+
+def test_unary_resolve_failure_logged_once(env, caplog):
+    """404 must produce exactly one terminal correlation record, not two."""
+    import logging
+
+    reg, synth, lease, client = env
+    with caplog.at_level(logging.INFO, logger="voicebook.stream"):
+        client.post("/speak", json={"voice_id": "nobody", "text": "hi"})
+    records = [r for r in caplog.records if "404" in r.getMessage()]
+    assert len(records) == 1, f"expected one 404 log, got {len(records)}"

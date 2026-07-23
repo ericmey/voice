@@ -60,16 +60,38 @@ def _safe_rid(raw: str | None) -> str:
     return cleaned or uuid.uuid4().hex[:12]
 
 
-def _prepend(first: bytes, rest: Iterator[bytes]) -> Iterator[bytes]:
-    """Yield the prefetched first chunk, then the rest — closing the real
-    generator when done. Order preserved, no duplication."""
-    try:
-        yield first
-        yield from rest
-    finally:
-        close = getattr(rest, "close", None)
+class _PrependIter:
+    """Yields a prefetched first chunk, then the rest, and closes the REAL
+    backend generator on close() EVEN IF __next__ was never called.
+
+    A generator-based prepend would reintroduce the unstarted-generator trap
+    one layer down: after prefetch the backend is already started, but a
+    generator wrapper that is never iterated skips its finally on close(),
+    leaking the started GPU generator. A concrete class closes deterministically.
+    """
+
+    def __init__(self, first: bytes, rest: Iterator[bytes]) -> None:
+        self._first = first
+        self._rest = rest
+        self._sent_first = False
+        self._closed = False
+
+    def __iter__(self) -> _PrependIter:
+        return self
+
+    def __next__(self) -> bytes:
+        if not self._sent_first:
+            self._sent_first = True
+            return self._first
+        return next(self._rest)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        close = getattr(self._rest, "close", None)
         if callable(close):
-            close()
+            close()  # closes the started backend generator, iterated or not
 
 
 class ReservationStreamingResponse(StreamingResponse):
@@ -169,16 +191,16 @@ def create_app(registry: VoiceRegistry, synthesizer: Synthesizer, lease: OneFlig
             _log_pre(kind, rid, req.voice_id, len(req.text), "503_warming", start)
             raise HTTPException(status_code=503, detail="warming up; not ready")
 
-    def _resolve(voice_id: str, rid: str, chars: int, kind: str, start: float):
+    def _resolve(voice_id: str):
+        """Resolve + re-verify master hash. Raises typed HTTPException; does NOT
+        log — the caller owns exactly one terminal correlation record."""
         try:
-            return reg.get(voice_id)  # re-verifies master hash before use
+            return reg.get(voice_id)
         except UnknownVoice:
-            _log_pre(kind, rid, voice_id, chars, "404_unknown_voice", start)
             raise HTTPException(
                 status_code=404, detail=f"unknown voice_id {voice_id!r}; allowed: {reg.voice_ids}"
             ) from None
         except MasterIntegrityError as exc:
-            _log_pre(kind, rid, voice_id, chars, "500_master_integrity", start)
             raise HTTPException(status_code=500, detail=str(exc)) from None
 
     @app.post("/speak/stream")
@@ -199,7 +221,7 @@ def create_app(registry: VoiceRegistry, synthesizer: Synthesizer, lease: OneFlig
         # Reservation held by the ROUTE through prefetch and response construction.
         sync_gen = None
         try:
-            entry = _resolve(req.voice_id, rid, chars, "stream", start)
+            entry = _resolve(req.voice_id)
             sync_gen = synthesizer.synthesize_stream(
                 req.text, entry.master_path, entry.reference_transcript
             )
@@ -208,7 +230,15 @@ def create_app(registry: VoiceRegistry, synthesizer: Synthesizer, lease: OneFlig
             except StopIteration:
                 _log_pre("stream", rid, req.voice_id, chars, "502_empty", start)
                 raise HTTPException(status_code=502, detail="backend produced no audio") from None
-            body = _prepend(first, sync_gen)
+            except SynthesisError as exc:
+                _log_pre("stream", rid, req.voice_id, chars, "502_synth", start)
+                raise HTTPException(status_code=502, detail=f"synthesis failed: {exc}") from None
+            except Exception as exc:  # noqa: BLE001 - normalize backend errors
+                _log_pre("stream", rid, req.voice_id, chars, "502_other", start)
+                raise HTTPException(
+                    status_code=502, detail=f"synthesis failed: {type(exc).__name__}: {exc}"
+                ) from None
+            body = _PrependIter(first, sync_gen)
             resp = ReservationStreamingResponse(
                 reservation,
                 body,
@@ -217,6 +247,17 @@ def create_app(registry: VoiceRegistry, synthesizer: Synthesizer, lease: OneFlig
                 chars=chars,
                 start=start,
             )
+        except HTTPException as exc:
+            # typed pre-handoff failure (404/500, or 502 from prefetch already
+            # logged) — close the started backend if any, release, log once.
+            if exc.status_code in (404, 500):
+                _log_pre("stream", rid, req.voice_id, chars, f"{exc.status_code}", start)
+            try:
+                if sync_gen is not None and callable(getattr(sync_gen, "close", None)):
+                    sync_gen.close()
+            finally:
+                reservation.close()
+            raise
         except BaseException:
             try:
                 if sync_gen is not None and callable(getattr(sync_gen, "close", None)):
@@ -240,7 +281,7 @@ def create_app(registry: VoiceRegistry, synthesizer: Synthesizer, lease: OneFlig
             ) from None
         outcome = "ok"
         try:
-            entry = _resolve(req.voice_id, rid, len(req.text), "unary", start)
+            entry = _resolve(req.voice_id)
             wav = synthesizer.synthesize(req.text, entry.master_path, entry.reference_transcript)
             if not wav:
                 outcome = "502_empty"
