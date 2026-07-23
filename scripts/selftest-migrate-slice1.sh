@@ -18,13 +18,14 @@ RUNBOOK=scripts/migrate-stream-slice1.sh
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 PASS=0; FAIL=0
+SCF="$TMP/start.calls"   # docker-start-qual call log; one line per real start (mock)
 
 # ---- run one scenario against a runbook file; echo output, return main's exit
 run_scenario() { # $1 runbook  $2 setup-fn-name
   local rb="$1" setup="$2"
   (
     # temp, host-safe paths
-    local LOGDIR="$TMP/l.$RANDOM"; mkdir -p "$LOGDIR"
+    local LOGDIR="$TMP/l.$RANDOM"; mkdir -p "$LOGDIR"; : > "$SCF"   # fresh start-call log per scenario
     local WF="$LOGDIR/watcher"; printf '#!/bin/sh\n' >"$WF"; chmod +x "$WF"
     # ---- mock state: healthy baseline (a scenario fn tweaks these) ----
     IMGX=sha256:3b28aa8102d69b3214687a7e732dcdeca35b8a11ab0d34187e1dad3f9b4472f7
@@ -34,7 +35,7 @@ run_scenario() { # $1 runbook  $2 setup-fn-name
     m_5056=000; m_dns=OK; m_parakeet=200; m_vram=8000; m_nvidia_rc=0
     m_5056_listener=0; m_old_watcher_n=1; m_diag_present=1; m_composetest_rc=0
     m_render=200; m_wav_bytes=40000; m_down_rc=0; m_start_rc=0; m_guard_samples=1
-    m_qual_never_ready=0; m_running_names="voicebook-stream-qual"
+    m_qual_never_ready=0; m_running_names="voicebook-stream-qual"; m_stable_running_unknown=0
     m_dead_pids=" "; m_unkillable=" "; m_guard_budget=""   # pids alive by default; kill adds to dead set
     "$setup"
     source "$rb"                       # defines funcs; BASH_SOURCE guard => no auto-run
@@ -51,7 +52,7 @@ run_scenario() { # $1 runbook  $2 setup-fn-name
         volume|network) return 0;;
         ps) printf '%s\n' $m_running_names;;
         stop) m_qual_running=false; m_qual_health=000; return 0;;
-        start) [ "$m_qual_never_ready" = 1 ] || { m_qual_running=true; m_qual_health=200; }; return "$m_start_rc";;
+        start) echo "START $*" >> "$SCF"; [ "$m_qual_never_ready" = 1 ] || { m_qual_running=true; m_qual_health=200; }; return "$m_start_rc";;
         run) echo "$m_dns";;
         compose) case "$*" in
             # a FAILED down (rc!=0) leaves the stable RUNNING -> exercises the no-two-model guard
@@ -71,7 +72,7 @@ run_scenario() { # $1 runbook  $2 setup-fn-name
                 "") if [ "$PHASE" = preflight ]; then return 0; else [ "$m_tts_exists" = 1 ] && return 0 || return 1; fi;; esac;;
             voicebook-stream) case "$fmt" in
                 *Image*) echo "$m_stable_img";; *Health.Status*) echo "$m_stable_health";;
-                *State.Running*) echo "$m_stable_running";;
+                *State.Running*) [ "${m_stable_running_unknown:-0}" = 1 ] && echo "" || echo "$m_stable_running";;
                 *Networks*) [ "$m_stable_onnet" = 1 ] && echo "voice_default " || echo "";;
                 "") [ "$m_stable_exists" = 1 ] && return 0 || return 1;; esac;;
           esac;;
@@ -128,6 +129,24 @@ meta_line_gone() { # label mutant setup substr  (real HAS the safeguard line; mu
     echo "PASS  $label  — safeguard '$4' removed => regression detected"; PASS=$((PASS+1))
   fi
 }
+expect_no_start() { # label runbook setup — ROLLBACK_FAILED + abort line + ZERO real docker-start-qual calls
+  local label="$1" out rc n
+  out=$(run_scenario "$2" "$3"); rc=$?; n=$(wc -l <"$SCF" | tr -d ' ')
+  if [ "$rc" = 2 ] && grep -q 'ROLLBACK_ABORT_NO_START' <<<"$out" && [ "$n" = 0 ]; then
+    echo "PASS  $label  (exit=2, abort line, docker-start-qual calls=$n)"; PASS=$((PASS+1))
+  else
+    echo "FAIL  $label  (exit=$rc, abort-line=$(grep -qc ROLLBACK_ABORT_NO_START <<<"$out" || echo 0), start-calls=$n)"; sed 's/^/        | /' <<<"$out"; FAIL=$((FAIL+1))
+  fi
+}
+meta_start_called() { # label mutant setup — mutant MUST actually call docker start qual (count>0): a real two-model regression
+  local label="$1" n
+  run_scenario "$2" "$3" >/dev/null; n=$(wc -l <"$SCF" | tr -d ' ')
+  if [ "$n" -gt 0 ]; then
+    echo "PASS  $label  — mutant called docker start qual ($n) with stable unsafe => two-model regression detected"; PASS=$((PASS+1))
+  else
+    echo "META-FAIL  $label  — mutant did NOT call start; self-test is BLIND to the two-model regression"; FAIL=$((FAIL+1))
+  fi
+}
 mutant() { sed "$1" "$RUNBOOK" >"$TMP/mut.sh"; echo "$TMP/mut.sh"; }
 
 # ---- scenarios -----------------------------------------------------------
@@ -136,7 +155,8 @@ s_trap()         { MODE=clean; m_nvidia_rc=1; }         # unexpected failure -> 
 s_guard_death()  { MODE=clean; m_guard_budget=2; }      # MIG guard dies at the after-startup checkpoint
 s_failpoint()    { MODE=drill; }                        # before_render failpoint, restore healthy
 s_fail_ds()      { MODE=drill; m_start_rc=1; }          # down ok(stable gone)->start fails: ds!=0 predicate
-s_two_model()    { MODE=drill; m_down_rc=1; }           # down fails->stable remains->NO_START abort (BarB #1)
+s_two_model()    { MODE=drill; m_down_rc=1; }           # down fails->stable running->NO_START abort (BarB #1)
+s_stable_unknown(){ MODE=drill; m_down_rc=1; m_stable_running_unknown=1; }  # stable readback UNKNOWN -> fail-closed, no start (BarB #1 tri-state)
 s_fail_notready(){ MODE=drill; m_qual_never_ready=1; }  # rollback: qual never 5060-ready
 s_fail_tts()     { MODE=drill; m_tts_running=true; }    # rollback: tts running (v3 seam 2)
 s_fail_qualwatch(){ MODE=clean; m_guard_samples=0; }    # qual watcher won't sample => gstat BAD (v3 seam 3)
@@ -155,12 +175,13 @@ expect "TRAP->ROLLBACK_OK"               "$RUNBOOK" s_trap           1 ROLLBACK_
 expect "GUARD-DEATH->ROLLBACK_OK"        "$RUNBOOK" s_guard_death    1 ROLLBACK_OK   "guard"
 expect "FAILPOINT->ROLLBACK_OK"          "$RUNBOOK" s_failpoint      1 ROLLBACK_OK   "before_render"
 expect "ROLLBACK_FAILED/start-rc"        "$RUNBOOK" s_fail_ds        2 ROLLBACK_FAILED
-expect "NO-TWO-MODEL/abort-no-start(B#1)" "$RUNBOOK" s_two_model     2 ROLLBACK_FAILED "ROLLBACK_ABORT_NO_START"
+expect_no_start "NO-TWO-MODEL/running(B#1)"  "$RUNBOOK" s_two_model
+expect_no_start "NO-TWO-MODEL/unknown-fail-closed(B#1)" "$RUNBOOK" s_stable_unknown
 expect "ROLLBACK_FAILED/qual-not-ready"  "$RUNBOOK" s_fail_notready  2 ROLLBACK_FAILED
 expect "ROLLBACK_FAILED/tts-running"     "$RUNBOOK" s_fail_tts       2 ROLLBACK_FAILED
 expect "ROLLBACK_FAILED/qual-watcher"    "$RUNBOOK" s_fail_qualwatch 2 ROLLBACK_FAILED
 expect "ROLLBACK_FAILED/watcher-unkillable(B#2)" "$RUNBOOK" s_unkill_rb 2 ROLLBACK_FAILED "NOT confirmed dead"
-expect "HANDOFF_WATCHER_ALIVE(B#2)"      "$RUNBOOK" s_unkill_handoff 3 HANDOFF_WATCHER_ALIVE "would not die"
+expect "HANDOFF-RECOVERS-TO-QUAL(B#3)"   "$RUNBOOK" s_unkill_handoff 2 ROLLBACK_FAILED "recovering to qual"
 expect "PREFLIGHT_ABORT/digest"          "$RUNBOOK" s_preflight      1 PREFLIGHT_ABORT
 expect "PREFLIGHT_ABORT/mode-typo(B#3)"  "$RUNBOOK" s_mode_typo      1 PREFLIGHT_ABORT  "MODE must be"
 expect "PREFLIGHT_ABORT/composetest-rc"  "$RUNBOOK" s_composetest    1 PREFLIGHT_ABORT  "compose test failed"
@@ -176,10 +197,12 @@ M_NOGSTAT=$(mutant 's/ && \[ "\$gstat" = OK \]//')             # lose the re-arm
 meta_detects "lost-qual-watcher-predicate detected" "$M_NOGSTAT" s_fail_qualwatch 2 ROLLBACK_FAILED
 M_NOMW=$(mutant 's/\[ "\$mwdead" = 0 \] && //')                # BarB #2: lose the migration-watcher-dead predicate
 meta_detects "lost-mwdead-predicate detected" "$M_NOMW" s_unkill_rb 2 ROLLBACK_FAILED
-M_NOHANDOFF=$(mutant 's/\[ "\$mwdead" != 0 \]/false/')         # BarB #2: lose the handoff watcher-dead gate
-meta_detects "lost-handoff-gate detected" "$M_NOHANDOFF" s_unkill_handoff 3 HANDOFF_WATCHER_ALIVE
-M_NO2MODEL=$(mutant 's/\[ "\$stable_gone" != 1 \]/false/')     # BarB #1: lose the no-two-model guard
-meta_line_gone "lost-no-two-model-guard detected" "$M_NO2MODEL" s_two_model "ROLLBACK_ABORT_NO_START"
+M_NOHANDOFF=$(mutant '/rollback "handoff: migration watcher/d')  # BarB #3: lose the handoff->qual recovery
+meta_detects "lost-handoff-recovery detected" "$M_NOHANDOFF" s_unkill_handoff 2 ROLLBACK_FAILED
+M_NO2MODEL=$(mutant 's/\[ "\$stable_gone" != 1 \]/false/')     # BarB #1: neuter the no-two-model guard
+meta_start_called "no-two-model-guard: mutant actually starts qual" "$M_NO2MODEL" s_two_model
+M_FAILOPEN=$(mutant 's/\[ "\$sr" = false \]/[ "$sr" != true ]/')  # BarB #1: fail-OPEN on unknown readback
+meta_start_called "tri-state-fail-closed: mutant starts qual on unknown" "$M_FAILOPEN" s_stable_unknown
 
 echo "=========================================================="
 echo "PASS=$PASS FAIL=$FAIL"

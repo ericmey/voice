@@ -76,13 +76,18 @@ rollback() {
   stop_watcher "$MIG_PID"; local mwdead=$?
   [ "$mwdead" = 0 ] && echo "migration watcher $MIG_PID confirmed dead" || echo "WARN: migration watcher $MIG_PID NOT confirmed dead"
   docker compose -f "$COMPOSE" down >/dev/null 2>&1; local dc=$?
-  # seam 1: no-two-model — never start qual while the stable is still running
-  local stable_gone=1
-  if docker inspect voicebook-stream >/dev/null 2>&1; then
-    [ "$(docker inspect -f '{{.State.Running}}' voicebook-stream 2>/dev/null)" = true ] && stable_gone=0
+  # seam 1: no-two-model, TRI-STATE FAIL-CLOSED. Only two states are safe to start
+  # qual: the stable is definitively ABSENT, or definitively running=false. A
+  # running=true OR any unknown/empty/errored readback must NOT start qual.
+  local stable_gone
+  if ! docker inspect voicebook-stream >/dev/null 2>&1; then
+    stable_gone=1                                                  # definitively absent -> safe
+  else
+    local sr; sr=$(docker inspect -f '{{.State.Running}}' voicebook-stream 2>/dev/null)
+    if [ "$sr" = false ]; then stable_gone=1; else stable_gone=0; fi   # false=safe; true/unknown/empty=UNSAFE
   fi
   if [ "$stable_gone" != 1 ]; then
-    echo "ROLLBACK_ABORT_NO_START: voicebook-stream still running after down (dc=$dc) — refusing to start qual (no-two-model)"
+    echo "ROLLBACK_ABORT_NO_START: voicebook-stream present and not-definitively-stopped after down (dc=$dc, running='${sr:-?}') — refusing to start qual (no-two-model, fail-closed)"
     echo "== MIGRATE_RESULT=ROLLBACK_FAILED =="; exit 2
   fi
   docker start voicebook-stream-qual >/dev/null 2>&1; local ds=$?
@@ -189,15 +194,22 @@ main() {
   echo "=== HANDOFF ==="
   PHASE=done
   trap - ERR HUP INT TERM
-  # seam 2: SUCCESS requires the migration watcher PROVEN dead (else it can later delete the managed service)
-  local mwdead; if stop_watcher "$MIG_PID"; then mwdead=0; else mwdead=1; fi
-  if [ "$mwdead" != 0 ]; then
-    echo "HANDOFF ANOMALY: migration watcher $MIG_PID would not die; it still targets voicebook-stream and could delete it"
-    echo "== MIGRATE_RESULT=HANDOFF_WATCHER_ALIVE =="; exit 3
+  # seam 2 (Bar B #3): the migration watcher MUST die. If it will not, we must NOT
+  # leave the managed service running under an orphan watcher that can later delete
+  # it — RECOVER to qual via verified rollback (which reports ROLLBACK_FAILED
+  # because the watcher remains unkillable), never abandon a half-owned state.
+  if ! stop_watcher "$MIG_PID"; then
+    echo "HANDOFF ANOMALY: migration watcher $MIG_PID would not die; recovering to qual (never leave stable under an orphan watcher)"
+    rollback "handoff: migration watcher $MIG_PID unkillable"
   fi
-  echo "migration watcher $MIG_PID confirmed dead; Compose is the service manager"
-  echo "qual STOPPED + intact: $(docker inspect -f '{{.State.Status}}' voicebook-stream-qual)"
-  echo "voicebook-tts: $(docker inspect -f '{{.State.Status}}' voicebook-tts 2>/dev/null)"
+  echo "migration watcher $MIG_PID confirmed dead"
+  # final handoff assertion set — prove the exact end-state before declaring SUCCESS
+  [ "$(docker inspect voicebook-stream --format '{{.Image}}' 2>/dev/null)" = "$IMG" ] || rollback "handoff assert: stable image != accepted digest"
+  [ "$(docker inspect -f '{{.State.Health.Status}}' voicebook-stream 2>/dev/null)" = healthy ] || rollback "handoff assert: stable not healthy"
+  [ "$(docker inspect -f '{{.State.Status}}' voicebook-stream-qual 2>/dev/null)" = exited ] || rollback "handoff assert: qual not exactly stopped"
+  [ "$(docker inspect -f '{{.State.Running}}' voicebook-tts 2>/dev/null)" = false ] || rollback "handoff assert: tts not stopped"
+  [ "$(hc "$PARAKEET")" = 200 ] || rollback "handoff assert: Parakeet not 200"
+  echo "handoff asserts OK: stable digest+healthy, qual exactly stopped, tts stopped, Parakeet 200, migration watcher dead; Compose is the service manager"
   echo "== MIGRATE_RESULT=SUCCESS =="
 }
 
