@@ -15,6 +15,12 @@ COPY pyproject.toml uv.lock ./
 COPY sdk ./sdk
 COPY tools ./tools
 COPY agents ./agents
+# services/* are uv-workspace members too (voicebook-stream/-tts), so `uv sync
+# --frozen` needs their project dirs present to resolve the workspace — even
+# though the agent runtime never imports them. Their deps are light
+# (fastapi/uvicorn/pydantic); no GPU/torch enters the agent image. Omitting this
+# is why the agent build broke once services/ joined the workspace.
+COPY services ./services
 # build the workspace venv
 RUN uv sync --frozen --no-dev
 
