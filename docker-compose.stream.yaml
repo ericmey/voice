@@ -8,6 +8,13 @@
 # Pinned to the accepted F1 image by IMMUTABLE DIGEST; pull disabled. Replaces
 # the temporary externally-watched `voicebook-stream-qual` container — Compose
 # (restart policy + healthcheck) is the service manager, not the qual watcher.
+#
+# CANONICAL PROJECT NAME pinned so lifecycle authority is independent of cwd: any
+# `docker compose -f docker-compose.stream.yaml <cmd>` from any directory operates
+# on project `voicebook-stream` and NEVER derives a name from the working dir (a
+# staging dir must not become the lifecycle owner) and NEVER targets the broader
+# `voice` project. `down` here removes ONLY this service (network/volume external).
+name: voicebook-stream
 services:
   voicebook-stream:
     container_name: voicebook-stream

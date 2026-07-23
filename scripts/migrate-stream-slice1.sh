@@ -21,6 +21,7 @@ set -Eeuo pipefail
 
 IMG=sha256:3b28aa8102d69b3214687a7e732dcdeca35b8a11ab0d34187e1dad3f9b4472f7
 COMPOSE=docker-compose.stream.yaml
+PROJECT=voicebook-stream        # canonical compose project (pinned via compose `name:`); asserted on the running container
 W=/home/ericmey/vbs-qual/watcher.sh
 LOG=/home/ericmey/vbs-qual/migrate.log
 QUAL_LOG=/home/ericmey/vbs-qual/qual.log
@@ -165,6 +166,9 @@ main() {
   echo "image_readback OK: $run_img"
   wait_health voicebook-stream || rollback "stable did not become healthy"
   guard_ok "$MIG_PID" "$LOG" || rollback "guard died/tripped after startup"
+  # lifecycle authority: the running container MUST carry the canonical project label
+  [ "$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' voicebook-stream 2>/dev/null)" = "$PROJECT" ] || rollback "compose project label != $PROJECT (lifecycle owner not canonical)"
+  echo "project label OK: $PROJECT"
   [ "$(hc http://127.0.0.1:5056/healthz)" = 200 ] || rollback "host 5056 not 200"
   [ "$(dns_probe)" = OK ] || rollback "service DNS voicebook-stream:5060 unreachable"
   echo "host 5056 + service DNS OK"
@@ -187,6 +191,7 @@ main() {
   [ "$(docker inspect voicebook-stream --format '{{.Image}}')" = "$IMG" ] || rollback "recreate image drift"
   local onnet; onnet=$(docker inspect voicebook-stream --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' | grep -c voice_default)
   { [ "$onnet" = 1 ] && [ "$(dns_probe)" = OK ]; } || rollback "recreate lost voice_default/DNS (onnet=$onnet)"
+  [ "$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' voicebook-stream 2>/dev/null)" = "$PROJECT" ] || rollback "recreate project label != $PROJECT"
   guard_ok "$MIG_PID" "$LOG" || rollback "guard died/tripped after recreate"
   [ "$(hc "$PARAKEET")" = 200 ] || rollback "Parakeet degraded after recreate"
   echo "recreate OK: immutable image, healthy, voice_default, DNS, guard clean, Parakeet 200"
@@ -206,6 +211,7 @@ main() {
   # final handoff assertion set — prove the exact end-state before declaring SUCCESS
   [ "$(docker inspect voicebook-stream --format '{{.Image}}' 2>/dev/null)" = "$IMG" ] || rollback "handoff assert: stable image != accepted digest"
   [ "$(docker inspect -f '{{.State.Health.Status}}' voicebook-stream 2>/dev/null)" = healthy ] || rollback "handoff assert: stable not healthy"
+  [ "$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' voicebook-stream 2>/dev/null)" = "$PROJECT" ] || rollback "handoff assert: project label != $PROJECT"
   [ "$(docker inspect -f '{{.State.Status}}' voicebook-stream-qual 2>/dev/null)" = exited ] || rollback "handoff assert: qual not exactly stopped"
   [ "$(docker inspect -f '{{.State.Running}}' voicebook-tts 2>/dev/null)" = false ] || rollback "handoff assert: tts not stopped"
   [ "$(hc "$PARAKEET")" = 200 ] || rollback "handoff assert: Parakeet not 200"

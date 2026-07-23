@@ -31,7 +31,7 @@ run_scenario() { # $1 runbook  $2 setup-fn-name
     IMGX=sha256:3b28aa8102d69b3214687a7e732dcdeca35b8a11ab0d34187e1dad3f9b4472f7
     m_qual_img="$IMGX"; m_qual_running=true; m_qual_health=200; m_qual_exists=1
     m_tts_exists=1; m_tts_running=false
-    m_stable_exists=0; m_stable_running=false; m_stable_img=""; m_stable_health=healthy; m_stable_onnet=1
+    m_stable_exists=0; m_stable_running=false; m_stable_img=""; m_stable_health=healthy; m_stable_onnet=1; m_stable_project=""; m_bad_project=0
     m_5056=000; m_dns=OK; m_parakeet=200; m_vram=8000; m_nvidia_rc=0
     m_5056_listener=0; m_old_watcher_n=1; m_diag_present=1; m_composetest_rc=0
     m_render=200; m_wav_bytes=40000; m_down_rc=0; m_start_rc=0; m_guard_samples=1
@@ -64,7 +64,8 @@ run_scenario() { # $1 runbook  $2 setup-fn-name
         compose) case "$*" in
             # a FAILED down (rc!=0) leaves the stable RUNNING -> exercises the no-two-model guard
             *down*) if [ "$m_down_rc" = 0 ]; then m_stable_exists=0; m_stable_running=false; m_5056=000; m_running_names="voicebook-stream-qual"; fi; return "$m_down_rc";;
-            *"up -d"*) m_stable_exists=1; m_stable_running=true; m_stable_img="$IMGX"; m_stable_health=healthy; m_5056=200; m_dns=OK; m_stable_onnet=1; m_running_names="voicebook-stream"; return 0;;
+            *"up -d"*) m_stable_exists=1; m_stable_running=true; m_stable_img="$IMGX"; m_stable_health=healthy; m_5056=200; m_dns=OK; m_stable_onnet=1; m_running_names="voicebook-stream"
+                       [ "$m_bad_project" = 1 ] && m_stable_project=vbs-drill-a6a9c4e || m_stable_project=voicebook-stream; return 0;;
           esac;;
         inspect) local fmt="" name=""
           while [ $# -gt 0 ]; do case "$1" in -f|--format) fmt="$2"; shift 2;; *) name="$1"; shift;; esac; done
@@ -78,6 +79,7 @@ run_scenario() { # $1 runbook  $2 setup-fn-name
                 *State.Status*) echo exited;;
                 "") if [ "$PHASE" = preflight ]; then return 0; else [ "$m_tts_exists" = 1 ] && return 0 || return 1; fi;; esac;;
             voicebook-stream) case "$fmt" in
+                *compose.project*) echo "$m_stable_project";;
                 *Image*) echo "$m_stable_img";; *Health.Status*) echo "$m_stable_health";;
                 *State.Running*) echo "$m_stable_running";;
                 *Networks*) [ "$m_stable_onnet" = 1 ] && echo "voice_default " || echo "";;
@@ -169,6 +171,7 @@ s_fail_tts()     { MODE=drill; m_tts_running=true; }    # rollback: tts running 
 s_fail_qualwatch(){ MODE=clean; m_guard_samples=0; }    # qual watcher won't sample => gstat BAD (v3 seam 3)
 s_unkill_rb()    { MODE=drill; m_unkillable=" 7001 "; }  # rollback: mig watcher won't die -> mwdead!=0 (BarB #2)
 s_unkill_handoff(){ MODE=clean; m_unkillable=" 7001 "; } # SUCCESS path: watcher won't die -> HANDOFF_WATCHER_ALIVE
+s_project_wrong(){ MODE=clean; m_bad_project=1; }      # stable comes up with staging-dir project label -> rollback (BarB lifecycle)
 s_preflight()    { MODE=clean; m_qual_img="sha256:DEADBEEF"; }  # preflight abort, NO mutation
 s_mode_typo()    { MODE=driIl; }                        # invalid MODE -> preflight abort, NO mutation (BarB #3)
 s_composetest()  { MODE=clean; m_composetest_rc=1; }    # structured test rc!=0 -> preflight abort (tightening)
@@ -189,6 +192,7 @@ expect "ROLLBACK_FAILED/tts-running"     "$RUNBOOK" s_fail_tts       2 ROLLBACK_
 expect "ROLLBACK_FAILED/qual-watcher"    "$RUNBOOK" s_fail_qualwatch 2 ROLLBACK_FAILED
 expect "ROLLBACK_FAILED/watcher-unkillable(B#2)" "$RUNBOOK" s_unkill_rb 2 ROLLBACK_FAILED "NOT confirmed dead"
 expect "HANDOFF-RECOVERS-TO-QUAL(B#3)"   "$RUNBOOK" s_unkill_handoff 2 ROLLBACK_FAILED "recovering to qual"
+expect "ROLLBACK_OK/wrong-project-label" "$RUNBOOK" s_project_wrong  1 ROLLBACK_OK "project label"
 expect "PREFLIGHT_ABORT/digest"          "$RUNBOOK" s_preflight      1 PREFLIGHT_ABORT
 expect "PREFLIGHT_ABORT/mode-typo(B#3)"  "$RUNBOOK" s_mode_typo      1 PREFLIGHT_ABORT  "MODE must be"
 expect "PREFLIGHT_ABORT/composetest-rc"  "$RUNBOOK" s_composetest    1 PREFLIGHT_ABORT  "compose test failed"
@@ -210,6 +214,8 @@ M_NO2MODEL=$(mutant 's/\[ "\$stable_gone" != 1 \]/false/')     # BarB #1: neuter
 meta_start_called "no-two-model-guard: mutant actually starts qual" "$M_NO2MODEL" s_two_model
 M_FAILOPEN=$(mutant 's/\[ "\$rrc" != 0 \]; then stable_gone=0/[ "$rrc" != 0 ]; then stable_gone=1/')  # BarB #1: infer ABSENCE from a failed readback
 meta_start_called "never-infer-absence: mutant starts qual on readback error" "$M_FAILOPEN" s_readback_error
+M_NOPROJECT=$(mutant '/com.docker.compose.project/d')          # BarB lifecycle: lose ALL project-label guards
+meta_detects "lost-project-label-guard detected" "$M_NOPROJECT" s_project_wrong 1 ROLLBACK_OK
 
 echo "=========================================================="
 echo "PASS=$PASS FAIL=$FAIL"

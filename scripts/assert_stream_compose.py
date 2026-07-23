@@ -17,6 +17,10 @@ def ck(cond, msg):
         fails.append(msg)
 
 
+# canonical project name pinned in the artifact (cwd-independent lifecycle authority);
+# a staging-dir-derived or wrong/absent name must fail here.
+ck(d.get("name") == "voicebook-stream", "project name pinned == voicebook-stream (cwd-independent)")
+
 svc = (d.get("services") or {}).get("voicebook-stream")
 ck(svc is not None, "service voicebook-stream exists")
 svc = svc or {}

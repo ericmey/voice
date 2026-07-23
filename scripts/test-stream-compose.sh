@@ -40,6 +40,24 @@ s += "\nsecrets:\n  k:\n    file: /etc/hostname\n"
 print(s)
 PY
 redproof "$T" secrets "injected service+top-level secret"
+
+# project-name pin: absent name => project derives from the compose file's dir
+# (e.g. a staging dir) => MUST be rejected.
+python3 - > "$T" <<'PY'
+s = open('docker-compose.stream.yaml').read()
+s = s.replace("name: voicebook-stream\n", "", 1)
+print(s)
+PY
+redproof "$T" project_absent "absent project name (cwd/dir-derived)"
+
+# wrong name (the staging-dir identity we are eliminating) => MUST be rejected.
+python3 - > "$T" <<'PY'
+s = open('docker-compose.stream.yaml').read()
+s = s.replace("name: voicebook-stream\n", "name: vbs-drill-a6a9c4e\n", 1)
+print(s)
+PY
+redproof "$T" project_wrong "wrong project name (staging-dir identity)"
+
 rm -f "$T" /tmp/rp.json
 
 [ "$rc" = 0 ] && echo "== SLICE1_TEST=PASS ==" || echo "== SLICE1_TEST=FAIL =="
