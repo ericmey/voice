@@ -158,12 +158,21 @@ def _drive(resp, sends):
     return asyncio.get_event_loop().run_until_complete(resp(scope, receive, send))
 
 
+def _mkresp(res, gen, rid="rid"):
+    """Construct the response with the current required metadata kwargs."""
+    import time as _t
+
+    return ReservationStreamingResponse(
+        res, gen, request_id=rid, voice_id="sumi-v1", chars=2, start=_t.monotonic()
+    )
+
+
 def test_lifecycle_normal_completion_releases(env):
     reg, synth, lease, _ = env
     r = reg.get("sumi-v1")
     res = lease.reserve()
     gen = synth.synthesize_stream("hi", r.master_path, r.reference_transcript)
-    resp = ReservationStreamingResponse(res, gen, request_id="rid")
+    resp = _mkresp(res, gen)
     _drive(resp, [])  # all sends succeed
     assert lease.locked is False and synth.closed is True
 
@@ -173,7 +182,7 @@ def test_lifecycle_disconnect_before_first_chunk_releases(env):
     r = reg.get("sumi-v1")
     res = lease.reserve()
     gen = synth.synthesize_stream("hi", r.master_path, r.reference_transcript)
-    resp = ReservationStreamingResponse(res, gen, request_id="rid")
+    resp = _mkresp(res, gen)
     # send #1 is response.start -> raise: disconnect before any body chunk
     with pytest.raises(ClientDisconnect):
         _drive(resp, ["raise"])
@@ -185,7 +194,7 @@ def test_lifecycle_disconnect_after_chunk_releases(env):
     r = reg.get("sumi-v1")
     res = lease.reserve()
     gen = synth.synthesize_stream("hi", r.master_path, r.reference_transcript)
-    resp = ReservationStreamingResponse(res, gen, request_id="rid")
+    resp = _mkresp(res, gen)
     # start ok, first body ok, second body -> raise (disconnect mid-stream)
     with pytest.raises(ClientDisconnect):
         _drive(resp, ["ok", "ok", "raise"])
@@ -199,7 +208,7 @@ def test_lifecycle_backend_error_releases(env):
     r = reg.get("sumi-v1")
     res = lease.reserve()
     gen = synth.synthesize_stream("hi", r.master_path, r.reference_transcript)
-    resp = ReservationStreamingResponse(res, gen, request_id="rid")
+    resp = _mkresp(res, gen)
     with pytest.raises(SynthesisError):
         _drive(resp, [])  # sends fine, but the generator raises on iteration
     assert lease.locked is False
@@ -249,7 +258,7 @@ def test_lease_releases_even_if_generator_close_raises(env):
     r = reg.get("sumi-v1")
     res = lease.reserve()
     gen = ExplodingCloseSynth().synthesize_stream("hi", r.master_path, r.reference_transcript)
-    resp = ReservationStreamingResponse(res, gen, request_id="rid")
+    resp = _mkresp(res, gen)
     with pytest.raises(RuntimeError, match="teardown blew up"):
         _drive(resp, [])
     assert lease.locked is False, "lease leaked when close() raised"
@@ -271,17 +280,27 @@ class EmptyStreamSynth:
         return b""
 
 
-def test_empty_stream_still_releases(tmp_path):
-    """Blocker: empty stream returns 200 with no body but must still release."""
+def test_empty_stream_is_502_not_silent_200(tmp_path):
+    """Empty stream must be a typed 502, never a 200 with silence — the
+    streaming form of the silent-truncation class. And it must release."""
     m = tmp_path / "s.wav"
     d = _wav(m)
     reg = VoiceRegistry({"x": VoiceEntry("x", m, "t", d)})
     lease = OneFlightLease()
-    client = TestClient(create_app(reg, EmptyStreamSynth(), lease))
-    with client.stream("POST", "/speak/stream", json={"voice_id": "x", "text": "hi"}) as r:
+    synth = EmptyStreamSynth()
+    client = TestClient(create_app(reg, synth, lease), raise_server_exceptions=False)
+    r = client.post("/speak/stream", json={"voice_id": "x", "text": "hi"})
+    assert r.status_code == 502
+    assert lease.locked is False
+    assert synth.closed is True  # generator was closed on the empty path
+
+
+def test_stream_first_chunk_prefetched_no_loss_no_dup(env):
+    """The prefetched first chunk must be prepended exactly once, in order."""
+    reg, synth, lease, client = env  # FakeSynth yields pcm0,pcm1,pcm2
+    with client.stream("POST", "/speak/stream", json={"voice_id": "sumi-v1", "text": "hi"}) as r:
         body = b"".join(r.iter_bytes())
-    assert r.status_code == 200
-    assert body == b""
+    assert body == b"pcm0pcm1pcm2"  # first chunk not lost, not duplicated
     assert lease.locked is False
 
 
