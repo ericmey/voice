@@ -28,15 +28,29 @@ Pre-state: the media plane was **entirely down** (nothing on 7880/7881/7882/5060
     agent's image build, not just Sumi's.
 - **Run (single container, not the agents compose):**
   ```
-  docker run -d --name voice-agent-sumi --network voice_default \
+  # SUMI_LLM_API_KEY is resolved from 1Password by `op run` (config/sumi-llm-key.env.tpl, D1)
+  # and passed by NAME (-e SUMI_LLM_API_KEY, no value) — kept out of repo/tmp/argv/history.
+  # (It does land in the container's env metadata, inherent to running the worker; never
+  # print or `docker inspect` that env.)
+  # secrets/livekit-agents.env still supplies the other runtime values. HAZARD: op run
+  # injects at CREATE time — always launch via op run; a bare `docker run` drops the
+  # injection (the op-run-stack deploy hazard). A later `docker start` of the SAME
+  # container reuses the env baked at create, so restarts/rollback are unaffected.
+  # LEAST PRIVILEGE (D1): op-run injects ONLY the Sumi key (config/sumi-llm-key.env.tpl),
+  # not the 8-ref livekit.env.tpl — otherwise the docker CLI process would receive eight
+  # unrelated resolved secrets (LiveKit key/secret, OpenAI, Google, ElevenLabs, three Musubi
+  # tokens) it never needs. The container's other runtime values come from
+  # secrets/livekit-agents.env; SUMI is passed by name into the container.
+  op run --env-file=config/sumi-llm-key.env.tpl -- \
+    docker run -d --name voice-agent-sumi --network voice_default \
     --env-file secrets/livekit-agents.env \
     -e AGENT=sumi -e LIVEKIT_URL=ws://livekit-server:7880 \
     -e LIVEKIT_VOICE_LOGS=/app/logs/voice \
-    -e SUMI_LLM_API_KEY=<scoped> \
-    -v "$PWD/logs/voice:/app/logs/voice" voice-agent:sumi
+    -e SUMI_LLM_API_KEY \
+    -v "$PWD/logs/voice:/app/logs/voice" voice-agent:sumi-<shortsha>
   ```
 - **Least-privilege LLM key.** Rather than the LiteLLM master key, the worker
-  carries a **scoped virtual key** (`key_alias=sumi-voice-worker`,
+  carries a **scoped virtual key** (`key_alias=sumi-voice-worker-v2`,
   `models=["sumi"]`) — it can call ONLY the `sumi` route, so even a bug can't
   reach another model or a cloud provider. Defense-in-depth on top of the route's
   own no-fallback.
@@ -60,7 +74,17 @@ it does nothing until a job is dispatched to it — there is no inbound phone pa
 - Plane: `docker compose -f docker-compose.yaml down` (redis state persists in the
   `voice_redis_data` volume; `down -v` would wipe it — don't, it holds SIP routing
   for the real deploy).
-- Scoped key: `POST /key/delete {keys:[...]}` on LiteLLM (alias `sumi-voice-worker`).
+- Scoped key — **dual-key lifecycle (do NOT conflate candidate rollback with prior-key
+  retirement):** `sumi-voice-worker-v2` is the NEW candidate key that the accepted replacement
+  worker *uses* — so it is revoked ONLY on the FAILURE branch, and KEPT on success.
+  - **If the candidate deploy FAILS** and the OLD worker is restored + re-accepted: revoke/delete
+    the v2 candidate artifacts — `POST /key/delete {key_aliases:["sumi-voice-worker-v2"]}` (source
+    contract is `key_aliases`, not `keys`; verified) and delete the 1Password item — since nothing
+    live depends on them.
+  - **If the replacement SUCCEEDS:** KEEP `sumi-voice-worker-v2` active (the running worker needs
+    it). Retire the PRIOR key / `/tmp` temp only AFTER the rollback window closes AND under a
+    separate authorization — never as part of this deploy. **Verify the prior alias's metadata
+    LIVE at execution** before retiring it (don't assume its name/scope from this doc).
 
 ## Next
 
