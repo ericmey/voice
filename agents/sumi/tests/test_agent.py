@@ -179,6 +179,29 @@ class TestProviderImports:
         assert all(x is not None for x in (openai, silero, google, elevenlabs, EndCallTool))
 
 
+class TestTTSProviderSelection:
+    def test_voicebook_is_explicit_default(self, agent_module, monkeypatch):
+        sentinel = object()
+        monkeypatch.setattr(agent_module, "_TTS_PROVIDER", "voicebook")
+        monkeypatch.setattr(agent_module, "build_streaming_voicebook_tts", lambda **_kw: sentinel)
+
+        assert agent_module.build_tts() is sentinel
+
+    def test_elevenlabs_control_is_native_streaming(self, agent_module, monkeypatch):
+        monkeypatch.setenv("ELEVEN_API_KEY", "fake-test-key")
+        monkeypatch.setattr(agent_module, "_TTS_PROVIDER", "elevenlabs")
+
+        provider = agent_module.build_tts()
+
+        assert provider.capabilities.streaming is True
+
+    def test_unknown_provider_fails_loud(self, agent_module, monkeypatch):
+        monkeypatch.setattr(agent_module, "_TTS_PROVIDER", "silent-fallback")
+
+        with pytest.raises(ValueError, match="unsupported SUMI_TTS_PROVIDER"):
+            agent_module.build_tts()
+
+
 class TestPhoneTurnHandling:
     """The phone path must not pause Sumi on untranscribed audio activity."""
 

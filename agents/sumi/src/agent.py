@@ -43,6 +43,7 @@ from livekit.agents import (
 from livekit.agents.beta import EndCallTool
 from livekit.agents.voice.agent_session import SessionConnectOptions
 from livekit.agents.worker import AgentServer
+from livekit.plugins import elevenlabs as elevenlabs_plugin
 from livekit.plugins import nvidia as nvidia_plugin
 from livekit.plugins import openai as openai_plugin
 from livekit.plugins import silero as silero_plugin
@@ -78,6 +79,26 @@ logger = logging.getLogger("voice.agent")
 # are env-overridable.
 _TTS_VOICE_ID = os.environ.get("SUMI_TTS_VOICE_ID", "sumi-v1")
 _TTS_BASE_URL = os.environ.get("SUMI_TTS_BASE_URL", "http://voicebook-stream:5060")
+_TTS_PROVIDER = os.environ.get("SUMI_TTS_PROVIDER", "voicebook").strip().lower()
+_ELEVENLABS_VOICE_ID = os.environ.get("SUMI_ELEVENLABS_VOICE_ID", "AEW6JTgnyoPaoB9zlK3S")
+_ELEVENLABS_MODEL = os.environ.get("SUMI_ELEVENLABS_MODEL", "eleven_flash_v2_5")
+
+
+def build_tts():
+    """Build Sumi's explicitly selected TTS provider; never silently fall back."""
+
+    if _TTS_PROVIDER == "voicebook":
+        return build_streaming_voicebook_tts(voice_id=_TTS_VOICE_ID, base_url=_TTS_BASE_URL)
+    if _TTS_PROVIDER == "elevenlabs":
+        if not _ELEVENLABS_VOICE_ID:
+            raise ValueError("SUMI_ELEVENLABS_VOICE_ID is required for ElevenLabs TTS")
+        return elevenlabs_plugin.TTS(
+            voice_id=_ELEVENLABS_VOICE_ID,
+            model=_ELEVENLABS_MODEL,
+            language="en",
+        )
+    raise ValueError(f"unsupported SUMI_TTS_PROVIDER: {_TTS_PROVIDER!r}")
+
 
 # Slice 3 — LOCAL STT: self-hosted Parakeet/Riva via the official LiveKit NVIDIA plugin
 # (streaming). Reaches parakeet-ctl:50051 by service DNS on voice_default; insecure — the
@@ -383,9 +404,10 @@ async def entrypoint(ctx: JobContext) -> None:
     # lower). max_retries=0 so a phone turn is never spoken twice; the route is
     # num_retries:0 with no cloud fallback.
     llm = build_llm()
-    # Slice 5 — LOCAL TTS: Sumi's master voice via voicebook-stream (was the
-    # elevenlabs scaffold on Nyla's id). No cloud, no substitute voice.
-    tts = build_streaming_voicebook_tts(voice_id=_TTS_VOICE_ID, base_url=_TTS_BASE_URL)
+    # TTS provider is explicit and fail-loud. Voicebook remains the local/R&D
+    # path; ElevenLabs is the supported LiveKit streaming control for the phone
+    # quality experiment. There is no automatic provider fallback.
+    tts = build_tts()
 
     extra_tools = [
         EndCallTool(delete_room=True, end_instructions=None),
@@ -443,7 +465,8 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     annotate_call_audio_recording(audio_recording)
     trace(
-        "sumi session: silero-vad -> parakeet-riva(local STT) -> momo/sumi-route(local LLM) -> voicebook-stream/sumi-v1(local TTS)"
+        "sumi session: silero-vad -> parakeet-riva(local STT) -> "
+        f"momo/sumi-route(local LLM) -> {_TTS_PROVIDER}(TTS)"
     )
     trace("sumi: entrypoint complete, greeting scheduled via on_enter")
 
