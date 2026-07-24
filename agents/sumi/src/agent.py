@@ -92,6 +92,40 @@ _STT_MODEL = os.environ.get("SUMI_STT_MODEL", "parakeet-1.1b-en-US-asr-streaming
 _LLM_BASE_URL = os.environ.get("SUMI_LLM_BASE_URL", "http://10.0.20.25:4000/v1")
 _LLM_MODEL = os.environ.get("SUMI_LLM_MODEL", "sumi")
 
+# CAPACITY-SAFETY cap — bound EVERY spoken turn to a short conversational length.
+# An uncapped request lets the backend run toward its huge default n_predict
+# (65536 on Momo). On a memory-thin host that pins a slot + KV and can grind
+# under swap, pressuring the host to distress. A phone turn is one or two
+# sentences; 64 completion tokens is plenty and makes a worker-side runaway
+# generation structurally impossible. This is a SAFETY bound first, brevity
+# second — it is the direct fix for the 2026-07-23 uncapped-generation incident.
+_LLM_MAX_TOKENS_CEILING = 64  # HARD ceiling. The env override may only LOWER it.
+
+
+def _resolve_max_tokens() -> int:
+    """Per-turn output cap. Defaults to the 64-token ceiling; SUMI_LLM_MAX_TOKENS may
+    only LOWER it (1..64). A value above the ceiling, non-numeric, or < 1 FAILS LOUD:
+    the env must never be able to raise or defeat the safety bound. An override that
+    can lift the cap is not a cap — that is the exact hole the 2026-07-23 incident
+    came through, and the reason this is validated rather than a bare int()."""
+    raw = os.environ.get("SUMI_LLM_MAX_TOKENS")
+    if raw is None:
+        return _LLM_MAX_TOKENS_CEILING
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise RuntimeError(
+            f"SUMI_LLM_MAX_TOKENS must be an integer in 1..{_LLM_MAX_TOKENS_CEILING}; "
+            f"got {raw!r}. Refusing to start on an unparseable cap."
+        ) from None
+    if not 1 <= value <= _LLM_MAX_TOKENS_CEILING:
+        raise RuntimeError(
+            f"SUMI_LLM_MAX_TOKENS may only LOWER the {_LLM_MAX_TOKENS_CEILING}-token safety "
+            f"ceiling (allowed 1..{_LLM_MAX_TOKENS_CEILING}); got {value}. Refusing to start — "
+            f"a cap the environment can raise is not a cap."
+        )
+    return value
+
 
 def _llm_api_key() -> str:
     """LiteLLM bearer for the `sumi` route. FAIL LOUD if absent — Sumi's LLM has
@@ -105,6 +139,34 @@ def _llm_api_key() -> str:
             "use a default or empty key."
         )
     return key
+
+
+def build_llm(*, client=None) -> openai_plugin.LLM:
+    """The SINGLE source of truth for Sumi's worker LLM — used by the entrypoint AND
+    the safety tests, so the tests exercise the REAL cap (max_completion_tokens =
+    _resolve_max_tokens()) rather than a test-local constant. Pass ``client`` (an
+    openai.AsyncClient, e.g. one backed by an httpx MockTransport) to drive this exact
+    construction path with zero network and no live key.
+    """
+    max_tokens = _resolve_max_tokens()
+    if client is not None:
+        return openai_plugin.LLM(
+            model=_LLM_MODEL,
+            client=client,
+            temperature=0.7,
+            max_completion_tokens=max_tokens,
+            max_retries=0,
+        )
+    return openai_plugin.LLM(
+        model=_LLM_MODEL,
+        base_url=_LLM_BASE_URL,
+        api_key=_llm_api_key(),
+        temperature=0.7,
+        max_completion_tokens=max_tokens,
+        max_retries=0,
+        timeout=30,
+    )
+
 
 # --- persona -----------------------------------------------------------
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
@@ -224,17 +286,12 @@ async def entrypoint(ctx: JobContext) -> None:
         min_silence_duration=0.65,
         prefix_padding_duration=0.4,
     )
-    # Slice 4 — LOCAL LLM: Momo via the explicit LiteLLM `sumi` route (was the
-    # gemini scaffold). max_retries=0 so a phone turn is never spoken twice; the
-    # route itself is num_retries:0 with no cloud fallback (see the block above).
-    llm = openai_plugin.LLM(
-        model=_LLM_MODEL,
-        base_url=_LLM_BASE_URL,
-        api_key=_llm_api_key(),
-        temperature=0.7,
-        max_retries=0,
-        timeout=30,
-    )
+    # Slice 4 — LOCAL LLM: Momo via the explicit LiteLLM `sumi` route, built by the
+    # single build_llm() factory — the SAME construction path the safety tests
+    # exercise. Its cap is _resolve_max_tokens() (hard 64 ceiling; env may only
+    # lower). max_retries=0 so a phone turn is never spoken twice; the route is
+    # num_retries:0 with no cloud fallback.
+    llm = build_llm()
     # Slice 5 — LOCAL TTS: Sumi's master voice via voicebook-stream (was the
     # elevenlabs scaffold on Nyla's id). No cloud, no substitute voice.
     tts = VoicebookTTS(voice_id=_TTS_VOICE_ID, base_url=_TTS_BASE_URL)
