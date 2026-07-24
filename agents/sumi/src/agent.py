@@ -27,6 +27,8 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from pathlib import Path
 
 import httpx
+import numpy as np
+from livekit import rtc
 from livekit.agents import (
     Agent,
     AgentSession,
@@ -47,6 +49,8 @@ from livekit.plugins import elevenlabs as elevenlabs_plugin
 from livekit.plugins import nvidia as nvidia_plugin
 from livekit.plugins import openai as openai_plugin
 from livekit.plugins import silero as silero_plugin
+from pedalboard import Gain, HighpassFilter, PeakFilter
+from pedalboard._pedalboard import Pedalboard
 from sdk.audio_recording import (
     annotate_call_audio_recording,
     start_call_audio_recording,
@@ -84,6 +88,82 @@ _ELEVENLABS_VOICE_ID = os.environ.get("SUMI_ELEVENLABS_VOICE_ID", "AEW6JTgnyoPao
 _ELEVENLABS_MODEL = os.environ.get("SUMI_ELEVENLABS_MODEL", "eleven_flash_v2_5")
 _KOKORO_BASE_URL = os.environ.get("SUMI_KOKORO_BASE_URL", "http://kokoro-fastapi:8880/v1")
 _KOKORO_VOICE = os.environ.get("SUMI_KOKORO_VOICE", "af_heart")
+
+# Eric's accepted Kokoro mastering curve (blind sample B, 2026-07-24).  Keep
+# this provider-independent: the hook processes LiveKit PCM frames after TTS,
+# so switching an explicitly selected provider does not fork the phone mastering
+# contract.  Set SUMI_TELEPHONY_MASTERING=0 for an exact bypass A/B.
+_MASTERING_ENABLED = os.environ.get("SUMI_TELEPHONY_MASTERING", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+_MASTERING_GAIN_DB = 1.558
+_MASTERING_PEAK_LIMIT = 10.0 ** (-3.0 / 20.0)
+
+
+def _build_telephony_mastering_board() -> Pedalboard:
+    """Return a fresh, stateful instance of the accepted sample-B curve."""
+
+    return Pedalboard(
+        [
+            HighpassFilter(cutoff_frequency_hz=180.0),
+            PeakFilter(cutoff_frequency_hz=350.0, gain_db=-2.25, q=0.70),
+            PeakFilter(cutoff_frequency_hz=900.0, gain_db=1.0, q=0.75),
+            PeakFilter(cutoff_frequency_hz=2400.0, gain_db=3.0, q=0.90),
+            PeakFilter(cutoff_frequency_hz=3250.0, gain_db=1.0, q=1.0),
+            Gain(gain_db=_MASTERING_GAIN_DB),
+        ]
+    )
+
+
+def _master_audio_frame(frame: rtc.AudioFrame, board: Pedalboard) -> rtc.AudioFrame:
+    """Apply the stateful mastering board without changing frame geometry.
+
+    LiveKit frames are interleaved signed-16 PCM.  Pedalboard consumes float
+    arrays shaped channels x samples.  ``reset=False`` is load-bearing: filter
+    state must cross LiveKit frame boundaries or the filters themselves can
+    introduce clicks at every frame.
+    """
+
+    expected_samples = frame.samples_per_channel * frame.num_channels
+    pcm = np.frombuffer(frame.data, dtype=np.int16)
+    if pcm.size != expected_samples:
+        raise RuntimeError(
+            f"invalid LiveKit audio frame: expected {expected_samples} samples, received {pcm.size}"
+        )
+
+    audio = pcm.reshape(frame.samples_per_channel, frame.num_channels).T.astype(np.float32)
+    audio /= 32768.0
+    processed = np.asarray(board(audio, frame.sample_rate, reset=False), dtype=np.float32)
+    if processed.shape != audio.shape:
+        raise RuntimeError(
+            "telephony mastering changed frame geometry: "
+            f"input={audio.shape} output={processed.shape}"
+        )
+
+    peak = float(np.max(np.abs(processed), initial=0.0))
+    if peak > _MASTERING_PEAK_LIMIT:
+        # The accepted Kokoro sample peaks below -3 dBFS.  Speech outside that
+        # envelope is scaled as one frame rather than hard-clipped or wrapped.
+        # This branch is a safety net, not normal loudness normalization.
+        processed *= _MASTERING_PEAK_LIMIT / peak
+        logger.warning(
+            "sumi telephony mastering overload contained: input_peak=%.6f target_peak=%.6f",
+            peak,
+            _MASTERING_PEAK_LIMIT,
+        )
+
+    interleaved = np.rint(processed.T.reshape(-1) * 32768.0)
+    encoded = np.clip(interleaved, -32768.0, 32767.0).astype(np.int16).tobytes()
+    return rtc.AudioFrame(
+        data=encoded,
+        sample_rate=frame.sample_rate,
+        num_channels=frame.num_channels,
+        samples_per_channel=frame.samples_per_channel,
+        userdata=dict(frame.userdata),
+    )
 
 
 def build_tts():
@@ -369,6 +449,23 @@ class SumiAgent(
         stream = Agent.default.llm_node(self, chat_ctx, tools, model_settings)
         async for chunk in _observe_llm_stream(stream, max_tokens=_resolve_max_tokens()):
             yield chunk
+
+    async def tts_node(
+        self,
+        text: AsyncIterable[str],
+        model_settings: ModelSettings,
+    ) -> AsyncIterator[rtc.AudioFrame]:
+        """Master Sumi's synthesized PCM using the accepted sample-B curve."""
+
+        stream = Agent.default.tts_node(self, text, model_settings)
+        if not _MASTERING_ENABLED:
+            async for frame in stream:
+                yield frame
+            return
+
+        board = _build_telephony_mastering_board()
+        async for frame in stream:
+            yield _master_audio_frame(frame, board)
 
 
 # --- server + session --------------------------------------------------

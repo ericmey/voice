@@ -374,3 +374,18 @@ packages that intentionally expose the same top-level module name.
 **Why:** Test collection can execute the wrong package while every dependency
 is technically installed, producing either false failures or—worse—tests of the
 wrong implementation.
+
+## 2026-07-24 — Real-time DSP must preserve state across audio frames
+
+**Trigger:** Sumi's accepted Kokoro mastering curve was moved from an offline
+render into LiveKit's frame-by-frame `tts_node`; resetting each filter for each
+frame would have manufactured the same boundary discontinuities the mastering
+pass was intended to remove.
+
+**Lesson:** Instantiate one DSP chain per utterance and process consecutive
+audio frames with filter state preserved. Keep a true bypass for A/B, assert
+unchanged frame geometry, and contain overload without integer wraparound.
+
+**Why:** An offline effect can sound correct while a stateless real-time port
+clicks at every frame boundary. The streaming lifecycle is part of the audio
+contract, not an implementation detail.

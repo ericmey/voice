@@ -14,6 +14,7 @@ dependencies = [
     "livekit-agents[openai,google,silero]~=1.6.5",
     "livekit-plugins-elevenlabs~=1.5",
     "livekit-plugins-nvidia~=1.6.5",
+    "pedalboard==0.9.24",
 ]
 
 [tool.uv.sources]
