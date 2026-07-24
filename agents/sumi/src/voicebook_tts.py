@@ -55,8 +55,15 @@ _MIME_TYPE = "audio/pcm"
 # the independent clips reset prosody and made their joins audible.  Batch up to
 # a natural phone-turn-sized phrase before synthesizing while keeping a hard
 # upper bound so first audio does not wait for a whole monologue.
-_MIN_SYNTH_TEXT_LEN = 80
-_MAX_SYNTH_TEXT_LEN = 180
+#
+# The phone worker caps replies at 64 LLM tokens.  With an 80-character flush
+# threshold, otherwise-small capped replies were still split (110+23,
+# 109+18, 117+74 chars in the live A/B).  Voicebook is deliberately one-flight,
+# so every split paid another request/prefetch boundary and produced a measured
+# 340--420 ms playout underrun.  Keep ordinary capped replies in one synthesis;
+# the 400-character hard batch ceiling still bounds pathological prose.
+_MIN_SYNTH_TEXT_LEN = 320
+_MAX_SYNTH_TEXT_LEN = 400
 _MIN_SENTENCE_LEN = 30
 _STREAM_CONTEXT_LEN = 30
 

@@ -203,9 +203,9 @@ class TestPhoneTurnHandling:
 
         session = AgentSession(turn_handling=agent_module._TURN_HANDLING)
 
-        assert session.options.endpointing["min_delay"] == 0.8
-        assert session.options.interruption["min_words"] == 1
-        assert session.options.interruption["false_interruption_timeout"] == 0.75
+        assert session.options.endpointing.get("min_delay") == 0.8
+        assert session.options.interruption.get("min_words") == 1
+        assert session.options.interruption.get("false_interruption_timeout") == 0.75
 
 
 # keep sys import referenced for conftest path insertion clarity

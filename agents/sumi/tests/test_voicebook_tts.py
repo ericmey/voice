@@ -172,6 +172,12 @@ def test_wrong_audio_format_header_rejected():
             "Shall we just sit in the quiet for a while?",
             1,
         ),
+        (
+            "Once, a moth flew into a house. It did not know the way out. "
+            "It beat its wings against the glass until it was tired. Then it stopped. "
+            "It waited for the dawn. The glass held. The moth lived.",
+            1,
+        ),
     ],
 )
 def test_worker_adapter_coalesces_first_call_sized_phrases(text, expected_requests):
