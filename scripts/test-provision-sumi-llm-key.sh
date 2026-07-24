@@ -89,6 +89,10 @@ import sys; sys.stdout.write(str(srv.server_address[1])+"\n"); sys.stdout.flush(
 PY
 
 # ---------------- fake docker: real embedded Python; fail-on-demand -----------------------
+# Models Docker's REAL stdin contract: `docker exec <ctr> python3 -` (no -i) does NOT attach
+# stdin, so `python3 -` receives an EMPTY script and does nothing. Only `docker exec -i …`
+# attaches stdin. This is the red-proof: without -i in the helper, every embedded-Python call
+# gets no script and the suite fails; adding -i makes it pass.
 cat > "$MOCKBIN/docker" <<'EOF'
 #!/usr/bin/env bash
 if [ "${1:-}" = "exec" ]; then
@@ -96,8 +100,20 @@ if [ "${1:-}" = "exec" ]; then
   if [ "${MOCK_DOCKER_FAIL:-0}" = 1 ] || [ "$n" -gt "${MOCK_DOCKER_OK_COUNT:-9999}" ]; then
     echo "Error response from daemon: container not running" >&2; exit 125
   fi
-  shift 2
-  exec env LITELLM_MASTER_KEY="fake-master-key" "$@"
+  shift                                   # drop 'exec'
+  has_i=0
+  while [ $# -gt 0 ]; do                  # consume flags up to the container name
+    case "$1" in
+      -*) case "$1" in *i*) has_i=1 ;; esac; shift ;;
+      *) break ;;
+    esac
+  done
+  shift                                   # drop container name
+  if [ "$has_i" = 1 ]; then
+    exec env LITELLM_MASTER_KEY="fake-master-key" "$@"              # -i: stdin attached
+  else
+    exec env LITELLM_MASTER_KEY="fake-master-key" "$@" </dev/null   # no -i: real Docker withholds stdin
+  fi
 fi
 echo "unexpected docker $*" >&2; exit 99
 EOF

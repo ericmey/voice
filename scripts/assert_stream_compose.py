@@ -2,6 +2,7 @@
 """Structured assertions over `docker compose config --format json` for the
 Slice-1 stream service. Grades against the FAILURE: a 0.0.0.0 exposure or a
 writable mount MUST fail here (red-proofed in test-stream-compose.sh)."""
+
 import json
 import sys
 
@@ -49,9 +50,13 @@ for tgt, (typ, src) in want.items():
     ck(m.get("type") == typ, f"mount {tgt} type {typ}")
     ck(m.get("source") == src, f"mount {tgt} source {src}")
 
-devs = ((svc.get("deploy") or {}).get("resources") or {}).get("reservations", {}).get("devices") or []
-ck(any(dev.get("driver") == "nvidia" and "gpu" in (dev.get("capabilities") or []) for dev in devs),
-   "nvidia GPU reservation")
+devs = ((svc.get("deploy") or {}).get("resources") or {}).get("reservations", {}).get(
+    "devices"
+) or []
+ck(
+    any(dev.get("driver") == "nvidia" and "gpu" in (dev.get("capabilities") or []) for dev in devs),
+    "nvidia GPU reservation",
+)
 
 env = svc.get("environment") or {}
 if isinstance(env, list):
@@ -60,16 +65,38 @@ ck(str(env.get("HF_HUB_OFFLINE")) == "1", "HF_HUB_OFFLINE=1 (offline)")
 ck(str(env.get("VOICEBOOK_PORT")) == "5060", "VOICEBOOK_PORT=5060")
 ck(env.get("VOICEBOOK_HOST") == "0.0.0.0", "VOICEBOOK_HOST=0.0.0.0 (container-internal bind)")
 ck(env.get("VOICEBOOK_REGISTRY") == "/etc/voicebook/registry.json", "VOICEBOOK_REGISTRY path")
-ck("snapshots/fd4b254389122332181a7c3db7f27e918eec64e3" in str(env.get("VOICEBOOK_MODEL", "")),
-   "VOICEBOOK_MODEL pinned snapshot path")
+ck(
+    "snapshots/fd4b254389122332181a7c3db7f27e918eec64e3" in str(env.get("VOICEBOOK_MODEL", "")),
+    "VOICEBOOK_MODEL pinned snapshot path",
+)
 # env keys allowlisted — any unexpected key (e.g. an injected secret) fails
-ALLOWED_ENV = {"VOICEBOOK_REGISTRY", "VOICEBOOK_MODEL", "HF_HUB_OFFLINE", "HF_HOME",
-               "VOICEBOOK_HOST", "VOICEBOOK_PORT"}
+ALLOWED_ENV = {
+    "VOICEBOOK_REGISTRY",
+    "VOICEBOOK_MODEL",
+    "HF_HUB_OFFLINE",
+    "HF_HOME",
+    "VOICEBOOK_HOST",
+    "VOICEBOOK_PORT",
+}
 extra_env = sorted(set(env) - ALLOWED_ENV)
 ck(not extra_env, f"env keys allowlisted (unexpected rejected: {extra_env})")
 blob = json.dumps(env).lower()
-ck(not any(s in blob for s in ("api_key", "secret", "gemini", "openai", "elevenlabs", "password", "momo_api", "sk-")),
-   "no secret-shaped env values")
+ck(
+    not any(
+        s in blob
+        for s in (
+            "api_key",
+            "secret",
+            "gemini",
+            "openai",
+            "elevenlabs",
+            "password",
+            "momo_api",
+            "sk-",
+        )
+    ),
+    "no secret-shaped env values",
+)
 # the secrets: section (service or top-level) must be ABSENT — red-proofed
 ck(not svc.get("secrets"), "service has NO secrets: block")
 ck(not d.get("secrets"), "top-level config has NO secrets: section")
@@ -79,12 +106,16 @@ ck("urllib.request.urlopen" in hc and "/healthz" in hc, "python-stdlib healthche
 
 nets = d.get("networks") or {}
 vd = nets.get("voice_default") or {}
-ck(vd.get("external") is True and vd.get("name") == "voice_default",
-   "network voice_default external + name voice_default")
+ck(
+    vd.get("external") is True and vd.get("name") == "voice_default",
+    "network voice_default external + name voice_default",
+)
 vols = d.get("volumes") or {}
 hv = vols.get("voicebook-hf-cache") or {}
-ck(hv.get("external") is True and hv.get("name") == "voicebook-hf-cache",
-   "volume voicebook-hf-cache external + name voicebook-hf-cache")
+ck(
+    hv.get("external") is True and hv.get("name") == "voicebook-hf-cache",
+    "volume voicebook-hf-cache external + name voicebook-hf-cache",
+)
 
 print("== STREAM_COMPOSE_TEST=" + ("PASS" if not fails else "FAIL") + " ==")
 sys.exit(0 if not fails else 1)

@@ -91,10 +91,12 @@ loki-smoke: ## Query Grafana/Loki for post-smoke-test failures (requires GRAFANA
 
 # ---- tests ---------------------------------------------------------
 
-test: ## Run pytest across all workspace members (sdk + tools + agents)
-	@for d in sdk tools agents/nyla agents/aoi agents/yua agents/party; do \
+test: ## Run pytest across all workspace members
+	@for d in sdk tools agents/nyla agents/aoi agents/yua agents/party agents/sumi \
+	  services/voicebook-tts services/voicebook-stream; do \
 	  echo ">> $$d"; \
-	  (cd $$d && uv run pytest -q) || { code=$$?; [[ $$code == 5 ]] && echo "  (no tests)" || exit $$code; }; \
+	  (cd $$d && PYTHONPATH="$$(pwd)/src$${PYTHONPATH:+:$$PYTHONPATH}" uv run pytest -q) \
+	    || { code=$$?; [[ $$code == 5 ]] && echo "  (no tests)" || exit $$code; }; \
 	done
 
 # ---- static checks (pre-release gate) ------------------------------

@@ -319,3 +319,58 @@ Both exist so this defect cannot recur silently.
 Re-check `get_arch_list()` and run a real CUDA op after **every** dependency
 change — not once at environment creation. For a running service, confirm
 residency with `nvidia-smi --query-compute-apps`, not logs.
+
+## 2026-07-24 — Test doubles must model Docker stdin attachment
+
+**Trigger:** A provisioning helper used `docker exec <container> python3 -`
+without `-i`; its fake-Docker harness forwarded stdin unconditionally, so 47
+scenarios passed while real Docker gave Python an empty script.
+
+**Lesson:** A test double for `docker exec` must withhold stdin unless the
+command includes `-i`. For embedded scripts, red-prove the unfixed command
+against that behavior before accepting the repair.
+
+**Why:** A harness that models the desired contract instead of the real one can
+make non-execution look fully verified, especially at shell/process boundaries.
+
+## 2026-07-24 — Non-streaming TTS needs an explicit chunk policy
+
+**Trigger:** Sumi's first real call delivered every RTP sample but synthesized
+373 characters as 11 independent clips, including 12--30 character fragments;
+the resulting prosody resets were audible as blips.
+
+**Lesson:** When LiveKit wraps a full-text TTS engine, construct the
+`StreamAdapter` explicitly with a tested minimum and maximum phrase size. Do not
+let the SDK's per-sentence default silently define the production audio seam.
+
+**Why:** Transport can be lossless while independently generated clips still
+sound discontinuous. Coalescing improves naturalness and reduces request and
+mixer churn with one worker-side change.
+
+## 2026-07-24 — A workspace member is not covered until the gates enumerate it
+
+**Trigger:** Sumi was a valid uv workspace member, but `make test` still listed
+only the older agents and Pyright had no Sumi execution environment. The public
+gate reported success without running her tests and resolved `agent.py` imports
+against another package.
+
+**Lesson:** When adding an agent package, update both the test-loop enumeration
+and the paired `src`/`tests` Pyright execution environments. Prove the package
+name appears in the gate output.
+
+**Why:** Workspace discovery installs a package; it does not automatically make
+hand-enumerated verification loops or ambiguous same-named modules cover it.
+
+## 2026-07-24 — Isolate same-named workspace modules during tests
+
+**Trigger:** Once the root test gate began running service packages, the
+`voicebook-tts` service tests imported Sumi's different top-level
+`voicebook_tts.py` from the shared editable environment.
+
+**Lesson:** Run each workspace member with its own absolute `src` directory at
+the front of `PYTHONPATH`. A shared uv environment does not disambiguate two
+packages that intentionally expose the same top-level module name.
+
+**Why:** Test collection can execute the wrong package while every dependency
+is technically installed, producing either false failures or—worse—tests of the
+wrong implementation.

@@ -71,6 +71,9 @@ root = "agents/yua/src"
 [[tool.pyright.executionEnvironments]]
 root = "agents/party/src"
 
+[[tool.pyright.executionEnvironments]]
+root = "agents/sumi/src"
+
 # Test files live one level up from src/. Their conftest.py does
 # `sys.path.insert(0, "../src")` at runtime; mirror that for pyright.
 [[tool.pyright.executionEnvironments]]
@@ -88,3 +91,21 @@ extraPaths = ["agents/yua/src"]
 [[tool.pyright.executionEnvironments]]
 root = "agents/party/tests"
 extraPaths = ["agents/party/src"]
+
+[[tool.pyright.executionEnvironments]]
+root = "agents/sumi/tests"
+extraPaths = ["agents/sumi/src"]
+
+[[tool.pyright.executionEnvironments]]
+root = "services/voicebook-tts/src"
+
+[[tool.pyright.executionEnvironments]]
+root = "services/voicebook-tts/tests"
+extraPaths = ["services/voicebook-tts/src"]
+
+[[tool.pyright.executionEnvironments]]
+root = "services/voicebook-stream/src"
+
+[[tool.pyright.executionEnvironments]]
+root = "services/voicebook-stream/tests"
+extraPaths = ["services/voicebook-stream/src"]

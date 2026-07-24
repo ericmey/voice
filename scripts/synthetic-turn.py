@@ -47,7 +47,7 @@ async def main() -> None:
     await lkapi.agent_dispatch.create_dispatch(
         api.CreateAgentDispatchRequest(agent_name="phone-sumi", room=ROOM)
     )
-    print(f"[{time.time()-t0:5.2f}s] dispatched phone-sumi -> room {ROOM}", flush=True)
+    print(f"[{time.time() - t0:5.2f}s] dispatched phone-sumi -> room {ROOM}", flush=True)
 
     token = (
         api.AccessToken(API_KEY, API_SECRET)
@@ -64,7 +64,9 @@ async def main() -> None:
     @room.on("track_subscribed")
     def _on_sub(track, pub, participant):
         if track.kind == rtc.TrackKind.KIND_AUDIO:
-            print(f"[{time.time()-t0:5.2f}s] subscribed to {participant.identity} audio", flush=True)
+            print(
+                f"[{time.time() - t0:5.2f}s] subscribed to {participant.identity} audio", flush=True
+            )
 
             async def _read():
                 async for ev in rtc.AudioStream(track):
@@ -77,15 +79,18 @@ async def main() -> None:
             asyncio.create_task(_read())
 
     await room.connect(LK_WS, token)
-    print(f"[{time.time()-t0:5.2f}s] caller connected", flush=True)
+    print(f"[{time.time() - t0:5.2f}s] caller connected", flush=True)
 
     caller_pcm = await asyncio.get_event_loop().run_in_executor(None, _fetch_caller_pcm)
-    print(f"[{time.time()-t0:5.2f}s] caller speech ready ({len(caller_pcm)/2/SR:.2f}s)", flush=True)
+    print(
+        f"[{time.time() - t0:5.2f}s] caller speech ready ({len(caller_pcm) / 2 / SR:.2f}s)",
+        flush=True,
+    )
 
     # let Sumi join + greet
     await asyncio.sleep(7)
     greet_ttfa = marks["first_audio"]
-    print(f"[{time.time()-t0:5.2f}s] greeting TTFA={greet_ttfa}", flush=True)
+    print(f"[{time.time() - t0:5.2f}s] greeting TTFA={greet_ttfa}", flush=True)
     frames_before = len(agent_frames)
 
     # publish the caller utterance
@@ -102,7 +107,10 @@ async def main() -> None:
         if len(chunk) < fb:
             chunk = chunk + b"\x00" * (fb - len(chunk))
         await source.capture_frame(rtc.AudioFrame(chunk, SR, 1, spf))
-    print(f"[{time.time()-t0:5.2f}s] caller utterance published (took {time.time()-pub0:.2f}s wall)", flush=True)
+    print(
+        f"[{time.time() - t0:5.2f}s] caller utterance published (took {time.time() - pub0:.2f}s wall)",
+        flush=True,
+    )
 
     # wait for Sumi's response turn (STT->LLM->TTS), and DON'T cut her off:
     # detect first response audio, then keep capturing well past it so the full
@@ -130,8 +138,14 @@ async def main() -> None:
 
     print("=" * 60, flush=True)
     print(f"RESULT greeting_ttfa={greet_ttfa}", flush=True)
-    print(f"RESULT response_after_utterance={'YES' if response_started else 'NO'} first_response_latency={first_resp}", flush=True)
-    print(f"RESULT total_sumi_audio={total_s:.2f}s frames={len(agent_frames)} rate={marks['sr']} ch={marks['ch']}", flush=True)
+    print(
+        f"RESULT response_after_utterance={'YES' if response_started else 'NO'} first_response_latency={first_resp}",
+        flush=True,
+    )
+    print(
+        f"RESULT total_sumi_audio={total_s:.2f}s frames={len(agent_frames)} rate={marks['sr']} ch={marks['ch']}",
+        flush=True,
+    )
     print(f"RESULT capture -> {OUT}", flush=True)
 
     await room.disconnect()

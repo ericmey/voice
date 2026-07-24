@@ -596,7 +596,9 @@ def test_f1_disconnect_before_final_logs_disconnect(env, caplog, monkeypatch):
             resp({"type": "http", "asgi": {"spec_version": "2.3"}}, receive, send)
         )
     msgs = [r.getMessage() for r in caplog.records]
-    assert any("outcome=disconnect" in m for m in msgs), "true early disconnect not logged as disconnect"
+    assert any("outcome=disconnect" in m for m in msgs), (
+        "true early disconnect not logged as disconnect"
+    )
     assert lease.locked is False
 
 
@@ -629,7 +631,9 @@ def test_f1_final_send_raises_not_ok_and_cleans_up(env, caplog, monkeypatch):
             )
     msgs = [r.getMessage() for r in caplog.records]
     assert not any("outcome=ok" in m for m in msgs), "failed final send falsely logged outcome=ok"
-    assert any("outcome=post-header:OSError" in m for m in msgs), "failed final send not recorded as error"
+    assert any("outcome=post-header:OSError" in m for m in msgs), (
+        "failed final send not recorded as error"
+    )
     assert lease.locked is False, "lease leaked when the final send failed"
     assert synth.closed is True, "backend not torn down when the final send failed"
 

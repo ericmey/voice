@@ -108,7 +108,7 @@ validate_sumi_only_template() {
 # in-container primitives (G2)
 # ---------------------------------------------------------------------------
 _mint_in_container() {
-  docker exec "$LLM_CTR" python3 - "$ALIAS" "$MODEL" "$LLM_URL" <<'PY'
+  docker exec -i "$LLM_CTR" python3 - "$ALIAS" "$MODEL" "$LLM_URL" <<'PY'
 import os, sys, json, urllib.request
 alias, model, base = sys.argv[1], sys.argv[2], sys.argv[3]
 mk = os.environ.get("LITELLM_MASTER_KEY")
@@ -139,7 +139,7 @@ PY
 }
 
 revoke_alias() {
-  docker exec "$LLM_CTR" python3 - "$ALIAS" "$LLM_URL" <<'PY' || true
+  docker exec -i "$LLM_CTR" python3 - "$ALIAS" "$LLM_URL" <<'PY' || true
 import os, sys, json, urllib.request
 alias, base = sys.argv[1], sys.argv[2]
 mk = os.environ.get("LITELLM_MASTER_KEY") or ""
@@ -159,7 +159,7 @@ PY
 # is UNKNOWN. A generic 404 can no longer masquerade as "this alias is absent".
 # NOTE: if `docker exec` itself fails there is NO output + nonzero rc — callers use _classify.
 alias_state() {
-  docker exec "$LLM_CTR" python3 - "$ALIAS" "$LLM_URL" <<'PY'
+  docker exec -i "$LLM_CTR" python3 - "$ALIAS" "$LLM_URL" <<'PY'
 import os, sys, json, urllib.request, urllib.error, urllib.parse
 alias, base = sys.argv[1], sys.argv[2]
 mk = os.environ.get("LITELLM_MASTER_KEY") or ""
@@ -187,7 +187,7 @@ PY
 
 # verify-B: master/admin /key/info by alias asserts key_alias AND models (F4)
 key_alias_and_models_ok() {
-  docker exec "$LLM_CTR" python3 - "$ALIAS" "$LLM_URL" "$MODEL" <<'PY'
+  docker exec -i "$LLM_CTR" python3 - "$ALIAS" "$LLM_URL" "$MODEL" <<'PY'
 import os, sys, json, urllib.request, urllib.parse
 alias, base, model = sys.argv[1], sys.argv[2], sys.argv[3]
 mk = os.environ.get("LITELLM_MASTER_KEY") or ""
@@ -206,7 +206,7 @@ PY
 # alias_token_hash: master/admin lookup by alias; prints the alias's stored token HASH
 # (sha256 hexdigest — NON-secret). Empty/rc1 if unavailable (fail-closed at the caller).
 alias_token_hash() {
-  docker exec "$LLM_CTR" python3 - "$ALIAS" "$LLM_URL" <<'PY'
+  docker exec -i "$LLM_CTR" python3 - "$ALIAS" "$LLM_URL" <<'PY'
 import os, sys, json, urllib.request, urllib.parse
 alias, base = sys.argv[1], sys.argv[2]
 mk = os.environ.get("LITELLM_MASTER_KEY") or ""

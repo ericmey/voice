@@ -94,7 +94,9 @@ class TestNoPartyLeakage:
         assert not hasattr(agent_module, "PartyAgent")
 
     def test_prompt_has_no_party_identity(self, agent_module):
-        content = (Path(agent_module._PROMPTS_DIR) / "system.md").read_text(encoding="utf-8").lower()
+        content = (
+            (Path(agent_module._PROMPTS_DIR) / "system.md").read_text(encoding="utf-8").lower()
+        )
         assert "party" not in content
         assert "nyla" not in content
 

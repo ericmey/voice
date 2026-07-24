@@ -8,8 +8,10 @@ service's LiveKit-facing endpoint:
       -> raw s16le PCM, 24000 Hz mono (X-Audio-Format: s16le, X-Sample-Rate: 24000)
 
 Contract notes that shaped this adapter (from voicebook-stream QUALIFICATION + app.py):
-  - Input is FULL TEXT, not token-streamed, so capabilities.streaming=False; the
-    voice pipeline wraps this with its StreamAdapter for sentence chunking.
+  - Input is FULL TEXT, not token-streamed, so ``VoicebookTTS`` itself declares
+    capabilities.streaming=False. ``build_streaming_voicebook_tts`` wraps it in
+    an explicit StreamAdapter whose coalescing policy is part of Sumi's tested
+    worker contract (rather than the SDK's per-sentence default).
   - The service holds a ONE-FLIGHT lease: a second concurrent synthesis gets 429.
     For a single Sumi call that is fine; a 429 is a transient, retryable state.
   - Cancellation is safe: LiveKit cancels the _run task, aiohttp closes the
@@ -34,6 +36,7 @@ from livekit.agents import (
     APIError,
     APIStatusError,
     APITimeoutError,
+    tokenize,
     tts,
     utils,
 )
@@ -45,6 +48,46 @@ _NUM_CHANNELS = 1
 # Raw little-endian s16 PCM — audio/pcm makes AudioEmitter treat bytes as raw PCM
 # (no container demux), which is exactly what /speak/stream emits.
 _MIME_TYPE = "audio/pcm"
+
+# The default LiveKit sentence adapter emits every sentence independently.  On
+# Sumi's first real call that turned 373 characters into 11 voicebook requests,
+# including several 12--30 character clips.  Every sample arrived over RTP, but
+# the independent clips reset prosody and made their joins audible.  Batch up to
+# a natural phone-turn-sized phrase before synthesizing while keeping a hard
+# upper bound so first audio does not wait for a whole monologue.
+_MIN_SYNTH_TEXT_LEN = 80
+_MAX_SYNTH_TEXT_LEN = 180
+_MIN_SENTENCE_LEN = 30
+_STREAM_CONTEXT_LEN = 30
+
+
+def build_streaming_voicebook_tts(
+    *,
+    voice_id: str,
+    base_url: str = "http://voicebook-stream:5060",
+    http_session: aiohttp.ClientSession | None = None,
+) -> tts.StreamAdapter:
+    """Build Sumi's streaming TTS seam with deliberate phrase coalescing.
+
+    ``VoicebookTTS`` accepts full text.  The LiveKit pipeline otherwise wraps it
+    in a default sentence adapter that flushes every sentence, including tiny
+    fragments.  Constructing the adapter explicitly makes the batching policy a
+    tested part of Sumi's worker rather than an implicit SDK default.
+    """
+    return tts.StreamAdapter(
+        tts=VoicebookTTS(
+            voice_id=voice_id,
+            base_url=base_url,
+            http_session=http_session,
+        ),
+        sentence_tokenizer=tokenize.blingfire.SentenceTokenizer(
+            min_sentence_len=_MIN_SENTENCE_LEN,
+            min_token_len=_MIN_SYNTH_TEXT_LEN,
+            max_token_len=_MAX_SYNTH_TEXT_LEN,
+            stream_context_len=_STREAM_CONTEXT_LEN,
+            retain_format=True,
+        ),
+    )
 
 
 class VoicebookTTS(tts.TTS):

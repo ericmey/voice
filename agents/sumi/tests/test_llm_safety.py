@@ -89,7 +89,9 @@ def _mock_client(parts, *, endless: bool = False, recorded: dict | None = None):
             recorded["body"] = json.loads(request.content)
         return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=stream)
 
-    http = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://mock.local/v1")
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://mock.local/v1"
+    )
     oai = openai.AsyncClient(api_key="test-key", base_url="http://mock.local/v1", http_client=http)
     return oai, stream
 
@@ -102,7 +104,9 @@ def _ctx() -> llm_mod.ChatContext:
 
 
 async def _drive_full_turn(recorded: dict) -> None:
-    oai, _ = _mock_client([_sse("Hi.", None), _sse(None, "stop", usage=True), _DONE], recorded=recorded)
+    oai, _ = _mock_client(
+        [_sse("Hi.", None), _sse(None, "stop", usage=True), _DONE], recorded=recorded
+    )
     async for _ in build_llm(client=oai).chat(chat_ctx=_ctx()):
         pass
 

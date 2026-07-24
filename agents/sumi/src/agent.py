@@ -20,11 +20,25 @@ line), not a generated reply, so her first breath is always hers verbatim.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from pathlib import Path
 
-from livekit.agents import Agent, AgentSession, APIConnectOptions, JobContext, cli
+import httpx
+from livekit.agents import (
+    Agent,
+    AgentSession,
+    APIConnectOptions,
+    FlushSentinel,
+    JobContext,
+    ModelSettings,
+    cli,
+)
+from livekit.agents import (
+    llm as livekit_llm,
+)
 from livekit.agents.beta import EndCallTool
 from livekit.agents.voice.agent_session import SessionConnectOptions
 from livekit.agents.worker import AgentServer
@@ -48,7 +62,7 @@ from sdk.tracing import attach_current_span_metadata, wire_otel_shutdown_flush
 from sdk.transcript import wire_transcript_logging
 from tools.core import CoreToolsMixin
 from tools.memory import MusubiToolsMixin
-from voicebook_tts import VoicebookTTS
+from voicebook_tts import build_streaming_voicebook_tts
 
 # --- env ---------------------------------------------------------------
 load_env()
@@ -164,8 +178,58 @@ def build_llm(*, client=None) -> openai_plugin.LLM:
         temperature=0.7,
         max_completion_tokens=max_tokens,
         max_retries=0,
-        timeout=30,
+        timeout=httpx.Timeout(30.0),
     )
+
+
+async def _observe_llm_stream(
+    stream: AsyncIterable[livekit_llm.ChatChunk | str | FlushSentinel],
+    *,
+    max_tokens: int,
+) -> AsyncGenerator[livekit_llm.ChatChunk | str | FlushSentinel, None]:
+    """Pass through one LLM turn and leave a truthful end-state receipt.
+
+    LiveKit's OpenAI adapter currently discards the provider's literal
+    ``finish_reason`` before yielding ``ChatChunk`` objects.  What the worker can
+    prove is still enough to classify the first-call anomaly: a normally drained
+    provider stream versus a pipeline cancellation/error, together with usage
+    and whether the hard cap was reached.
+    """
+    outcome = "completed"
+    completion_tokens: int | None = None
+    output_chars = 0
+    try:
+        async for chunk in stream:
+            if isinstance(chunk, str):
+                output_chars += len(chunk)
+            elif isinstance(chunk, livekit_llm.ChatChunk):
+                if chunk.delta and chunk.delta.content:
+                    output_chars += len(chunk.delta.content)
+                if chunk.usage is not None:
+                    completion_tokens = chunk.usage.completion_tokens
+            yield chunk
+    except asyncio.CancelledError:
+        outcome = "cancelled"
+        raise
+    except GeneratorExit:
+        # An upstream node can close an async generator without cancelling the
+        # task.  That is still a pipeline-side early stop, not a normally
+        # drained provider response.
+        outcome = "consumer_closed"
+        raise
+    except Exception:
+        outcome = "error"
+        raise
+    finally:
+        logger.info(
+            "sumi llm turn end: outcome=%s completion_tokens=%s output_chars=%d "
+            "max_tokens=%d cap_reached=%s provider_finish_reason=unavailable",
+            outcome,
+            completion_tokens,
+            output_chars,
+            max_tokens,
+            completion_tokens is not None and completion_tokens >= max_tokens,
+        )
 
 
 # --- persona -----------------------------------------------------------
@@ -194,9 +258,7 @@ def _load_persona(prompts_dir: Path | None = None) -> str:
         )
     text = path.read_text(encoding="utf-8").strip()
     if not text:
-        raise RuntimeError(
-            f"Sumi persona empty: {path}. Refusing to start on a generic fallback."
-        )
+        raise RuntimeError(f"Sumi persona empty: {path}. Refusing to start on a generic fallback.")
     return text
 
 
@@ -243,6 +305,16 @@ class SumiAgent(
         # Deterministic fixed opener via session.say() — Sumi's exact first line,
         # synthesized in her own voice, never a generated reply. Her breath is hers.
         await self.session.say(_GREETING)
+
+    async def llm_node(
+        self,
+        chat_ctx: livekit_llm.ChatContext,
+        tools: list[livekit_llm.Tool],
+        model_settings: ModelSettings,
+    ) -> AsyncIterator[livekit_llm.ChatChunk | str | FlushSentinel]:
+        stream = Agent.default.llm_node(self, chat_ctx, tools, model_settings)
+        async for chunk in _observe_llm_stream(stream, max_tokens=_resolve_max_tokens()):
+            yield chunk
 
 
 # --- server + session --------------------------------------------------
@@ -294,7 +366,7 @@ async def entrypoint(ctx: JobContext) -> None:
     llm = build_llm()
     # Slice 5 — LOCAL TTS: Sumi's master voice via voicebook-stream (was the
     # elevenlabs scaffold on Nyla's id). No cloud, no substitute voice.
-    tts = VoicebookTTS(voice_id=_TTS_VOICE_ID, base_url=_TTS_BASE_URL)
+    tts = build_streaming_voicebook_tts(voice_id=_TTS_VOICE_ID, base_url=_TTS_BASE_URL)
 
     extra_tools = [
         EndCallTool(delete_room=True, end_instructions=None),
@@ -350,7 +422,9 @@ async def entrypoint(ctx: JobContext) -> None:
         lk_job_id=getattr(ctx.job, "id", None),
     )
     annotate_call_audio_recording(audio_recording)
-    trace("sumi session: silero-vad -> parakeet-riva(local STT) -> momo/sumi-route(local LLM) -> voicebook-stream/sumi-v1(local TTS)")
+    trace(
+        "sumi session: silero-vad -> parakeet-riva(local STT) -> momo/sumi-route(local LLM) -> voicebook-stream/sumi-v1(local TTS)"
+    )
     trace("sumi: entrypoint complete, greeting scheduled via on_enter")
 
 

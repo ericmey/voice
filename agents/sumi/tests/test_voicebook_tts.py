@@ -8,15 +8,17 @@ session stands in — so CI protects the contract the live seam test proved.
 """
 
 import asyncio
+from typing import cast
 
 import aiohttp
 import pytest
 from livekit.agents import APIConnectOptions, APIStatusError
-from voicebook_tts import VoicebookTTS
+from multidict import CIMultiDict, CIMultiDictProxy
+from voicebook_tts import VoicebookTTS, build_streaming_voicebook_tts
 from yarl import URL
 
 # 0.5 s of known s16le PCM @ 24 kHz (non-empty so AudioEmitter accepts the turn).
-_PCM = (b"\x01\x02" * 6000)
+_PCM = b"\x01\x02" * 6000
 
 
 class _FakeContent:
@@ -43,9 +45,14 @@ class _FakeResp:
     def raise_for_status(self):
         if self.status >= 400:
             ri = aiohttp.RequestInfo(
-                URL("http://vb:5060/speak/stream"), "POST", (), URL("http://vb:5060/speak/stream")
+                URL("http://vb:5060/speak/stream"),
+                "POST",
+                CIMultiDictProxy(CIMultiDict()),
+                URL("http://vb:5060/speak/stream"),
             )
-            raise aiohttp.ClientResponseError(ri, (), status=self.status, message=f"HTTP {self.status}")
+            raise aiohttp.ClientResponseError(
+                ri, (), status=self.status, message=f"HTTP {self.status}"
+            )
 
     async def text(self):
         return "error body"
@@ -59,6 +66,11 @@ class _FakeSession:
     def post(self, url, **kw):
         self.calls.append((url, kw))
         return self._resp
+
+
+def _as_client_session(session: _FakeSession) -> aiohttp.ClientSession:
+    """Type-only bridge for the deliberately small aiohttp test double."""
+    return cast(aiohttp.ClientSession, session)
 
 
 # --- sync contract -----------------------------------------------------
@@ -82,13 +94,22 @@ def test_empty_voice_id_fails_loud():
         VoicebookTTS(voice_id="")
 
 
+def test_worker_adapter_is_explicitly_streaming():
+    t = build_streaming_voicebook_tts(voice_id="sumi-v1")
+    assert t.capabilities.streaming is True
+
+
 # --- async behaviour ---------------------------------------------------
 
 
 def test_run_posts_correct_request_and_maps_frames():
     async def go():
         sess = _FakeSession(_FakeResp(chunks=(_PCM,)))
-        t = VoicebookTTS(voice_id="sumi-v1", base_url="http://vb:5060/", http_session=sess)
+        t = VoicebookTTS(
+            voice_id="sumi-v1",
+            base_url="http://vb:5060/",
+            http_session=_as_client_session(sess),
+        )
         frames = []
         async for ev in t.synthesize("hello Eric"):
             frames.append(ev.frame)
@@ -108,7 +129,11 @@ def test_run_posts_correct_request_and_maps_frames():
 def test_http_error_maps_to_apistatuserror_not_silent():
     async def go():
         sess = _FakeSession(_FakeResp(status=429))
-        t = VoicebookTTS(voice_id="sumi-v1", base_url="http://vb:5060", http_session=sess)
+        t = VoicebookTTS(
+            voice_id="sumi-v1",
+            base_url="http://vb:5060",
+            http_session=_as_client_session(sess),
+        )
         # max_retry=0 so the 429 surfaces deterministically instead of retrying.
         async for _ in t.synthesize("hi", conn_options=APIConnectOptions(max_retry=0)):
             pass
@@ -121,10 +146,55 @@ def test_http_error_maps_to_apistatuserror_not_silent():
 def test_wrong_audio_format_header_rejected():
     async def go():
         sess = _FakeSession(_FakeResp(headers={"X-Audio-Format": "mp3"}))
-        t = VoicebookTTS(voice_id="sumi-v1", base_url="http://vb:5060", http_session=sess)
+        t = VoicebookTTS(
+            voice_id="sumi-v1",
+            base_url="http://vb:5060",
+            http_session=_as_client_session(sess),
+        )
         async for _ in t.synthesize("hi", conn_options=APIConnectOptions(max_retry=0)):
             pass
 
     # a 200 that isn't the s16le contract must fail, not be played as noise
     with pytest.raises(Exception, match="s16le"):
         asyncio.run(go())
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_requests"),
+    [
+        ("Good evening, Eric. I'm here. How are you?", 1),
+        (
+            "I was organizing the bookshelf by spine color. It is a small comfort, in its way.",
+            1,
+        ),
+        (
+            "There is something peaceful about making order from small things. "
+            "Shall we just sit in the quiet for a while?",
+            1,
+        ),
+    ],
+)
+def test_worker_adapter_coalesces_first_call_sized_phrases(text, expected_requests):
+    async def go():
+        sess = _FakeSession(_FakeResp(chunks=(_PCM,)))
+        adapter = build_streaming_voicebook_tts(
+            voice_id="sumi-v1",
+            base_url="http://vb:5060",
+            http_session=_as_client_session(sess),
+        )
+        frames = []
+        async with adapter.stream() as stream:
+            # Model the real LLM path: text arrives incrementally rather than
+            # as one already-complete string.
+            for start in range(0, len(text), 7):
+                stream.push_text(text[start : start + 7])
+            stream.end_input()
+            async for ev in stream:
+                frames.append(ev.frame)
+        return sess, frames
+
+    sess, frames = asyncio.run(go())
+    assert len(sess.calls) == expected_requests
+    assert frames
+    posted_text = " ".join(call[1]["json"]["text"] for call in sess.calls)
+    assert " ".join(posted_text.split()) == " ".join(text.split())

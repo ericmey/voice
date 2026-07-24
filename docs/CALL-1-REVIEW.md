@@ -49,8 +49,12 @@ issue from the seams and its cause is **not yet established:**
   **unobserved cancellation**. Current evidence does **not** establish VAD.
 
 Work — **classify before tuning:**
-1. **Instrument** the upstream `finish_reason` + any cancellation reason on **every**
-   assistant turn (worker-side logging).
+1. **Instrument** the worker-visible turn ending on **every** assistant turn: normally
+   drained provider stream vs task cancellation vs consumer-close vs error, plus completion
+   tokens, output characters, and whether the 64-token cap was reached. LiveKit OpenAI 1.6.5
+   discards the provider's literal `finish_reason` before yielding `ChatChunk`; the receipt
+   must say that honestly rather than fabricate it. A normal incomplete turn rules out a
+   pipeline cancellation; a cancelled/consumer-closed turn rules one in.
 2. **Reproduce**, then **classify** the cause. **No tuning of anything until classified.**
 
 ## Optimization observations (answering "any areas for optimization?")

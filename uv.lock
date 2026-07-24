@@ -119,6 +119,7 @@ name = "agent-sumi"
 version = "0.1.0"
 source = { editable = "agents/sumi" }
 dependencies = [
+    { name = "httpx" },
     { name = "livekit-agents", extra = ["google", "openai", "silero"] },
     { name = "livekit-plugins-elevenlabs" },
     { name = "livekit-plugins-nvidia" },
@@ -134,6 +135,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
     { name = "livekit-agents", extras = ["openai", "google", "silero"], specifier = "~=1.6.5" },
     { name = "livekit-plugins-elevenlabs", specifier = "~=1.5" },
     { name = "livekit-plugins-nvidia", specifier = "~=1.6.5" },
