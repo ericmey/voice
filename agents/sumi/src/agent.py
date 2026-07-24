@@ -82,6 +82,8 @@ _TTS_BASE_URL = os.environ.get("SUMI_TTS_BASE_URL", "http://voicebook-stream:506
 _TTS_PROVIDER = os.environ.get("SUMI_TTS_PROVIDER", "voicebook").strip().lower()
 _ELEVENLABS_VOICE_ID = os.environ.get("SUMI_ELEVENLABS_VOICE_ID", "AEW6JTgnyoPaoB9zlK3S")
 _ELEVENLABS_MODEL = os.environ.get("SUMI_ELEVENLABS_MODEL", "eleven_flash_v2_5")
+_KOKORO_BASE_URL = os.environ.get("SUMI_KOKORO_BASE_URL", "http://kokoro-fastapi:8880/v1")
+_KOKORO_VOICE = os.environ.get("SUMI_KOKORO_VOICE", "af_heart")
 
 
 def build_tts():
@@ -96,6 +98,18 @@ def build_tts():
             voice_id=_ELEVENLABS_VOICE_ID,
             model=_ELEVENLABS_MODEL,
             language="en",
+        )
+    if _TTS_PROVIDER == "kokoro":
+        # LiveKit 1.6 selects raw-audio mode only for known OpenAI audio model
+        # names. Kokoro-FastAPI ignores the model selector and serves Kokoro;
+        # `tts-1` therefore keeps the maintained plugin on its audio response
+        # path instead of the gpt-4o SSE path.
+        return openai_plugin.TTS(
+            model="tts-1",
+            voice=_KOKORO_VOICE,
+            api_key="not-needed",
+            base_url=_KOKORO_BASE_URL,
+            response_format="wav",
         )
     raise ValueError(f"unsupported SUMI_TTS_PROVIDER: {_TTS_PROVIDER!r}")
 

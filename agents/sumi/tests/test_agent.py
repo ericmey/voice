@@ -195,6 +195,14 @@ class TestTTSProviderSelection:
 
         assert provider.capabilities.streaming is True
 
+    def test_kokoro_uses_maintained_openai_audio_path(self, agent_module, monkeypatch):
+        monkeypatch.setattr(agent_module, "_TTS_PROVIDER", "kokoro")
+
+        provider = agent_module.build_tts()
+
+        assert provider.capabilities.streaming is False
+        assert provider.model == "tts-1"
+
     def test_unknown_provider_fails_loud(self, agent_module, monkeypatch):
         monkeypatch.setattr(agent_module, "_TTS_PROVIDER", "silent-fallback")
 
