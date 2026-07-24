@@ -34,6 +34,7 @@ from livekit.agents import (
     FlushSentinel,
     JobContext,
     ModelSettings,
+    TurnHandlingOptions,
     cli,
 )
 from livekit.agents import (
@@ -105,6 +106,24 @@ _STT_MODEL = os.environ.get("SUMI_STT_MODEL", "parakeet-1.1b-en-US-asr-streaming
 #     cloud model. Sumi goes quiet before she speaks as something that isn't her.
 _LLM_BASE_URL = os.environ.get("SUMI_LLM_BASE_URL", "http://10.0.20.25:4000/v1")
 _LLM_MODEL = os.environ.get("SUMI_LLM_MODEL", "sumi")
+
+# Phone turn handling.  The stock streaming defaults are too eager for the
+# self-hosted Parakeet path: on the 2026-07-24 diagnostic call, untranscribed
+# audio activity paused Sumi twice for exactly the default 2.0-second false-
+# interruption window, and a final STT transcript arrived after a turn had
+# already been committed.  Require an actual transcribed word before pausing
+# playback, give the streaming transcript a little more time to settle, and
+# make any remaining resumable false pause short enough not to sound like the
+# call dropped.  Real one-word barge-ins ("stop", "wait") still count.
+_TURN_HANDLING: TurnHandlingOptions = {
+    "endpointing": {"min_delay": 0.8},
+    "interruption": {
+        "min_duration": 0.5,
+        "min_words": 1,
+        "resume_false_interruption": True,
+        "false_interruption_timeout": 0.75,
+    },
+}
 
 # CAPACITY-SAFETY cap — bound EVERY spoken turn to a short conversational length.
 # An uncapped request lets the backend run toward its huge default n_predict
@@ -396,6 +415,7 @@ async def entrypoint(ctx: JobContext) -> None:
         vad=vad,
         llm=llm,
         tts=tts,
+        turn_handling=_TURN_HANDLING,
         conn_options=SessionConnectOptions(
             llm_conn_options=APIConnectOptions(max_retry=0),
         ),

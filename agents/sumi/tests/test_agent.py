@@ -179,5 +179,34 @@ class TestProviderImports:
         assert all(x is not None for x in (openai, silero, google, elevenlabs, EndCallTool))
 
 
+class TestPhoneTurnHandling:
+    """The phone path must not pause Sumi on untranscribed audio activity."""
+
+    def test_requires_a_transcribed_word_before_interruption(self, agent_module):
+        interruption = agent_module._TURN_HANDLING["interruption"]
+
+        assert interruption["min_words"] == 1
+
+    def test_false_interruption_pause_is_bounded_below_livekit_default(self, agent_module):
+        interruption = agent_module._TURN_HANDLING["interruption"]
+
+        assert interruption["resume_false_interruption"] is True
+        assert 0 < interruption["false_interruption_timeout"] < 2.0
+
+    def test_endpointing_allows_slow_streaming_stt_to_settle(self, agent_module):
+        endpointing = agent_module._TURN_HANDLING["endpointing"]
+
+        assert endpointing["min_delay"] >= 0.8
+
+    def test_livekit_resolves_the_runtime_contract(self, agent_module):
+        from livekit.agents import AgentSession
+
+        session = AgentSession(turn_handling=agent_module._TURN_HANDLING)
+
+        assert session.options.endpointing["min_delay"] == 0.8
+        assert session.options.interruption["min_words"] == 1
+        assert session.options.interruption["false_interruption_timeout"] == 0.75
+
+
 # keep sys import referenced for conftest path insertion clarity
 assert sys is not None
