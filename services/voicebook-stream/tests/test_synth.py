@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from voicebook_stream.synth import SAMPLE_RATE, StreamingSynthesizer, SynthesisError
+from voicebook_stream.synth import CHUNK_SIZE, SAMPLE_RATE, StreamingSynthesizer, SynthesisError
 
 
 class FakeModel:
@@ -22,8 +22,11 @@ class FakeModel:
     def __init__(self, sr=SAMPLE_RATE, n=4, raise_at=None, trailing_empty=False):
         self.sr, self.n, self.raise_at, self.trailing_empty = sr, n, raise_at, trailing_empty
         self.inner_closed = False
+        self.calls = []
 
     def generate_voice_clone_streaming(self, **kw):
+        self.calls.append(kw)
+
         def gen():
             try:
                 for i in range(self.n):
@@ -56,6 +59,14 @@ def test_chunks_ordered_nonempty_pcm16_with_value_order():
     # FakeModel emits amplitude 0.1*(i+1) per chunk i — assert ORDER is preserved
     peaks = [max(np.frombuffer(c, dtype="<i2")) for c in chunks]
     assert peaks == sorted(peaks) and len(set(peaks)) == 3, f"chunk order lost: {peaks}"
+
+
+def test_streaming_uses_qualified_engine_chunk_window():
+    model = FakeModel(n=1)
+    list(_synth(model).synthesize_stream("hi", REF, "t"))
+    assert CHUNK_SIZE == 12
+    assert len(model.calls) == 1
+    assert model.calls[0]["chunk_size"] == 12
 
 
 def test_no_empty_terminal_chunk():

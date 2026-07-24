@@ -21,7 +21,14 @@ from typing import Protocol
 SAMPLE_RATE = 24000
 CHANNELS = 1
 SAMPLE_WIDTH = 2  # PCM16
-CHUNK_SIZE = 4  # production candidate; chunk=2 is a later optimization
+# faster-qwen's native/default streaming window.  The prior 4-step setting
+# decoded a new waveform boundary roughly every 320 ms; the exact pre-LiveKit
+# capture carried the same intermittent stutters Eric heard on the phone even
+# though generation stayed >2x realtime and RTP had zero gaps.  Use the
+# engine's 12-step (~1 s) window as the next qualification candidate: fewer
+# sliding-decoder joins and more acoustic context per join, while retaining
+# realtime streaming.
+CHUNK_SIZE = 12
 
 
 class SynthesisError(RuntimeError):
