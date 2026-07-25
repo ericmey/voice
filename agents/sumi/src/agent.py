@@ -131,13 +131,28 @@ class _PeakEnvelopeLimiter:
 
     def process(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
         limited = audio.copy()
+        if limited.shape[1] == 0:
+            return limited
+
         release_samples = sample_rate * (_MASTERING_RELEASE_MS / 1000.0)
         release_decay = math.exp(-1.0 / release_samples)
-        for index in range(limited.shape[1]):
-            sample_peak = float(np.max(np.abs(limited[:, index]), initial=0.0))
-            self._peak_envelope = max(sample_peak, self._peak_envelope * release_decay)
-            if self._peak_envelope > _MASTERING_PEAK_LIMIT:
-                limited[:, index] *= _MASTERING_PEAK_LIMIT / self._peak_envelope
+        sample_peaks = np.max(np.abs(limited), axis=0).astype(np.float64)
+
+        # env[n] = max(peak[n], env[n-1] * decay), evaluated as a vectorized
+        # cumulative maximum.  This is mathematically identical to the scalar
+        # recurrence used for the accepted blind sample, but avoids blocking
+        # the LiveKit event loop once per PCM sample.
+        decay_powers = np.power(
+            release_decay,
+            np.arange(1, sample_peaks.size + 1, dtype=np.float64),
+        )
+        envelope = decay_powers * np.maximum(
+            self._peak_envelope,
+            np.maximum.accumulate(sample_peaks / decay_powers),
+        )
+        self._peak_envelope = float(envelope[-1])
+        gains = np.minimum(1.0, _MASTERING_PEAK_LIMIT / np.maximum(envelope, 1e-12))
+        limited *= gains[np.newaxis, :]
 
         return limited
 
@@ -320,7 +335,7 @@ _LLM_MODEL = os.environ.get("SUMI_LLM_MODEL", "sumi")
 # make any remaining resumable false pause short enough not to sound like the
 # call dropped.  Real one-word barge-ins ("stop", "wait") still count.
 _TURN_HANDLING: TurnHandlingOptions = {
-    "endpointing": {"min_delay": 0.8},
+    "endpointing": {"min_delay": 1.2},
     "interruption": {
         "min_duration": 0.5,
         "min_words": 1,

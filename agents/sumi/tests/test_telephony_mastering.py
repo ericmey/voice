@@ -88,3 +88,21 @@ def test_overload_release_is_continuous_across_livekit_frames():
     assert np.max(np.abs(limited)) <= _MASTERING_PEAK_LIMIT + np.finfo(np.float32).eps
     assert release_gain[0] < release_gain[-1] < 1.0
     assert np.max(np.abs(np.diff(release_gain))) < 0.001
+
+
+def test_vectorized_limiter_matches_the_accepted_scalar_recurrence():
+    rng = np.random.default_rng(20260724)
+    frames = [rng.normal(0.0, 0.4, (1, 240)).astype(np.float32) for _ in range(4)]
+    limiter = _PeakEnvelopeLimiter()
+    actual = np.concatenate([limiter.process(frame, _SAMPLE_RATE) for frame in frames], axis=1)
+
+    source = np.concatenate(frames, axis=1)
+    expected = source.copy()
+    envelope = 0.0
+    decay = np.exp(-1.0 / (_SAMPLE_RATE * 0.1))
+    for index in range(expected.shape[1]):
+        envelope = max(abs(float(expected[0, index])), envelope * decay)
+        if envelope > _MASTERING_PEAK_LIMIT:
+            expected[0, index] *= _MASTERING_PEAK_LIMIT / envelope
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-7)

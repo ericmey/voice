@@ -269,14 +269,14 @@ class TestPhoneTurnHandling:
     def test_endpointing_allows_slow_streaming_stt_to_settle(self, agent_module):
         endpointing = agent_module._TURN_HANDLING["endpointing"]
 
-        assert endpointing["min_delay"] >= 0.8
+        assert endpointing["min_delay"] >= 1.2
 
     def test_livekit_resolves_the_runtime_contract(self, agent_module):
         from livekit.agents import AgentSession
 
         session = AgentSession(turn_handling=agent_module._TURN_HANDLING)
 
-        assert session.options.endpointing.get("min_delay") == 0.8
+        assert session.options.endpointing.get("min_delay") == 1.2
         assert session.options.interruption.get("min_words") == 1
         assert session.options.interruption.get("false_interruption_timeout") == 0.75
 
