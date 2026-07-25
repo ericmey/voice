@@ -45,6 +45,15 @@ targeted repair passes an environment-overridable expected-vocabulary prompt
 through the existing OpenAI transcription request. Its provider-handoff test
 was witnessed red with that argument removed, then green after restoration.
 
+The identical controlled retest (`SCL_XfCuHn245oWS`) closed the lane. The
+literal transcript was `Sumi, schedule the Mizuki review for 35% at 1030
+Monday, then repeat it back.` All four acceptance gates passed: utterance-
+initial `Sumi`, `Mizuki`, `35%`, and the meaning of `10:30 Monday`. Speaches
+transcribed the 7.728-second phone utterance in 455 ms over HTTP 200; the
+worker, Speaches, LiveKit, SIP, Redis, and voicebook all remained at restart
+count zero. The before/after was one-variable evidence: `Subi` before the
+domain prompt, `Sumi` after it, with no measured latency regression.
+
 The pinned Speaches release also exposes an older OpenAI realtime websocket.
 That path was rejected for production: it buffers until VAD completes and then
 calls the same batch endpoint, while adding version-specific session-schema and
