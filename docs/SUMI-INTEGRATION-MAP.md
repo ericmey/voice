@@ -152,16 +152,18 @@ Shiori).
 
 ## 6. Cloud deps / fallbacks
 
-Sumi's active path is **fully local** (Parakeet + Momo + voicebook-stream).
-Remove from her path: OpenAI Whisper, Google Gemini, ElevenLabs. Keep as
-**documented rollback** (not active): party's cloud chain; optional
-Gemini-native Sumi. LiteLLM cloud models stay for the OTHER agents.
+Sumi's active path is **fully local** (faster-whisper/Speaches + Momo +
+voicebook-stream). Remove from her path: OpenAI Whisper, Google Gemini,
+ElevenLabs. Keep as **documented rollback** (not active): Parakeet/Riva,
+sherpa/Nemotron, party's cloud chain, and optional Gemini-native Sumi. LiteLLM
+cloud models stay for the OTHER agents.
 
 ## 7. Resident loadout / VRAM (no ghosts)
 
-- **mizuki** (RTX 5060 Ti 16311 MiB): parakeet 3630 + voicebook-stream-f1 6214 =
-  9844 used / **5981 free**; tts stopped (rollback); `voice-agent-sumi` is CPU
-  orchestration. No ghosts.
+- **mizuki** (2 x RTX 5060 Ti 16311 MiB, measured 2026-07-24): GPU 0 hosts
+  voicebook-stream at about 6650 MiB; GPU 1 hosts warmed
+  faster-distil-whisper-large-v3 at about 2198 MiB. `voice-agent-sumi` is CPU
+  orchestration. Parakeet is stopped and is not part of the Monday path.
 - **momo** (2× Intel GPU): Qwen resident, `-np 2`, split. Per-GPU VRAM readback
   a GAP (xpu-smi N/A) — non-blocking; concurrency proven by the two-slot test.
 
@@ -237,11 +239,13 @@ Not all agent-config. Record the exact action + a pre-mutation readback for each
    break (services/ not copied since it joined the workspace, b8e6ce9). See
    `docs/SLICE-6-LIVEKIT-PLANE.md`. →
 7. **Single-client synthetic E2E** (latency marks) —
-   **✅ PASSED (2026-07-23)** — the guardrail threshold. Full local loop proven in
-   one shot: synthetic LiveKit caller → Parakeet STT (word-for-word) → Momo LLM
-   (fully in-character reply, her canon) → voicebook TTS → Sumi's voice. No SIP.
-   Captured `logs/voice/sumi_turn_full.wav`. Harness: `scripts/synthetic-turn.py`.
-   See `docs/SLICE-7-SYNTHETIC-TURN.md`. →
+   **✅ PASSED (2026-07-23; requalified 2026-07-24)** — the guardrail threshold.
+   The current local loop is synthetic LiveKit caller → warmed
+   faster-whisper/Speaches STT → Momo LLM → voicebook TTS → Sumi's voice. The
+   requalification recovered the caller utterance word-for-word and captured
+   38.66 seconds of non-silent 48 kHz Sumi audio with zero worker/STT/TTS
+   service restarts. No SIP. See `docs/SLICE-3-STT.md` and
+   `docs/SLICE-7-SYNTHETIC-TURN.md`. →
 8. **Eric human-mic call** — the demo; proves ONE Sumi call.
 
 Then, gating 2-caller **capacity** only (NOT the demo):
