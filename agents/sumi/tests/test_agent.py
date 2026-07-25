@@ -62,11 +62,19 @@ class TestSttProviderSelection:
         assert captured["batch_kwargs"] == {
             "model": agent_module._WHISPER_STT_MODEL,
             "language": "en",
+            "prompt": agent_module._WHISPER_STT_PROMPT,
             "api_key": "not-needed",
             "base_url": agent_module._WHISPER_STT_BASE_URL,
             "use_realtime": False,
         }
         assert captured["adapter_kwargs"] == {"stt": batch, "vad": vad}
+
+    def test_faster_whisper_prompt_contains_proven_house_terms(self, agent_module):
+        prompt = agent_module._WHISPER_STT_PROMPT
+
+        assert "Sumi Katsuragi" in prompt
+        assert "Mizuki" in prompt
+        assert "Momo" in prompt
 
     def test_unknown_stt_provider_fails_loud(self, agent_module, monkeypatch):
         monkeypatch.setattr(agent_module, "_STT_PROVIDER", "mystery")

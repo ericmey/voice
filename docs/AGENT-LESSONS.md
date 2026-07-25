@@ -420,3 +420,18 @@ carrying a private protocol compatibility fork.
 
 **Why:** The production contract is accurate endpoint-to-final transcription,
 restart safety, and predictable latency—not the transport's name.
+
+## 2026-07-24 — Bias only the vocabulary the real call proves weak
+
+**Trigger:** Faster-whisper preserved `Mizuki`, `35%`, and `1030 Monday` in a
+controlled phone discriminator but heard utterance-initial `Sumi` as `Subi`.
+The model was fast and otherwise semantically correct, so a provider swap would
+have discarded a qualified path to chase one measured proper-noun failure.
+
+**Lesson:** Pass a small, explicit, environment-overridable domain prompt into
+the existing transcription request. Assert the prompt at the provider boundary,
+then red-prove that assertion by removing the handoff before accepting green.
+
+**Why:** Domain bias can repair a short-name language-prior error without
+changing latency, endpointing, or model residency. A test that has never failed
+does not prove that the new value actually crosses the provider boundary.

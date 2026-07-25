@@ -214,6 +214,13 @@ _WHISPER_STT_BASE_URL = os.environ.get("SUMI_WHISPER_STT_BASE_URL", "http://spea
 _WHISPER_STT_MODEL = os.environ.get(
     "SUMI_WHISPER_STT_MODEL", "Systran/faster-distil-whisper-large-v3"
 )
+_WHISPER_STT_PROMPT = os.environ.get(
+    "SUMI_WHISPER_STT_PROMPT",
+    (
+        "Expected names and terms: Sumi Katsuragi, Mizuki, Momo, LiveKit, Musubi, "
+        "Aoi, Yua, Shiori, Tama, Nyla."
+    ),
+)
 
 
 def build_stt(*, vad):
@@ -241,6 +248,7 @@ def build_stt(*, vad):
         batch_stt = openai_plugin.STT(
             model=_WHISPER_STT_MODEL,
             language="en",
+            prompt=_WHISPER_STT_PROMPT,
             api_key="not-needed",
             base_url=_WHISPER_STT_BASE_URL,
             use_realtime=False,

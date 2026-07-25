@@ -37,6 +37,14 @@ macOS speech represents Eric's microphone. Both candidates need more real-call
 domain audio before claiming proper-noun perfection; faster-whisper still won
 the identical-input comparison and the general/numeric gates decisively.
 
+The first controlled phone discriminator then narrowed the remaining error on
+real PSTN audio. Faster-whisper preserved `Mizuki`, `35%`, and `1030 Monday`,
+but transcribed utterance-initial `Sumi` as `Subi`; the 7.568-second utterance
+completed in 444 ms with no service restart or provider error. The accepted
+targeted repair passes an environment-overridable expected-vocabulary prompt
+through the existing OpenAI transcription request. Its provider-handoff test
+was witnessed red with that argument removed, then green after restoration.
+
 The pinned Speaches release also exposes an older OpenAI realtime websocket.
 That path was rejected for production: it buffers until VAD completes and then
 calls the same batch endpoint, while adding version-specific session-schema and
@@ -49,7 +57,8 @@ maintained LiveKit surfaces without a compatibility fork.
   default) → `http://speaches-stt:8000/v1` by service DNS.
 - **Endpointing:** the same local Silero VAD used by `AgentSession`.
 - **Transcription:** LiveKit OpenAI `STT(use_realtime=False)` wrapped in
-  `livekit.agents.stt.StreamAdapter`.
+  `livekit.agents.stt.StreamAdapter`; `SUMI_WHISPER_STT_PROMPT` carries the
+  expected House vocabulary and remains operator-overridable.
 - **Service authority:** `deploy/speaches-stt/docker-compose.speaches-stt.yaml`;
   immutable image digest, GPU 2 pin, persistent Hugging Face cache, warm-on-every-
   start entrypoint, model-aware healthcheck, `restart: unless-stopped`.
