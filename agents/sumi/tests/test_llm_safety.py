@@ -132,6 +132,20 @@ def test_env_override_may_only_lower_the_cap(monkeypatch):
     assert recorded["body"]["max_completion_tokens"] == 32
 
 
+def test_local_qwen_disables_thinking_on_the_wire(monkeypatch):
+    """The local route carries no-think through the real serialized request."""
+    monkeypatch.setenv("SUMI_LLM_DISABLE_THINKING", "true")
+    recorded: dict = {}
+    asyncio.run(_drive_full_turn(recorded))
+    assert recorded["body"]["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_ambiguous_disable_thinking_value_fails_loud(monkeypatch):
+    monkeypatch.setenv("SUMI_LLM_DISABLE_THINKING", "sometimes")
+    with pytest.raises(RuntimeError, match="exactly true or false"):
+        build_llm(client=object())
+
+
 def test_override_above_ceiling_fails_loud(monkeypatch):
     """SUMI_LLM_MAX_TOKENS=65536 must not construct a worker — a raisable cap is no cap."""
     monkeypatch.setenv("SUMI_LLM_MAX_TOKENS", str(CEIL + 1))

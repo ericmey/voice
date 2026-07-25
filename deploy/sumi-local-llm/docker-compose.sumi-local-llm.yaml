@@ -1,0 +1,57 @@
+# Sumi's local conversational model. The immutable llama.cpp image and exact
+# GGUF hash are qualified together; this service has no external model fallback.
+name: sumi-local-llm
+services:
+  sumi-local-llm:
+    container_name: sumi-local-llm
+    image: ghcr.io/ggml-org/llama.cpp@sha256:f92150249e1913ef96e744b5d78f6291f0e4399a7925ffc7b1d0680d82506551
+    restart: unless-stopped
+    command:
+      - --model
+      - /models/Qwen3.5-9B-Q4_K_M.gguf
+      - --alias
+      - sumi-local
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --ctx-size
+      - "16384"
+      - --parallel
+      - "2"
+      - --n-predict
+      - "64"
+      - --n-gpu-layers
+      - "99"
+      - --flash-attn
+      - "on"
+      - --cache-type-k
+      - q8_0
+      - --cache-type-v
+      - q8_0
+      - --jinja
+      - --no-ui
+    volumes:
+      - /srv/models/llm/qwen3.5-9b:/models:ro
+    ports:
+      - 127.0.0.1:8088:8080
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+    networks:
+      - voice_default
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 180s
+
+networks:
+  voice_default:
+    external: true
+    name: voice_default

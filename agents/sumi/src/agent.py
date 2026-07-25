@@ -393,6 +393,25 @@ def _llm_api_key() -> str:
     return key
 
 
+def _llm_extra_body() -> dict[str, object]:
+    """Provider-specific request fields, validated rather than truthy-parsed.
+
+    Qwen3.5 is a hybrid thinking model. The local llama.cpp route must disable
+    thinking explicitly so spoken output arrives in ``content`` without hidden
+    reasoning consuming the phone-turn cap. The existing LiteLLM route already
+    owns that setting server-side, so this remains opt-in at the worker boundary.
+    """
+    raw = os.environ.get("SUMI_LLM_DISABLE_THINKING", "false").strip().lower()
+    if raw == "false":
+        return {}
+    if raw == "true":
+        return {"chat_template_kwargs": {"enable_thinking": False}}
+    raise RuntimeError(
+        "SUMI_LLM_DISABLE_THINKING must be exactly true or false; "
+        f"got {raw!r}. Refusing to start with ambiguous Qwen reasoning behavior."
+    )
+
+
 def build_llm(*, client=None) -> openai_plugin.LLM:
     """The SINGLE source of truth for Sumi's worker LLM — used by the entrypoint AND
     the safety tests, so the tests exercise the REAL cap (max_completion_tokens =
@@ -401,6 +420,7 @@ def build_llm(*, client=None) -> openai_plugin.LLM:
     construction path with zero network and no live key.
     """
     max_tokens = _resolve_max_tokens()
+    extra_body = _llm_extra_body()
     if client is not None:
         return openai_plugin.LLM(
             model=_LLM_MODEL,
@@ -408,6 +428,7 @@ def build_llm(*, client=None) -> openai_plugin.LLM:
             temperature=0.7,
             max_completion_tokens=max_tokens,
             max_retries=0,
+            extra_body=extra_body,
         )
     return openai_plugin.LLM(
         model=_LLM_MODEL,
@@ -416,6 +437,7 @@ def build_llm(*, client=None) -> openai_plugin.LLM:
         temperature=0.7,
         max_completion_tokens=max_tokens,
         max_retries=0,
+        extra_body=extra_body,
         timeout=httpx.Timeout(30.0),
     )
 

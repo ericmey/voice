@@ -10,8 +10,9 @@ This is the production-shaped choice, not the novelty choice:
 
 - Silero owns endpointing; after end-of-speech, LiveKit sends the utterance to
   Speaches' OpenAI-compatible batch transcription endpoint.
-- Speaches and the exact model are local on Mizuki, isolated to physical GPU 2
-  (`device_ids: ["1"]`). No cloud STT or automatic provider fallback exists.
+- Speaches and the exact model are local on Mizuki, co-located with Qwen3-TTS
+  on physical GPU 1 (`device_ids: ["0"]`). Physical GPU 2 is reserved for the
+  local conversational LLM. No cloud STT or automatic provider fallback exists.
 - Service startup loads the model **and runs a real warm transcription** before
   Docker reports healthy. A container restart was inference-ready in 6 seconds;
   the first caller is never the CUDA warmup request.
@@ -29,7 +30,7 @@ wall-clock audio, measured from the last input frame to the final transcript.
 | Numbers: “35% of 40 equals 14” | exact content | lost the numbers; “Forty equals fourteen” |
 | Domain-term synthetic stress | WER 0.3333 | WER 0.5556 |
 | Warm final after audio | 0.240–0.312 s | fast, with useful interim results |
-| Runtime cost | ~2.2 GiB GPU 2 | ~1.16 GiB host RAM, CPU-only |
+| Runtime cost | ~2.2 GiB GPU 1 | ~1.16 GiB host RAM, CPU-only |
 | Monday gate | **PASS** | **FAIL accuracy** |
 
 The domain fixture is intentionally a stress test, not a claim that synthetic
@@ -69,7 +70,7 @@ maintained LiveKit surfaces without a compatibility fork.
   `livekit.agents.stt.StreamAdapter`; `SUMI_WHISPER_STT_PROMPT` carries the
   expected House vocabulary and remains operator-overridable.
 - **Service authority:** `deploy/speaches-stt/docker-compose.speaches-stt.yaml`;
-  immutable image digest, GPU 2 pin, persistent Hugging Face cache, warm-on-every-
+  immutable image digest, GPU 1 pin, persistent Hugging Face cache, warm-on-every-
   start entrypoint, model-aware healthcheck, `restart: unless-stopped`.
 - **Operations:** `make speaches-stt-up|down|logs`.
 - **Rollback/evaluation:** `SUMI_STT_PROVIDER=sherpa` for CPU Nemotron;

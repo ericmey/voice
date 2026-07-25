@@ -10,7 +10,8 @@ SHELL := /usr/bin/env bash
         register-sip tail truncate-logs loki-smoke \
         sync-venvs lint typecheck verify \
         sherpa-stt-build sherpa-stt-up sherpa-stt-down sherpa-stt-logs \
-        speaches-stt-up speaches-stt-down speaches-stt-logs
+        speaches-stt-up speaches-stt-down speaches-stt-logs \
+        sumi-local-llm-up sumi-local-llm-down sumi-local-llm-logs
 
 help: ## List the common verbs
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[1;34m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -115,6 +116,7 @@ verify: lint typecheck test ## Lint + typecheck + tests. Green before human test
 # ---- local STT candidates -------------------------------------------
 SHERPA_STT_COMPOSE = docker compose -f deploy/sherpa-stt/docker-compose.sherpa-stt.yaml
 SPEACHES_STT_COMPOSE = docker compose -f deploy/speaches-stt/docker-compose.speaches-stt.yaml
+SUMI_LOCAL_LLM_COMPOSE = docker compose -f deploy/sumi-local-llm/docker-compose.sumi-local-llm.yaml
 
 sherpa-stt-build: ## Build the pinned sherpa-onnx streaming server image
 	$(SHERPA_STT_COMPOSE) build
@@ -128,7 +130,7 @@ sherpa-stt-down: ## Stop Nemotron streaming STT
 sherpa-stt-logs: ## Follow Nemotron streaming STT logs
 	$(SHERPA_STT_COMPOSE) logs -f sherpa-stt
 
-speaches-stt-up: ## Start accepted faster-whisper STT pinned to GPU 2
+speaches-stt-up: ## Start accepted faster-whisper STT beside Qwen3-TTS on GPU 1
 	$(SPEACHES_STT_COMPOSE) up -d
 
 speaches-stt-down: ## Stop faster-whisper STT
@@ -136,6 +138,15 @@ speaches-stt-down: ## Stop faster-whisper STT
 
 speaches-stt-logs: ## Follow faster-whisper STT logs
 	$(SPEACHES_STT_COMPOSE) logs -f speaches-stt
+
+sumi-local-llm-up: ## Start Qwen3.5-9B on its dedicated GPU
+	$(SUMI_LOCAL_LLM_COMPOSE) up -d
+
+sumi-local-llm-down: ## Stop Sumi's local Qwen3.5-9B server
+	$(SUMI_LOCAL_LLM_COMPOSE) down
+
+sumi-local-llm-logs: ## Follow Sumi's local Qwen3.5-9B server logs
+	$(SUMI_LOCAL_LLM_COMPOSE) logs -f sumi-local-llm
 
 # ---- voicebook-tts (GPU service; separate compose file) ----------------
 .PHONY: tts-build tts-up tts-down tts-logs tts-health tts-verify
