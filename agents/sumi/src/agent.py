@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from pathlib import Path
@@ -104,6 +105,7 @@ _MASTERING_ENABLED = os.environ.get("SUMI_TELEPHONY_MASTERING", "1").strip().low
 }
 _MASTERING_GAIN_DB = 1.558
 _MASTERING_PEAK_LIMIT = 10.0 ** (-3.0 / 20.0)
+_MASTERING_RELEASE_MS = 100.0
 
 
 def _build_telephony_mastering_board() -> Pedalboard:
@@ -121,7 +123,49 @@ def _build_telephony_mastering_board() -> Pedalboard:
     )
 
 
-def _master_audio_frame(frame: rtc.AudioFrame, board: Pedalboard) -> rtc.AudioFrame:
+class _PeakEnvelopeLimiter:
+    """Continuous peak ceiling with instantaneous attack and smooth release."""
+
+    def __init__(self) -> None:
+        self._peak_envelope = 0.0
+
+    def process(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
+        limited = audio.copy()
+        release_samples = sample_rate * (_MASTERING_RELEASE_MS / 1000.0)
+        release_decay = math.exp(-1.0 / release_samples)
+        for index in range(limited.shape[1]):
+            sample_peak = float(np.max(np.abs(limited[:, index]), initial=0.0))
+            self._peak_envelope = max(sample_peak, self._peak_envelope * release_decay)
+            if self._peak_envelope > _MASTERING_PEAK_LIMIT:
+                limited[:, index] *= _MASTERING_PEAK_LIMIT / self._peak_envelope
+
+        return limited
+
+
+class _TelephonyMasteringProcessor:
+    """Stateful phone mastering with click-free overload containment."""
+
+    def __init__(self) -> None:
+        self._board = _build_telephony_mastering_board()
+        self._limiter = _PeakEnvelopeLimiter()
+
+    def process(self, audio: np.ndarray, sample_rate: int) -> tuple[np.ndarray, float]:
+        """Apply the accepted curve and a continuous peak-release envelope."""
+
+        processed = np.asarray(self._board(audio, sample_rate, reset=False), dtype=np.float32)
+        if processed.shape != audio.shape:
+            raise RuntimeError(
+                "telephony mastering changed frame geometry: "
+                f"input={audio.shape} output={processed.shape}"
+            )
+
+        input_peak = float(np.max(np.abs(processed), initial=0.0))
+        return self._limiter.process(processed, sample_rate), input_peak
+
+
+def _master_audio_frame(
+    frame: rtc.AudioFrame, processor: _TelephonyMasteringProcessor
+) -> rtc.AudioFrame:
     """Apply the stateful mastering board without changing frame geometry.
 
     LiveKit frames are interleaved signed-16 PCM.  Pedalboard consumes float
@@ -139,22 +183,15 @@ def _master_audio_frame(frame: rtc.AudioFrame, board: Pedalboard) -> rtc.AudioFr
 
     audio = pcm.reshape(frame.samples_per_channel, frame.num_channels).T.astype(np.float32)
     audio /= 32768.0
-    processed = np.asarray(board(audio, frame.sample_rate, reset=False), dtype=np.float32)
-    if processed.shape != audio.shape:
-        raise RuntimeError(
-            "telephony mastering changed frame geometry: "
-            f"input={audio.shape} output={processed.shape}"
-        )
-
-    peak = float(np.max(np.abs(processed), initial=0.0))
-    if peak > _MASTERING_PEAK_LIMIT:
-        # The accepted Kokoro sample peaks below -3 dBFS.  Speech outside that
-        # envelope is scaled as one frame rather than hard-clipped or wrapped.
-        # This branch is a safety net, not normal loudness normalization.
-        processed *= _MASTERING_PEAK_LIMIT / peak
+    processed, input_peak = processor.process(audio, frame.sample_rate)
+    if input_peak > _MASTERING_PEAK_LIMIT:
+        # Keep the accepted -3 dBFS ceiling without changing gain abruptly at
+        # LiveKit frame boundaries.  The stateful release is load-bearing:
+        # frame-local rescaling produced audible zipper-like micro-dropouts in
+        # longer, expressive Qwen3-TTS delivery.
         logger.warning(
             "sumi telephony mastering overload contained: input_peak=%.6f target_peak=%.6f",
-            peak,
+            input_peak,
             _MASTERING_PEAK_LIMIT,
         )
 
@@ -515,9 +552,9 @@ class SumiAgent(
                 yield frame
             return
 
-        board = _build_telephony_mastering_board()
+        processor = _TelephonyMasteringProcessor()
         async for frame in stream:
-            yield _master_audio_frame(frame, board)
+            yield _master_audio_frame(frame, processor)
 
 
 # --- server + session --------------------------------------------------

@@ -4,8 +4,9 @@ import numpy as np
 from agent import (
     _MASTERING_ENABLED,
     _MASTERING_PEAK_LIMIT,
-    _build_telephony_mastering_board,
     _master_audio_frame,
+    _PeakEnvelopeLimiter,
+    _TelephonyMasteringProcessor,
 )
 from livekit import rtc
 
@@ -30,7 +31,7 @@ def test_mastering_is_enabled_by_default_and_preserves_frame_contract():
     samples = 0.1 * np.sin(2.0 * np.pi * 900.0 * np.arange(2400) / _SAMPLE_RATE)
     source = _frame(samples)
 
-    mastered = _master_audio_frame(source, _build_telephony_mastering_board())
+    mastered = _master_audio_frame(source, _TelephonyMasteringProcessor())
 
     assert _MASTERING_ENABLED is True
     assert mastered.sample_rate == source.sample_rate
@@ -49,7 +50,7 @@ def test_sample_b_curve_reduces_low_mud_and_increases_presence():
         axis=0,
     )
     source = _frame(samples)
-    mastered = _master_audio_frame(source, _build_telephony_mastering_board())
+    mastered = _master_audio_frame(source, _TelephonyMasteringProcessor())
 
     source_fft = np.abs(np.fft.rfft(_float_samples(source)))
     mastered_fft = np.abs(np.fft.rfft(_float_samples(mastered)))
@@ -68,8 +69,22 @@ def test_sample_b_curve_reduces_low_mud_and_increases_presence():
 def test_overload_is_contained_without_int16_wraparound(caplog):
     samples = 0.95 * np.sin(2.0 * np.pi * 2400.0 * np.arange(2400) / _SAMPLE_RATE)
 
-    mastered = _master_audio_frame(_frame(samples), _build_telephony_mastering_board())
+    mastered = _master_audio_frame(_frame(samples), _TelephonyMasteringProcessor())
     output = _float_samples(mastered)
 
     assert np.max(np.abs(output)) <= _MASTERING_PEAK_LIMIT + (1 / 32768)
     assert "overload contained" in caplog.text
+
+
+def test_overload_release_is_continuous_across_livekit_frames():
+    limiter = _PeakEnvelopeLimiter()
+    loud = np.ones((1, 240), dtype=np.float32)
+    quieter = np.full((1, 240), 0.5, dtype=np.float32)
+
+    limited = limiter.process(loud, _SAMPLE_RATE)
+    released = limiter.process(quieter, _SAMPLE_RATE)
+    release_gain = released[0] / quieter[0]
+
+    assert np.max(np.abs(limited)) <= _MASTERING_PEAK_LIMIT + np.finfo(np.float32).eps
+    assert release_gain[0] < release_gain[-1] < 1.0
+    assert np.max(np.abs(np.diff(release_gain))) < 0.001
