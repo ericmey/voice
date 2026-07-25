@@ -1,0 +1,43 @@
+# True-streaming local STT candidate for Sumi.
+#
+# The 560 ms Nemotron model is the accuracy-oriented streaming checkpoint.  It
+# runs faster than real time on Mizuki's CPU, leaving GPU 2 free for the work
+# POC model.  The model directory is fetched separately and checksum-verified;
+# model weights never become an accidental 650 MB Git artifact.
+name: sherpa-stt
+services:
+  sherpa-stt:
+    container_name: sherpa-stt
+    build:
+      context: ../..
+      dockerfile: deploy/sherpa-stt/Dockerfile
+    image: voice-sherpa-stt:1.13.4
+    restart: unless-stopped
+    command:
+      - --port=6006
+      - --encoder=/models/encoder.int8.onnx
+      - --decoder=/models/decoder.int8.onnx
+      - --joiner=/models/joiner.int8.onnx
+      - --tokens=/models/tokens.txt
+      - --provider=cpu
+      - --num-threads=2
+      - --num-work-threads=2
+      - --num-io-threads=1
+      - --max-batch-size=2
+      - --rule2-min-trailing-silence=0.8
+      - --end-tail-padding=0.4
+    volumes:
+      - ${SHERPA_STT_MODEL_DIR:-/home/ericmey/models/stt-eval/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25}:/models:ro
+    networks:
+      - voice_default
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/6006'"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+networks:
+  voice_default:
+    external: true
+    name: voice_default

@@ -1,5 +1,11 @@
 # Sumi voice-integration map — REVISED (second-read corrections folded, 2026-07-23)
 
+> **STT update (2026-07-24):** the Parakeet sections below preserve the original
+> slice design and qualification history. They are superseded for the active
+> phone path by `docs/SLICE-3-STT.md`: local faster-whisper/Speaches on Mizuki
+> GPU 2 is the accepted default; Parakeet and sherpa/Nemotron are explicit
+> rollback/evaluation providers.
+
 Read-only recon + design. **CONFIGURED** = in code/config; **RUNNING** = verified
 live; **GAP** = unresolved/unreadable; **DECISION** = resolved below. No
 implementation performed. F1 TTS container stays healthy + guarded.

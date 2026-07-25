@@ -2,7 +2,8 @@
 
 Registers as "phone-sumi" with LiveKit. Her pipeline is her own, end to end, and
 runs entirely on self-hosted services — no cloud provider on the speaking path:
-  - Slice 3 STT: Parakeet/Riva (streaming) via the official LiveKit NVIDIA plugin;
+  - Slice 3 STT: faster-distil-whisper-large-v3 via local Speaches + LiveKit's
+    maintained batch-to-stream adapter;
   - Slice 4 LLM: Momo (qwen3.6-35b-a3b) via the explicit LiteLLM `sumi` route;
   - Slice 5 TTS: voicebook-stream in Sumi's own accepted master voice (`sumi-v1`).
 The inherited Gemini/ElevenLabs scaffold is gone. (VAD stays silero — local.)
@@ -42,6 +43,7 @@ from livekit.agents import (
 from livekit.agents import (
     llm as livekit_llm,
 )
+from livekit.agents import stt as livekit_stt
 from livekit.agents.beta import EndCallTool
 from livekit.agents.voice.agent_session import SessionConnectOptions
 from livekit.agents.worker import AgentServer
@@ -66,6 +68,7 @@ from sdk.telephony import resolve_caller
 from sdk.trace import trace
 from sdk.tracing import attach_current_span_metadata, wire_otel_shutdown_flush
 from sdk.transcript import wire_transcript_logging
+from sherpa_stt import SherpaSTT
 from tools.core import CoreToolsMixin
 from tools.memory import MusubiToolsMixin
 from voicebook_tts import build_streaming_voicebook_tts
@@ -194,16 +197,57 @@ def build_tts():
     raise ValueError(f"unsupported SUMI_TTS_PROVIDER: {_TTS_PROVIDER!r}")
 
 
-# Slice 3 — LOCAL STT: self-hosted Parakeet/Riva via the official LiveKit NVIDIA plugin
-# (streaming). Reaches parakeet-ctl:50051 by service DNS on voice_default; insecure — the
-# self-hosted Riva speaks plaintext gRPC (no TLS, no api-key). 16 kHz mono is the model's
-# contract (streaming transcription proven word-for-word 2026-07-23; offline mode unsupported).
-# The plugin's default model name (…-silero-vad-sortformer) is NOT what our self-hosted
-# NIM serves — parakeet-ctl advertises exactly one ASR model, `parakeet-1.1b-en-US-asr-
-# streaming` (streaming/online/16kHz/en-US), verified via GetRivaSpeechRecognitionConfig.
-# Using the plugin default would fail "model unavailable"; pin the served name.
+# Slice 3 — LOCAL STT.  The accepted phone default is faster-distil-whisper-
+# large-v3 behind Speaches, with Silero endpointing through LiveKit's maintained
+# StreamAdapter.  The warmed control scored exact on the general and numeric
+# fixtures with ~0.24-0.31s final-after-audio latency.  Parakeet/Riva and
+# sherpa/Nemotron remain explicit rollback/evaluation providers; there is no
+# automatic fallback or cloud transcription path.
+_STT_PROVIDER = os.environ.get("SUMI_STT_PROVIDER", "faster-whisper").strip().lower()
 _STT_SERVER = os.environ.get("SUMI_STT_SERVER", "parakeet-ctl:50051")
 _STT_MODEL = os.environ.get("SUMI_STT_MODEL", "parakeet-1.1b-en-US-asr-streaming")
+_SHERPA_STT_URL = os.environ.get("SUMI_SHERPA_STT_URL", "ws://sherpa-stt:6006")
+_SHERPA_STT_MODEL = os.environ.get(
+    "SUMI_SHERPA_STT_MODEL", "nemotron-speech-streaming-en-0.6b-560ms-int8"
+)
+_WHISPER_STT_BASE_URL = os.environ.get("SUMI_WHISPER_STT_BASE_URL", "http://speaches-stt:8000/v1")
+_WHISPER_STT_MODEL = os.environ.get(
+    "SUMI_WHISPER_STT_MODEL", "Systran/faster-distil-whisper-large-v3"
+)
+
+
+def build_stt(*, vad):
+    """Build the explicitly selected local STT provider; never silently fall back."""
+
+    if _STT_PROVIDER == "parakeet":
+        return nvidia_plugin.STT(
+            server=_STT_SERVER,
+            use_ssl=False,
+            api_key="",
+            model=_STT_MODEL,
+            language_code="en-US",
+            sample_rate=16000,
+            punctuate=True,
+        )
+    if _STT_PROVIDER == "sherpa":
+        return SherpaSTT(url=_SHERPA_STT_URL, model=_SHERPA_STT_MODEL)
+    if _STT_PROVIDER == "faster-whisper":
+        # Speaches v0.9's "realtime" websocket still buffers an utterance and
+        # invokes its batch transcription endpoint after server VAD.  Use the
+        # maintained LiveKit StreamAdapter instead: our already-qualified
+        # Silero VAD owns endpointing, and the same warmed faster-whisper batch
+        # endpoint returns the final transcript without a version-specific
+        # websocket compatibility fork.
+        batch_stt = openai_plugin.STT(
+            model=_WHISPER_STT_MODEL,
+            language="en",
+            api_key="not-needed",
+            base_url=_WHISPER_STT_BASE_URL,
+            use_realtime=False,
+        )
+        return livekit_stt.StreamAdapter(stt=batch_stt, vad=vad)
+    raise ValueError(f"unsupported SUMI_STT_PROVIDER: {_STT_PROVIDER!r}")
+
 
 # Slice 4 — LOCAL LLM: Sumi's mind is Momo (qwen3.6-35b-a3b) via the explicit
 # LiteLLM `sumi` route, reached OpenAI-compatibly at the proven voice_default
@@ -492,23 +536,15 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     trace(f"caller source={caller.source} from={caller_from!r} call_id={call_sid!r}")
 
-    # Slice 3 — LOCAL STT: Parakeet/Riva streaming via the official NVIDIA plugin (was
-    # Whisper). LLM + TTS below are still the inherited SCAFFOLD (Slices 4-5 swap them to
-    # Momo + voicebook-stream); never run on the cloud providers in this slice.
-    stt = nvidia_plugin.STT(
-        server=_STT_SERVER,
-        use_ssl=False,
-        api_key="",
-        model=_STT_MODEL,
-        language_code="en-US",
-        sample_rate=16000,
-        punctuate=True,
-    )
+    # Slice 3 — LOCAL STT: explicit provider factory. The accepted default is
+    # local faster-whisper; Parakeet and sherpa remain opt-in rollback/eval
+    # providers. No cloud STT or silent fallback is reachable from this path.
     vad = silero_plugin.VAD.load(
         min_speech_duration=0.1,
         min_silence_duration=0.65,
         prefix_padding_duration=0.4,
     )
+    stt = build_stt(vad=vad)
     # Slice 4 — LOCAL LLM: Momo via the explicit LiteLLM `sumi` route, built by the
     # single build_llm() factory — the SAME construction path the safety tests
     # exercise. Its cap is _resolve_max_tokens() (hard 64 ceiling; env may only
@@ -576,7 +612,7 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     annotate_call_audio_recording(audio_recording)
     trace(
-        "sumi session: silero-vad -> parakeet-riva(local STT) -> "
+        f"sumi session: silero-vad -> {_STT_PROVIDER}(local STT) -> "
         f"momo/sumi-route(local LLM) -> {_TTS_PROVIDER}(TTS)"
     )
     trace("sumi: entrypoint complete, greeting scheduled via on_enter")

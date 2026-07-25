@@ -8,7 +8,9 @@ SHELL := /usr/bin/env bash
 .PHONY: help bootstrap up down logs health test \
         build-agent deploy cycle \
         register-sip tail truncate-logs loki-smoke \
-        sync-venvs lint typecheck verify
+        sync-venvs lint typecheck verify \
+        sherpa-stt-build sherpa-stt-up sherpa-stt-down sherpa-stt-logs \
+        speaches-stt-up speaches-stt-down speaches-stt-logs
 
 help: ## List the common verbs
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[1;34m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -92,7 +94,7 @@ loki-smoke: ## Query Grafana/Loki for post-smoke-test failures (requires GRAFANA
 # ---- tests ---------------------------------------------------------
 
 test: ## Run pytest across all workspace members
-	@for d in sdk tools agents/nyla agents/aoi agents/yua agents/party agents/sumi \
+	@for d in sdk tools agents/nyla agents/aoi agents/yua agents/party agents/sumi scripts \
 	  services/voicebook-tts services/voicebook-stream; do \
 	  echo ">> $$d"; \
 	  (cd $$d && PYTHONPATH="$$(pwd)/src$${PYTHONPATH:+:$$PYTHONPATH}" uv run pytest -q) \
@@ -109,6 +111,31 @@ typecheck: ## Run pyright across sdk/tools/agents.
 	uv run pyright
 
 verify: lint typecheck test ## Lint + typecheck + tests. Green before human testing.
+
+# ---- local STT candidates -------------------------------------------
+SHERPA_STT_COMPOSE = docker compose -f deploy/sherpa-stt/docker-compose.sherpa-stt.yaml
+SPEACHES_STT_COMPOSE = docker compose -f deploy/speaches-stt/docker-compose.speaches-stt.yaml
+
+sherpa-stt-build: ## Build the pinned sherpa-onnx streaming server image
+	$(SHERPA_STT_COMPOSE) build
+
+sherpa-stt-up: ## Start Nemotron streaming STT on the shared voice network
+	$(SHERPA_STT_COMPOSE) up -d
+
+sherpa-stt-down: ## Stop Nemotron streaming STT
+	$(SHERPA_STT_COMPOSE) down
+
+sherpa-stt-logs: ## Follow Nemotron streaming STT logs
+	$(SHERPA_STT_COMPOSE) logs -f sherpa-stt
+
+speaches-stt-up: ## Start accepted faster-whisper STT pinned to GPU 2
+	$(SPEACHES_STT_COMPOSE) up -d
+
+speaches-stt-down: ## Stop faster-whisper STT
+	$(SPEACHES_STT_COMPOSE) down
+
+speaches-stt-logs: ## Follow faster-whisper STT logs
+	$(SPEACHES_STT_COMPOSE) logs -f speaches-stt
 
 # ---- voicebook-tts (GPU service; separate compose file) ----------------
 .PHONY: tts-build tts-up tts-down tts-logs tts-health tts-verify

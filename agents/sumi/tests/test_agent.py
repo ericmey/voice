@@ -40,6 +40,40 @@ class TestModuleExports:
         assert isinstance(agent_module.server, AgentServer)
 
 
+class TestSttProviderSelection:
+    def test_faster_whisper_uses_maintained_stream_adapter(self, agent_module, monkeypatch):
+        vad = object()
+        batch = object()
+        captured: dict[str, object] = {}
+
+        def fake_openai_stt(**kwargs):
+            captured["batch_kwargs"] = kwargs
+            return batch
+
+        def fake_stream_adapter(**kwargs):
+            captured["adapter_kwargs"] = kwargs
+            return "stream-adapter"
+
+        monkeypatch.setattr(agent_module, "_STT_PROVIDER", "faster-whisper")
+        monkeypatch.setattr(agent_module.openai_plugin, "STT", fake_openai_stt)
+        monkeypatch.setattr(agent_module.livekit_stt, "StreamAdapter", fake_stream_adapter)
+
+        assert agent_module.build_stt(vad=vad) == "stream-adapter"
+        assert captured["batch_kwargs"] == {
+            "model": agent_module._WHISPER_STT_MODEL,
+            "language": "en",
+            "api_key": "not-needed",
+            "base_url": agent_module._WHISPER_STT_BASE_URL,
+            "use_realtime": False,
+        }
+        assert captured["adapter_kwargs"] == {"stt": batch, "vad": vad}
+
+    def test_unknown_stt_provider_fails_loud(self, agent_module, monkeypatch):
+        monkeypatch.setattr(agent_module, "_STT_PROVIDER", "mystery")
+        with pytest.raises(ValueError, match="unsupported SUMI_STT_PROVIDER"):
+            agent_module.build_stt(vad=object())
+
+
 class TestIdentity:
     """Sumi's identity is exactly her own — and derived, not hand-typed."""
 

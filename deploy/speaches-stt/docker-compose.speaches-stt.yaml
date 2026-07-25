@@ -1,0 +1,48 @@
+# Accepted faster-whisper lane.  The platform-specific immutable digest avoids a
+# floating image while preserving Speaches' OpenAI transcription surface.
+name: speaches-stt
+services:
+  speaches-stt:
+    container_name: speaches-stt
+    image: ghcr.io/speaches-ai/speaches@sha256:bd2ca473ada8cf2b4e0fd48cc4b5ba5622e42c55b6a2ddee4d03c5dfb7be9973
+    restart: unless-stopped
+    environment:
+      ENABLE_UI: "false"
+      LOG_LEVEL: info
+      WHISPER__INFERENCE_DEVICE: cuda
+      WHISPER__DEVICE_INDEX: "0"
+      WHISPER__COMPUTE_TYPE: float16
+      # v0.9.0-rc.3 calls this nested field `whisper.ttl`; the newer
+      # documentation's STT_MODEL_TTL/PRELOAD_MODELS names are not accepted by
+      # this pinned image. The service-owned startup wrapper loads and exercises
+      # the model on every container start; this keeps it resident afterward.
+      WHISPER__TTL: "-1"
+    entrypoint: ["/bin/bash", "/usr/local/bin/start-warmed"]
+    command: []
+    volumes:
+      - /home/ericmey/models/speaches-cache:/home/ubuntu/.cache/huggingface/hub
+      - ./start-warmed.sh:/usr/local/bin/start-warmed:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+    networks:
+      - voice_default
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:8000/health >/dev/null && curl -fsS http://127.0.0.1:8000/api/ps | grep -Fq 'Systran/faster-distil-whisper-large-v3'",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 300s
+
+networks:
+  voice_default:
+    external: true
+    name: voice_default

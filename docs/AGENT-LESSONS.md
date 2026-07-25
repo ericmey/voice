@@ -389,3 +389,34 @@ unchanged frame geometry, and contain overload without integer wraparound.
 **Why:** An offline effect can sound correct while a stateless real-time port
 clicks at every frame boundary. The streaming lifecycle is part of the audio
 contract, not an implementation detail.
+
+## 2026-07-24 — Model-loaded is not caller-ready
+
+**Trigger:** The faster-whisper service loaded its weights in about two seconds
+and reported the model resident, but the first real transcription could still
+pay a separate CUDA/kernel initialization penalty. A one-shot warm sidecar also
+would not rerun when Docker restarted only the main service.
+
+**Lesson:** Put warmup in the service's own restart lifecycle and exercise the
+actual inference endpoint before declaring health. Health must prove the exact
+model is resident *after* that inference, not merely that HTTP answers or a
+model manager lists weights.
+
+**Why:** Readiness that stops at process or weight load quietly transfers cold-
+start work to the first caller. For an interactive demo, that is a functional
+failure even though every infrastructure check is green.
+
+## 2026-07-24 — Prefer maintained semantics over a “realtime” label
+
+**Trigger:** Speaches v0.9's realtime websocket accepted streaming audio but
+buffered the utterance until VAD completion and then called its batch endpoint.
+It also required an older session schema and exposed two release-specific
+failure seams around loopback routing and response generation.
+
+**Lesson:** Inspect what a provider surface actually does. When “realtime” is a
+websocket wrapper around utterance-final batch recognition, use LiveKit's
+maintained VAD plus `StreamAdapter` around the proven batch endpoint instead of
+carrying a private protocol compatibility fork.
+
+**Why:** The production contract is accurate endpoint-to-final transcription,
+restart safety, and predictable latency—not the transport's name.

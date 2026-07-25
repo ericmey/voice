@@ -1,7 +1,63 @@
-# Slice 3 — Sumi STT: Parakeet/Riva streaming via the official plugin — LANDED ✅
+# Slice 3 — Sumi STT: faster-whisper accepted for the phone path — LANDED ✅
 
-Capability PASS (Yua second-read, 2026-07-23): service-DNS reachability, official-plugin
-streaming recognition, and a managed Parakeet are all proven. New behavior: Sumi's ears work.
+The original Parakeet/Riva capability passed on 2026-07-23.  The Monday-demo
+qualification on 2026-07-24 deliberately reopened the provider choice after
+Parakeet proved operationally expensive and brittle across host recovery.
+Sumi's accepted default is now local `faster-distil-whisper-large-v3` through
+Speaches and LiveKit's maintained `STT` + `StreamAdapter` path.
+
+This is the production-shaped choice, not the novelty choice:
+
+- Silero owns endpointing; after end-of-speech, LiveKit sends the utterance to
+  Speaches' OpenAI-compatible batch transcription endpoint.
+- Speaches and the exact model are local on Mizuki, isolated to physical GPU 2
+  (`device_ids: ["1"]`). No cloud STT or automatic provider fallback exists.
+- Service startup loads the model **and runs a real warm transcription** before
+  Docker reports healthy. A container restart was inference-ready in 6 seconds;
+  the first caller is never the CUDA warmup request.
+- The model stays resident (`WHISPER__TTL=-1`); its measured idle allocation is
+  about 2.2 GiB on the 16 GiB card.
+
+## Qualification decision
+
+All candidates received the same 16 kHz mono inputs. Latency below is paced
+wall-clock audio, measured from the last input frame to the final transcript.
+
+| Gate | faster-whisper (accepted) | sherpa/Nemotron 0.6B 560 ms |
+|---|---|---|
+| General phrase | exact | dropped “what is” |
+| Numbers: “35% of 40 equals 14” | exact content | lost the numbers; “Forty equals fourteen” |
+| Domain-term synthetic stress | WER 0.3333 | WER 0.5556 |
+| Warm final after audio | 0.240–0.312 s | fast, with useful interim results |
+| Runtime cost | ~2.2 GiB GPU 2 | ~1.16 GiB host RAM, CPU-only |
+| Monday gate | **PASS** | **FAIL accuracy** |
+
+The domain fixture is intentionally a stress test, not a claim that synthetic
+macOS speech represents Eric's microphone. Both candidates need more real-call
+domain audio before claiming proper-noun perfection; faster-whisper still won
+the identical-input comparison and the general/numeric gates decisively.
+
+The pinned Speaches release also exposes an older OpenAI realtime websocket.
+That path was rejected for production: it buffers until VAD completes and then
+calls the same batch endpoint, while adding version-specific session-schema and
+loopback defects. `StreamAdapter` gives the same utterance-final behavior through
+maintained LiveKit surfaces without a compatibility fork.
+
+## Accepted topology
+
+- **Sumi worker:** `SUMI_STT_PROVIDER=faster-whisper` (also the fail-loud code
+  default) → `http://speaches-stt:8000/v1` by service DNS.
+- **Endpointing:** the same local Silero VAD used by `AgentSession`.
+- **Transcription:** LiveKit OpenAI `STT(use_realtime=False)` wrapped in
+  `livekit.agents.stt.StreamAdapter`.
+- **Service authority:** `deploy/speaches-stt/docker-compose.speaches-stt.yaml`;
+  immutable image digest, GPU 2 pin, persistent Hugging Face cache, warm-on-every-
+  start entrypoint, model-aware healthcheck, `restart: unless-stopped`.
+- **Operations:** `make speaches-stt-up|down|logs`.
+- **Rollback/evaluation:** `SUMI_STT_PROVIDER=sherpa` for CPU Nemotron;
+  `SUMI_STT_PROVIDER=parakeet` for Riva. Unknown providers abort startup.
+
+## Historical Parakeet/Riva qualification (rollback only)
 
 ## Topology
 
@@ -36,12 +92,18 @@ did not survive reboot and was itself a launch blocker. Its authoritative defini
 ~45-min one-time engine build (`riva-deploy`: `.rmir` → Triton repo + FP8/TensorRT) → ready/live
 200 + voice_default REACH. `parakeet-ctl-prev` remains **stopped as the rollback tier**.
 
-### Intentional live/canonical drift — `start_period`
+**Current disposition (2026-07-24):** the post-reboot GPU-pinned recreate was
+stopped and removed while still rebuilding. Its incomplete writable layer had
+grown to 19.3 GiB; removing it reclaimed about 18 GiB. The prior stopped
+`parakeet-ctl-prev` rollback container was not touched. Parakeet is not running
+and is no longer on Sumi's Monday path.
 
-The migrated **live** container carries `start_period=180s` (it was NOT recreated just to change a
+### Historical live/canonical drift — `start_period`
+
+The migrated container carried `start_period=180s` (it was NOT recreated just to change a
 healthcheck-timing field — that would repeat the 45-min build). The **canonical committed**
 definition is `start_period=900s`, conservatively above the observed cold build. This drift is
-deliberate: 900s applies at the next genuine recreate. (A 180s window marking a legitimately
+closed now that the managed recreate is absent: 900s applies at the next genuine recreate. (A 180s window marking a legitimately
 *building* container "unhealthy" is the same misclassify-an-expected-state defect fixed in
 monitoring the same day.)
 
