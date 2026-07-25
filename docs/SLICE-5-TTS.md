@@ -117,11 +117,11 @@ NumPy, Torch, CUDA, and hash seeds. The repeatability gate failed: identical
 requests in one resident process still produced different byte lengths and
 hashes. Therefore no cross-file audio comparison is admissible as causal proof.
 
-Methodology rule: freshly generated TTS samples are not controlled A/B inputs
-merely because their text, seed, process, and settings match. First prove byte
-repeatability. If that gate fails, capture one source generation and apply both
-downstream treatments to those exact bytes. Otherwise generation variance is an
-uncontrolled variable and the comparison is a null.
+Methodology rule: a freshly regenerated TTS sample is not an A/B control merely
+because text, seed, process, and settings match. First prove byte repeatability.
+If that gate fails, capture one source generation and apply both downstream
+treatments to those exact bytes. Otherwise generation variance is an uncontrolled
+variable and the comparison is a null.
 
 Morning gate: deploy only `accumulated-cu128` on the same GPU/service endpoint,
 preserve the accepted container/image as rollback, and make one natural
