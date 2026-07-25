@@ -2,7 +2,9 @@
 
 New behavior: Sumi speaks in **her own accepted master voice**, locally. The last
 inherited cloud scaffold (ElevenLabs on Nyla's id) is gone — the pipeline is now
-fully local end to end: Parakeet STT → Momo LLM → voicebook-stream TTS.
+fully local end to end. The original landing topology was Parakeet STT → Momo
+LLM → voicebook-stream TTS; the accepted 2026-07-25 phone topology is Faster
+Whisper STT → local Qwen3.5-9B → voicebook-stream TTS.
 
 ## Topology
 
@@ -68,10 +70,62 @@ replaces the elevenlabs scaffold; the `livekit.plugins.elevenlabs` import and th
 `_ELEVENLABS_*` ids are removed. The module docstring and `on_enter` note now
 describe a fully-local pipeline and a deterministic spoken opener.
 
-## Not yet up (expected, not broken)
+## Landing-time status (historical, 2026-07-23)
 
-The LiveKit plane is still OFF (nothing on 7880/7881/7882/5060). All three pipeline
-components are now wired and individually proven. Remaining path: **isolated Sumi
+At the time this slice first landed, the LiveKit plane was still off. All three pipeline
+components were wired and individually proven. The remaining path then was: **isolated Sumi
 worker → LiveKit/SIP bring-up (Slice 6) → single-client synthetic E2E (Slice 7) →
-Eric's call (Slice 8)**. Slice 7 is where the three proven components run together
-as one turn, in the worker, on the network where each endpoint is proven.
+Eric's call (Slice 8)**. Those later slices are now live; this paragraph is retained
+only as the landing record.
+
+## 2026-07-25 phone-artifact qualification
+
+The current phone path is operational and its latency dropouts were removed by
+the local Qwen3.5-9B route plus the longer endpointing settle window. A separate,
+intermittent within-utterance warble remains audible to Eric. Exact outbound RTP
+captures were consecutive and correctly paced (zero sequence/timestamp gaps), so
+transport is not the current lead.
+
+The deployed Voicebook image remains unchanged and tagged for rollback:
+
+- accepted image: `sha256:3b28aa8102d69b3214687a7e732dcdeca35b8a11ab0d34187e1dad3f9b4472f7`
+- host tag: `voicebook-stream:accepted-20260725`
+- runtime: `torch==2.11.0+cu128`, `torchaudio==2.11.0+cu128`, CUDA 12.8
+
+Two isolated images were built without replacing the accepted service:
+
+- `voicebook-stream:torch211-cu130`
+  (`sha256:8d59b93d1948d6839fe7bd20ec68b799fc48b765ab37bb1d14cc2c6a330bfcbc`):
+  matched torch/torchaudio 2.11 CUDA 13.0, native `sm_120`, real BF16 CUDA
+  matrix operation passed, health/warmup passed, and a 141-character response
+  produced 9.04 seconds of PCM in 3.78 seconds.
+- `voicebook-stream:accumulated-cu128`
+  (`sha256:d621b1384a0a31f06c24b1d3f93909d41ec30379fd6fee65a5b4f92b5c9ced82`):
+  exact accepted image plus one change in
+  `generate_voice_clone_streaming()`—disable the transition from accumulated
+  decoding to the 25-frame sliding decoder. It remained faster than real time:
+  8.88 seconds of PCM in 6.38 seconds and 16.0 seconds in 11.85 seconds.
+
+Why the decoder candidate exists: after roughly three seconds at the deployed
+12-step chunk size, Faster-Qwen switches from exact accumulated decoding to a
+sliding window. It trims context using a samples-per-frame ratio calibrated once
+on early audio. That is a plausible source of recurring stitch errors in long
+utterances, but it is not yet an accepted cause.
+
+An offline waveform A/B was attempted with greedy generation and fixed Python,
+NumPy, Torch, CUDA, and hash seeds. The repeatability gate failed: identical
+requests in one resident process still produced different byte lengths and
+hashes. Therefore no cross-file audio comparison is admissible as causal proof.
+
+Morning gate: deploy only `accumulated-cu128` on the same GPU/service endpoint,
+preserve the accepted container/image as rollback, and make one natural
+45–60-second phone call with a long expressive response. Eric's ears decide the
+warble gate. If unchanged, roll back and test the CUDA 13 image separately. Do
+not combine both candidates in one call.
+
+SoX is installed in the CUDA 13 bench image for completeness, but it is not an
+artifact candidate for the resident 12 Hz model. The reachable `sox_norm` code
+belongs to tokenizer V1/25 Hz; the loaded 12 Hz tokenizer V2 encoder contains no
+SoX path, and the voice prompt is computed once at warmup and cached. The sample
+rate inference warning also falls back to the correct 24000 Hz and the service
+rejects any backend chunk whose actual rate differs.
