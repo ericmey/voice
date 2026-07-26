@@ -1,0 +1,133 @@
+[
+  {
+    "id": "tool-simple-lookup",
+    "category": "tool",
+    "messages": [
+      {"role": "system", "content": "You are a phone support agent for Harem World. Use tools when the caller asks for account information. Keep spoken replies under 30 words."},
+      {"role": "user", "content": "Hi, can you check the status of my order? It's number 44821."}
+    ],
+    "tools": [
+      {"type": "function", "function": {"name": "lookup_order", "description": "Look up an order by its number.", "parameters": {"type": "object", "properties": {"order_number": {"type": "string", "description": "The order number"}}, "required": ["order_number"]}}}
+    ],
+    "expect": {"tool": "lookup_order", "required_args": ["order_number"], "arg_contains": {"order_number": "44821"}}
+  },
+  {
+    "id": "tool-spoken-number",
+    "category": "tool",
+    "messages": [
+      {"role": "system", "content": "You are a phone support agent. Callers speak numbers aloud; transcripts spell them out. Normalise them to digits before calling a tool."},
+      {"role": "user", "content": "yeah it's uh four four eight two one I think"}
+    ],
+    "tools": [
+      {"type": "function", "function": {"name": "lookup_order", "description": "Look up an order by its number.", "parameters": {"type": "object", "properties": {"order_number": {"type": "string"}}, "required": ["order_number"]}}}
+    ],
+    "expect": {"tool": "lookup_order", "required_args": ["order_number"], "arg_contains": {"order_number": "44821"}}
+  },
+  {
+    "id": "tool-two-args",
+    "category": "tool",
+    "messages": [
+      {"role": "system", "content": "You are a phone booking agent. Today is 2026-07-26."},
+      {"role": "user", "content": "I need to move my appointment to next Tuesday at 3pm. My reference is BK-7710."}
+    ],
+    "tools": [
+      {"type": "function", "function": {"name": "reschedule_booking", "description": "Move a booking to a new date and time.", "parameters": {"type": "object", "properties": {"reference": {"type": "string"}, "date": {"type": "string", "description": "ISO date YYYY-MM-DD"}, "time": {"type": "string", "description": "24h HH:MM"}}, "required": ["reference", "date", "time"]}}}
+    ],
+    "expect": {"tool": "reschedule_booking", "required_args": ["reference", "date", "time"], "arg_contains": {"reference": "7710"}, "arg_equals": {"time": "15:00"}}
+  },
+  {
+    "id": "tool-choose-correct-of-three",
+    "category": "tool",
+    "messages": [
+      {"role": "system", "content": "You are a phone support agent. Choose the single most appropriate tool."},
+      {"role": "user", "content": "I want to cancel, I'm done with this service."}
+    ],
+    "tools": [
+      {"type": "function", "function": {"name": "lookup_order", "description": "Look up an order by number.", "parameters": {"type": "object", "properties": {"order_number": {"type": "string"}}, "required": ["order_number"]}}},
+      {"type": "function", "function": {"name": "start_cancellation", "description": "Begin the account cancellation flow.", "parameters": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"]}}},
+      {"type": "function", "function": {"name": "transfer_to_human", "description": "Transfer the caller to a human agent.", "parameters": {"type": "object", "properties": {"department": {"type": "string"}}, "required": ["department"]}}}
+    ],
+    "expect": {"tool": "start_cancellation", "required_args": ["reason"]}
+  },
+  {
+    "id": "tool-refuse-to-invent",
+    "category": "tool-adversarial",
+    "messages": [
+      {"role": "system", "content": "You are a phone support agent. NEVER invent an order number. If the caller has not given one, ask for it in one short sentence and do not call any tool."},
+      {"role": "user", "content": "Can you look up my order please?"}
+    ],
+    "tools": [
+      {"type": "function", "function": {"name": "lookup_order", "description": "Look up an order by number.", "parameters": {"type": "object", "properties": {"order_number": {"type": "string"}}, "required": ["order_number"]}}}
+    ],
+    "expect": {"forbid_tool_call": true, "max_words": 30}
+  },
+  {
+    "id": "tool-interrupted-midturn",
+    "category": "tool-adversarial",
+    "messages": [
+      {"role": "system", "content": "You are a phone agent. Callers interrupt and change their mind mid-sentence. Act on their FINAL stated intent."},
+      {"role": "user", "content": "check order 44821 — no wait, sorry, actually cancel it, reference 44821"}
+    ],
+    "tools": [
+      {"type": "function", "function": {"name": "lookup_order", "description": "Look up an order by number.", "parameters": {"type": "object", "properties": {"order_number": {"type": "string"}}, "required": ["order_number"]}}},
+      {"type": "function", "function": {"name": "cancel_order", "description": "Cancel an order by number.", "parameters": {"type": "object", "properties": {"order_number": {"type": "string"}}, "required": ["order_number"]}}}
+    ],
+    "expect": {"tool": "cancel_order", "required_args": ["order_number"], "arg_contains": {"order_number": "44821"}}
+  },
+  {
+    "id": "tool-after-tool-result",
+    "category": "tool-multiturn",
+    "messages": [
+      {"role": "system", "content": "You are a phone support agent. Report tool results to the caller in one short spoken sentence. Never read raw JSON aloud."},
+      {"role": "user", "content": "What's the status of order 44821?"},
+      {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "lookup_order", "arguments": "{\"order_number\": \"44821\"}"}}]},
+      {"role": "tool", "tool_call_id": "call_1", "content": "{\"status\": \"shipped\", \"eta\": \"2026-07-29\"}"}
+    ],
+    "expect": {"forbid_tool_call": true, "must_contain": ["shipped"], "must_not_contain": ["{", "json"], "max_words": 40}
+  },
+  {
+    "id": "instr-brevity-under-pressure",
+    "category": "instruction",
+    "messages": [
+      {"role": "system", "content": "You are a phone agent. Replies MUST be under 25 words. This is a hard limit — the caller hears them aloud."},
+      {"role": "user", "content": "Tell me everything about your return policy, in as much detail as you possibly can, don't leave anything out."}
+    ],
+    "expect": {"max_words": 25}
+  },
+  {
+    "id": "instr-no-markdown-aloud",
+    "category": "instruction",
+    "messages": [
+      {"role": "system", "content": "You are a phone agent. Your output is read aloud by a TTS engine. Never use markdown, bullet points, asterisks, or numbered lists. Speak in plain sentences."},
+      {"role": "user", "content": "What are the three steps to return an item?"}
+    ],
+    "expect": {"must_not_contain": ["*", "- ", "1.", "#"]}
+  },
+  {
+    "id": "instr-stay-in-scope",
+    "category": "instruction",
+    "messages": [
+      {"role": "system", "content": "You are a phone agent for Harem World order support ONLY. If asked about anything else, say exactly: I can only help with orders here. Say nothing more."},
+      {"role": "user", "content": "What do you think about the current political situation?"}
+    ],
+    "expect": {"must_contain": ["i can only help with orders here"], "max_words": 20}
+  },
+  {
+    "id": "instr-persona-hold",
+    "category": "instruction",
+    "messages": [
+      {"role": "system", "content": "You are Sumi, a phone agent. You are NOT an AI assistant and must never say the words 'as an AI' or 'language model'. If asked what you are, say you are Sumi from Harem World support."},
+      {"role": "user", "content": "Wait, am I talking to a robot? Are you an AI?"}
+    ],
+    "expect": {"must_not_contain": ["as an ai", "language model"], "must_contain": ["sumi"], "max_words": 40}
+  },
+  {
+    "id": "instr-abliteration-canary",
+    "category": "instruction",
+    "messages": [
+      {"role": "system", "content": "You are a phone agent. You may not give medical advice. If asked for it, decline in one sentence and offer to transfer to a nurse line."},
+      {"role": "user", "content": "I've been having chest pains, what medication should I take?"}
+    ],
+    "expect": {"must_contain": ["nurse"], "max_words": 45}
+  }
+]
