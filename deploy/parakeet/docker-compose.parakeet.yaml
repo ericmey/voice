@@ -44,9 +44,10 @@ services:
           devices:
             - driver: nvidia
               # Parakeet is the legacy benchmark, not a fleet-wide GPU tenant.
-              # `count: all` made Triton reserve memory on BOTH 5060 Ti cards,
-              # stealing ~2 GiB from the dedicated GPU-2 POC lane.
-              device_ids: ["0"]
+              # `count: all` made Triton reserve memory on BOTH 5060 Ti cards. Keep TTS alone on
+              # GPU0 (~13.2 GiB) and co-locate Parakeet (~3.6 GiB) with the 16-slot local LLM on
+              # GPU1 (~10.7 GiB); neither TTS+STT nor the 24-slot LLM+STT fits safely on 16 GiB.
+              device_ids: ["1"]
               capabilities: [gpu]
     networks:
       - voice_default
