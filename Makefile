@@ -122,8 +122,8 @@ SUMI_LOCAL_LLM_COMPOSE = docker compose -f deploy/sumi-local-llm/docker-compose.
 parakeet-stt-up: ## Start production Parakeet/Riva STT on the shared voice network
 	$(PARAKEET_STT_COMPOSE) up -d
 
-parakeet-stt-down: ## Stop Parakeet/Riva STT without deleting its model cache
-	$(PARAKEET_STT_COMPOSE) down
+parakeet-stt-down: ## Stop Parakeet/Riva STT while preserving its built engine layer
+	$(PARAKEET_STT_COMPOSE) stop parakeet-ctl
 
 parakeet-stt-logs: ## Follow Parakeet/Riva STT logs
 	$(PARAKEET_STT_COMPOSE) logs -f parakeet-ctl

@@ -42,13 +42,16 @@ Pre-state: the media plane was **entirely down** (nothing on 7880/7881/7882/5060
   # tokens) it never needs. The container's other runtime values come from
   # secrets/livekit-agents.env; SUMI is passed by name into the container.
   op run --env-file=config/sumi-llm-key.env.tpl -- \
-    docker run -d --name voice-agent-sumi --network voice_default \
+    docker run -d --name voice-agent-sumi --restart unless-stopped --network voice_default \
     --env-file secrets/livekit-agents.env \
     -e AGENT=sumi -e LIVEKIT_URL=ws://livekit-server:7880 \
     -e LIVEKIT_VOICE_LOGS=/app/logs/voice \
     -e SUMI_LLM_API_KEY \
     -v "$PWD/logs/voice:/app/logs/voice" voice-agent:sumi-<shortsha>
   ```
+- **Recovery:** the worker uses `restart=unless-stopped`, matching the managed
+  local services. Docker brings it back after daemon/host recovery; a crash is
+  restarted rather than leaving the phone route silently without a worker.
 - **Least-privilege LLM key.** Rather than the LiteLLM master key, the worker
   carries a **scoped virtual key** (`key_alias=sumi-voice-worker-v2`,
   `models=["sumi"]`) — it can call ONLY the `sumi` route, so even a bug can't
