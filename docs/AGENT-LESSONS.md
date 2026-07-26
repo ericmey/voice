@@ -435,3 +435,35 @@ then red-prove that assertion by removing the handoff before accepting green.
 **Why:** Domain bias can repair a short-name language-prior error without
 changing latency, endpointing, or model residency. A test that has never failed
 does not prove that the new value actually crosses the provider boundary.
+
+## 2026-07-26 — Recovery can manufacture green while hiding the fall
+
+**Trigger:** Riva finished TensorRT construction, failed to load its acoustic
+model with a GPU OOM, and logged the failure—but its Python wrapper returned
+normally. Docker recorded exit code 0, and `restart: unless-stopped` repeatedly
+rebuilt the model. The service looked busy and recoverable while never serving.
+
+**Lesson:** A recovery loop is not evidence of recovery. Preserve the failing
+layer, inspect the outcome behind the wrapper, and require a real request under
+the final co-resident load. Make fatal server-start failures exit nonzero when
+the wrapper is ours; when it is not, monitor the served outcome rather than the
+process exit code.
+
+**Why:** Restart policy, health grace, and wrapper semantics can compose into a
+flattering false signal. The more reliably the safety net repeats the failed
+operation, the more progress it appears to make.
+
+## 2026-07-26 — Health grace belongs to the current startup path
+
+**Trigger:** A one-hour `start_period` was correct while every Parakeet recreate
+performed a measured ~45-minute TensorRT build. Once engines became a durable
+provisioned artifact, the same service reached ready/live in 24 seconds; keeping
+the one-hour grace would only suppress real failures.
+
+**Lesson:** Recalculate readiness grace whenever startup work moves across a
+lifecycle boundary. Provisioning-time work must not continue defining the
+serving-time failure window. Use observed serving startup plus explicit margin.
+
+**Why:** A grace period can become a lie without changing a single number. Too
+short marks expected work unhealthy; too long makes a broken production start
+look expected.

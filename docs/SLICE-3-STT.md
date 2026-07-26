@@ -110,9 +110,11 @@ did not survive reboot and was itself a launch blocker. Its authoritative defini
 - attached to `voice_default` so the worker reaches it by service DNS `parakeet-ctl:50051`;
 - loopback publishes `127.0.0.1:50051` / `:9000` PRESERVED (host riva clients / ops);
 - `restart: unless-stopped`; both-surface healthcheck (ready AND live);
-- reproduces ONLY the real run-overrides diffed against the image (`NIM_MODEL_PROFILE`, the
-  `/opt/nim/.cache` bind, `--gpus all`, shm, ports) — the other ~93 env vars are image defaults,
-  intentionally not copied.
+- GPU1 only (`device_ids: ["1"]`), co-resident with the 16-slot local Qwen service;
+- the immutable NIM cache plus a durable host model repository at
+  `/home/ericmey/models/parakeet-model-repository:/data/models`;
+- production starts set `NIM_DISABLE_MODEL_DOWNLOAD=true` and point `NIM_WORKSPACE` at an empty
+  path. RMIR → TensorRT construction is provisioning, not part of every service start.
 
 **Migration** (2026-07-23): baseline ready/live 200 → `docker stop` + **rename**
 `parakeet-ctl` → `parakeet-ctl-prev` (preserve, not remove) → compose up managed → the NIM ran its
@@ -127,15 +129,47 @@ and was removed from that Monday path. The 2026-07-26 production cutover
 supersedes this disposition while preserving `parakeet-ctl-prev` as the
 prior-image rollback tier.
 
-### Startup health grace — `start_period`
+### 2026-07-26 production promotion — build once, serve many
 
-The migrated container carried `start_period=180s` (it was NOT recreated just to change a
-healthcheck-timing field — that would repeat the 45-min build). The **canonical committed**
-definition is `start_period=3600s`, conservatively above the observed cold build. The previous
-`900s` value was only 15 minutes and could not satisfy the documented ~45-minute contract.
-The 2026-07-26 managed recreate began under that prior 900-second health configuration; it was
-not destroyed mid-engine-build merely to change health timing. A future genuine recreate uses
-the corrected one-hour grace.
+The first managed promotion exposed a failure that health alone hid. Each of two restart cycles
+successfully built the TensorRT repository, then Riva failed to load the acoustic model with:
+
+```
+OutOfMemory (Requested size was 974165632 bytes.)
+```
+
+The NIM wrapper logged `Riva gRPC Server failed to start` and returned normally. Docker therefore
+saw exit code 0, and `restart: unless-stopped` turned the failure into a clean-looking rebuild
+loop. The service was stopped after two cycles and the completed 7.0 GiB model repository was
+preserved byte-for-byte outside the writable container layer.
+
+Production now mounts that repository and skips model download/RMIR deployment. A forced
+recreate reached ready + live in **24 seconds**, with `Restarts=0`; a paced 6.61-second stream
+returned its first interim in **271 ms** and a non-empty final transcript. Because the one-time
+45-minute build no longer occurs during service startup, the health `start_period` is **120s**,
+not the old one-hour build grace. The measured serving start gets about 5× headroom without
+hiding a real launch failure for an hour.
+
+### Qualified GPU placement
+
+At decision time, the then-running TTS process occupied 13.26 GiB on GPU0 and Parakeet occupied
+3.64 GiB, so co-residency there was unsafe. Qwen was reduced from 24 × 16K to **16 × 16K** and
+Parakeet moved to GPU1. Under the final all-three load:
+
+```
+voicebook-stream  GPU0  5384 / 16311 MiB   Restarts=0 healthy
+Qwen + Parakeet   GPU1 14351 / 16311 MiB   Restarts=0 healthy
+```
+
+The same window ran 16 concurrent call-shaped Qwen cases and a paced Parakeet transcription:
+Qwen passed 12/12 with TTFT p50 0.79s / p95 1.09s / 22.0 tok/s; Parakeet's first interim was
+157ms. GPU1 held at its idle memory figure throughout, so the allocation spike that killed the
+32-slot Qwen profile did not recur. This is a load-test receipt, not three containers agreeing
+that they are healthy.
+
+The recreated TTS process later settled at 5.384 GiB. The cause of its 13.26 → 5.384 GiB change
+is unknown, so current STT+TTS co-residency is **not** established as impossible. The chosen
+placement is qualified; the stronger impossibility claim is not.
 
 ## Proofs
 
@@ -148,9 +182,9 @@ Both drove the official plugin exactly as the worker configures it:
   an honest ASR-accuracy datum for the later real-call review, NOT an integration blocker; the
   capability (official plugin transcribes via service DNS through managed Parakeet) is proven.
 
-## Not yet up (expected, not broken)
+## Runtime disposition
 
-The LiveKit plane is OFF — no livekit-server / livekit-sip / redis / voice-agent; nothing on
-7880/7881/7882/5060. It simply hasn't been brought up in this build. Remaining path: Slice 4 Momo
-LLM → Slice 5 voicebook-stream TTS adapter → isolated Sumi worker → LiveKit/SIP → synthetic turn →
-the real call.
+Parakeet, Qwen, voicebook-stream, LiveKit, SIP, Redis, and the Sumi worker plane are live. The
+faster-whisper/Speaches service is stopped and preserved as an explicit rollback; it is not a
+warm fallback and the worker never switches providers silently. The prior Parakeet container
+also remains stopped as the pre-promotion rollback tier.
