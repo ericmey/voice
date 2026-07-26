@@ -5,25 +5,41 @@
 # server for the phone-agent POC. Every change below was made against a measured
 # result, not a preference; the numbers are in docs/QWEN-POC.md.
 #
-#   --parallel 2 -> 24     the old value was the concurrency ceiling, and it was
+#   --parallel 2 -> 16     the old value was the concurrency ceiling, and it was
 #                          being read as a model limit. Measured on the old
 #                          config: decode held flat at 45-48 tok/s from 2 through
 #                          8 concurrent while TTFT p50 went 0.23s -> 2.57s. That
 #                          is a QUEUE, not saturation. Callers 3..8 were waiting.
 #   --ctx-size 16384       ctx is SPLIT across slots (load log: "new slot,
-#     -> 393216            n_ctx = 8192" for each of 2). 16384/2 gave 8K per call
-#                          against a model that trains to 262144. 393216/24 keeps
-#                          16K per call while serving 12x the callers.
+#     -> 262144            n_ctx = 8192" for each of 2). 16384/2 gave 8K per call
+#                          against a model that trains to 262144. 262144/16 keeps
+#                          16K per call while serving 8x the callers.
 #
-# 24 x 16384 is the QUALIFIED profile for a 16 GB card, not a guess. The ceiling
-# was found by crossing it: 32 x 16384 loads and reports healthy at 15836/16311
-# MiB, then ABORTS under real concurrent load because ~475 MiB is not enough for
-# the compute buffers. restart:unless-stopped recovered it — so the watchdog is
-# proven by an actual crash rather than by assertion. Measured at 24 slots:
+# 2026-07-26, SECOND CUT — 24 slots was qualified and is no longer the placement.
+# Parakeet STT (3.64 GB steady) cannot co-reside with TTS (13.26 GB) on GPU0, so
+# STT moves to GPU1 alongside this service. 24 x 16384 is 13.31 GB; 13.31 + 3.64
+# exceeds the card. 16 x 16384 is 10.68 GB, leaving ~1.9 GB after Parakeet.
 #
+# CONTEXT PER CALL WAS KEPT AT 16K RATHER THAN SLOTS AT 24. The alternative fit
+# was 24 x 8192 for the same memory. For a tool-calling phone agent the schema
+# plus history is the thing that must not truncate, and 24 simultaneous callers
+# is not what this POC has to prove — the L4 does, on 24 GB, without Parakeet.
+#
+# Measured at 24 slots before the cut, retained because it bounds this config:
 #   c=8   TTFT p50 0.54s      c=16  0.96s      c=24  0.83s, 12/12 pass
 #   ~22 tok/s per stream = ~6x speech rate; staying ahead of TTS is the target,
 #   not maximal decode.
+# At 16 slots, measured earlier the same day: c=8 0.72s, c=16 0.88s.
+#
+# THE CEILING WAS FOUND BY CROSSING IT: 32 x 16384 loads and reports HEALTHY at
+# 15836/16311 MiB, then ABORTS under real concurrent load because ~475 MiB is not
+# enough for the compute buffers. restart:unless-stopped recovered it, so the
+# watchdog is proven by an actual crash rather than by assertion.
+#
+# WHICH IS WHY CO-RESIDENCY NEEDS ITS OWN LOAD TEST, not a health check. ~1.9 GB
+# of margin is between the 3.0 GB that survived and the 0.5 GB that did not. It
+# is untested. "Both containers report healthy" is exactly the reading that was
+# wrong at 32 slots.
 #
 # NOTE the first run after a container start reads ~1.5s at c=8 (cold prompt
 # cache) and settles to ~0.54s on reruns. Discard the first sweep after a
@@ -70,9 +86,9 @@ services:
       - --port
       - "8080"
       - --ctx-size
-      - "393216"
+      - "262144"
       - --parallel
-      - "24"
+      - "16"
       - --reasoning
       - "off"
       - --n-gpu-layers
