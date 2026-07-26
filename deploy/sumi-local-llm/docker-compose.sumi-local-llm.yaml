@@ -37,6 +37,8 @@ services:
     command:
       - --model
       - /models/base/Qwen3.5-9B-Q4_K_M.gguf
+      # rollback: /models/base/Qwen3.5-9B-Q4_K_M.gguf
+      # candidate: /models/abliterated/Huihui-Qwen3.5-9B-abliterated.Q4_K_M.gguf
       - --alias
       - sumi-local
       - --host
@@ -62,10 +64,12 @@ services:
       - --no-context-shift
       - --no-ui
     volumes:
-      # Both model directories are mounted so a rollback is a one-line command
-      # change, not a redeploy. Baseline: /models/base/Qwen3.5-9B-Q4_K_M.gguf
-      - /srv/models/llm/qwen3.5-9b-abliterated:/models:ro
+      # Both model directories are mounted at SIBLING paths so a rollback is a
+      # one-line command change, not a redeploy. They must not nest: mounting
+      # one read-only mount inside another fails at container init, because runc
+      # cannot mkdir the mountpoint on a read-only rootfs layer.
       - /srv/models/llm/qwen3.5-9b:/models/base:ro
+      - /srv/models/llm/qwen3.5-9b-abliterated:/models/abliterated:ro
     ports:
       - 127.0.0.1:8088:8080
     deploy:
