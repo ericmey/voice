@@ -178,11 +178,42 @@ wins on evidence instead of by inertia.
 
 ---
 
+## Deferred: the vLLM qualification belongs on an L4, not here
+
+vLLM remains the right answer for the 24 GB L4 — continuous batching and paged
+KV are what turn 30 concurrent calls into a server. **Nothing measured here
+proves anything about it.**
+
+**But mizuki is the wrong place to find out**, and the reason is hardware, not
+preference (NVIDIA's compute-capability table, checked not assumed):
+
+| GPU | arch | compute capability |
+|---|---|---|
+| mizuki RTX 5060 Ti | Blackwell | **12.0** (sm_120) |
+| production L4 | Ada Lovelace | **8.9** (sm_89) |
+
+Two architecture generations apart. vLLM's official wheels and images have a
+known open issue on sm_120; on sm_89 they are the mainstream path. **Qualifying
+vLLM here would measure Blackwell friction that does not exist on the target.**
+
+The architecture mismatch alone is sufficient to move the test. **No claim that
+vLLM cannot run on sm_120 is needed or made** — that is untested. (Torch on this
+box does carry sm_120: `torch 2.11.0+cu128`. The platform is not the blocker;
+vLLM's own kernels are the open question.)
+
+**Deferred qualification, not a gap in the mizuki proof.** Next week's L4 run
+should reuse **this exact 12-case harness at realistic concurrency**, so the
+serving-engine change and the hardware change are measured together on the real
+target rather than inferred from here.
+
+llama.cpp stays the proven mizuki stack — its image already ships Blackwell
+kernels (`ARCHS = ...,1200,1210`, `BLACKWELL_NATIVE_FP4 = 1`).
+
 ## Open
 
-- **vLLM is untested.** It remains the right answer for the 24 GB L4 —
-  continuous batching and paged KV are what turn 30 concurrent calls into a
-  server. **Nothing measured here on 16 GB llama.cpp proves anything about it.**
-  Separate qualification, not a gap in the mizuki proof.
-- Grafana: `--metrics` is live on the serving port. Wiring is best-effort and
-  explicitly not an exporter project.
+- Grafana: `--metrics` is live on the serving port. There is **no metrics scrape
+  path on this fleet** — shiori's `config.alloy` has four components, all Loki,
+  and `grep -c prometheus` returns 0. Mimir is running with nothing feeding it.
+  Wiring would mean a new scrape + remote-write pipeline plus solving
+  reachability (metrics are loopback-bound). That is a pipeline, not a dashboard
+  slot — recorded, deliberately not started.
