@@ -67,7 +67,7 @@ services:
       start_period: 5s
 
   livekit-server:
-    image: livekit/livekit-server:v1.13.3
+    image: livekit/livekit-server:v1.13.4
     container_name: voice-livekit-server
     restart: unless-stopped
     depends_on:
@@ -93,7 +93,7 @@ services:
       start_period: 15s
 
   livekit-sip:
-    image: livekit/sip:v1.6.0
+    image: livekit/sip:v1.8.0
     container_name: voice-livekit-sip
     restart: unless-stopped
     depends_on:
