@@ -52,35 +52,70 @@ matter and we can say so with evidence rather than with reasoning about
 from __future__ import annotations
 
 import argparse
+import importlib.util
+import os
 import sys
 import wave
 from pathlib import Path
 
 import numpy as np
 
-_REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO / "agents" / "sumi" / "src"))
+_AGENT_SRC_ENV = "SUMI_AGENT_SRC"
+
+
+def _find_agent_py() -> Path:
+    """Locate agents/sumi/src/agent.py, unambiguously.
+
+    There is more than one agent.py in this repo (`agents/aoi/`, `agents/sumi/`),
+    so a bare `import agent` resolves to whichever directory is first on
+    sys.path — which is how this script first loaded the WRONG agent and said so
+    in an error message that named the right one. Load by explicit path.
+    """
+    override = os.environ.get(_AGENT_SRC_ENV)
+    if override:
+        p = Path(override).expanduser().resolve()
+        if not p.is_file():
+            raise SystemExit(f"apply-sumi-mastering: {_AGENT_SRC_ENV}={p} is not a file")
+        return p
+
+    here = Path(__file__).resolve()
+    for base in (here.parent.parent, *here.parents, Path.cwd(), *Path.cwd().parents):
+        cand = base / "agents" / "sumi" / "src" / "agent.py"
+        if cand.is_file():
+            return cand
+    raise SystemExit(
+        "apply-sumi-mastering: could not find agents/sumi/src/agent.py from "
+        f"{here} or {Path.cwd()}. Set {_AGENT_SRC_ENV} to its absolute path."
+    )
 
 
 def _load_processor():
-    """Import the live agent's processor, or fail loudly saying why.
+    """Load the live agent's processor by file path, or fail loudly saying why.
 
-    Importing agent.py pulls livekit + pedalboard. If that import fails we must
-    NOT quietly substitute anything — a stand-in curve would silently turn this
-    into a test of the stand-in.
+    agent.py pulls livekit + pedalboard. If that import fails we must NOT quietly
+    substitute anything — a stand-in curve would silently turn this into a test
+    of the stand-in.
     """
+    agent_py = _find_agent_py()
+    sys.path.insert(0, str(agent_py.parent))
     try:
-        from agent import _TelephonyMasteringProcessor, _master_audio_frame  # type: ignore
+        spec = importlib.util.spec_from_file_location("_sumi_agent_under_test", agent_py)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"no loader for {agent_py}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod._TelephonyMasteringProcessor, mod._master_audio_frame
     except Exception as exc:  # noqa: BLE001 - the message matters more than the type
         raise SystemExit(
-            f"apply-sumi-mastering: cannot import the live mastering from "
-            f"agents/sumi/src/agent.py ({type(exc).__name__}: {exc})\n"
-            f"  Run this with the agent's environment, e.g. mizuki's "
-            f"~/voice/.venv/bin/python.\n"
+            f"apply-sumi-mastering: cannot load the live mastering from\n"
+            f"  {agent_py}\n"
+            f"  ({type(exc).__name__}: {exc})\n"
+            f"  Run this with the agent's own environment — on mizuki that is\n"
+            f"  inside the container: docker exec -w /app voice-agent-sumi "
+            f"/app/.venv/bin/python ...\n"
             f"  REFUSING to substitute a reimplementation — that would make this "
             f"a test of the substitute."
         ) from exc
-    return _TelephonyMasteringProcessor, _master_audio_frame
 
 
 def read_wav(path: Path) -> tuple[np.ndarray, int]:
