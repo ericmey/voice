@@ -10,8 +10,9 @@
 **Harness:** `scripts/eval-call-agent.py` + `scripts/cases/phone-agent.json`.
 12 call-shaped cases — tool selection, spoken-number normalisation, multi-arg
 extraction, mid-turn interruption, post-tool-result phrasing, and instruction
-adherence under pressure. Speaks OpenAI `/v1/chat/completions`, so identical
-cases run against llama.cpp, vLLM, and the L4.
+adherence under pressure. Speaks OpenAI `/v1/chat/completions`. Running the same
+cases against vLLM and the L4 is the INTENT and is **unverified** — see the
+harness docstring for the three concrete requirements that differ per server.
 
 ---
 
@@ -59,29 +60,68 @@ the load log reports `new slot, n_ctx = 8192` for each of two slots, i.e.
 
 ## 3. The qualified profile, and the ceiling found by crossing it
 
-| slots × ctx | VRAM | c=8 | c=16 | c=24 | result |
-|---|---|---|---|---|---|
-| 2 × 8192 | 5.9 GB | 2.57 s | — | — | old |
-| 16 × 16384 | 10.7 GB | 0.72 s | 0.88 s | — | ok |
-| **24 × 16384** | **13.3 GB** | **0.54 s** | 0.96 s | **0.83 s** | **QUALIFIED** |
-| 32 × 16384 | 15.8 GB | — | **ABORT** | — | **measured failure** |
+| slots × ctx | VRAM | result |
+|---|---|---|
+| 2 × 8192 | 5.9 GB | old |
+| 16 × 16384 | 10.7 GB | ok |
+| **24 × 16384** | **13.3 GB** | qualified, then superseded by placement |
+| 32 × 16384 | 15.8 GB | **ABORT under 12-way load** |
 
-At **24 × 16384**: 24 concurrent callers, **12/12 pass**, TTFT p50 **0.83 s**,
-~22 tok/s per stream, `RestartCount=0`.
+> **EVERY CONCURRENCY LABEL IN THIS DOCUMENT'S EARLIER VERSIONS WAS FALSE**, and
+> the corrections are recorded rather than quietly replaced.
+>
+> The harness built `len(cases) × repeat` work items and ran them through a pool
+> of `--concurrency` workers. With 12 cases and `repeat=1`, `--concurrency 24`
+> could issue **at most 12 simultaneous requests**. Every table headlined c=16 or
+> c=24 was **12-way wearing a larger number.** Caught by Yua on review.
+>
+> The 32-slot crash therefore happened under **12-way** client load, not 16-way.
+> **Its margin was tighter than reported.**
+>
+> Three further layers followed, each a correct and incomplete fix: reporting
+> `min(workers, tasks)` — still a computed bound; re-running before the counter
+> existed — still unmeasured; and a **cyclic** `threading.Barrier` that trapped
+> the second wave for its full timeout, producing a **120.5 s TTFT p95** that was
+> the instrument, not the server. **That was one message away from being filed as
+> a capacity finding.**
 
-**32 slots loads and reports `healthy`** at 15836/16311 MiB — and then aborts
-under real concurrent load, because ~475 MiB is not enough for the compute
-buffers. `restart: unless-stopped` recovered it automatically.
+## Observed concurrency — the only numbers that earned their labels
 
-> **A container that reports healthy is not a server that works.** The health
-> check passed on a configuration that could not survive its first real load.
-> The watchdog is proven here by an actual crash, not by assertion.
+`peak_in_flight` is counted around the request lifetime, from just before
+`urlopen` to stream exhaustion, decremented in the context-manager finally. The
+first wave is released by a **first-wave-only** barrier. Runs carry
+`concurrency_honest`; the report prints `<-- LABEL NOT EARNED` when it is false.
+
+```
+OBSERVED-c16   work_items=24  requested=16  peak_in_flight=16  wall=7.49s
+OBSERVED-c24   work_items=24  requested=24  peak_in_flight=24  wall=7.71s
+```
+
+| in flight (observed) | pass | TTFT p50 | TTFT p95 | decode p50 |
+|---|---|---|---|---|
+| **16** | 21/24 | 0.98 s | **1.36 s** | 12.2 tok/s |
+| 24 | 21/24 | 2.24 s | **5.24 s** | 11.2 tok/s |
+
+**16 synchronised client requests is QUALIFIED** on this box at p95 1.36 s.
+**24 is REJECTED for voice** at p95 5.24 s.
+
+> **"~16" is a conservative OPERATING POINT, not a discovered maximum.** The
+> range 17–23 is unmeasured. Nothing here says 17 fails.
+
+Both figures are **synchronised bursts** — all N released together. Real callers
+do not arrive on one clock tick, so this is a worst case, not steady state.
+Staggered arrival is a separate, unrun mode.
 
 ### Per-stream decode is priced against speech, not against a benchmark
 
-Human speech is ~3–4 tokens/sec. **22 tok/s per stream is ~6× real-time** — the
-model finishes each sentence long before TTS can say it. Chasing maximal decode
-optimises a number nobody hears. Staying ahead of the mouth is the target.
+Human speech is ~3–4 tokens/sec. At an observed 16 in flight, **12.2 tok/s per
+stream is ~3–4× real-time** — the model still finishes each sentence before TTS
+can say it. Chasing maximal decode optimises a number nobody hears; staying ahead
+of the mouth is the target.
+
+(Earlier versions quoted **22 tok/s** here. That came from a run labelled c=16
+that was really **12-way** — fewer streams sharing the GPU, so higher per-stream
+decode. The corrected figure is lower and it is the one that matters.)
 
 ### Final placement — 16 × 16384, qualified with all three tenants resident
 
@@ -115,14 +155,22 @@ alternative was 24 × 8192. For a tool-calling phone agent the schema plus histo
 is what must not truncate, and 24 simultaneous callers is not what this box has
 to prove — the L4 does, on 24 GB, without Parakeet resident.
 
-Three sweeps, same 12 cases, same config, **only placement changing**:
+Three sweeps, same 12 cases, same config, **only placement changing**. **All
+three were 12-way** — they were labelled c=16 at the time and the label was
+wrong. They remain valid as a *relative* comparison, because the error is
+identical across all three columns:
 
 | | pre-repin | + Parakeet | + TTS (all three) |
 |---|---|---|---|
+| in flight (actual) | 12 | 12 | 12 |
 | pass | 11/12 | 11/12 | 12/12 |
 | TTFT p50 | 1.03 s | 0.84 s | 0.79 s |
 | TTFT p95 | 1.34 s | 1.16 s | 1.09 s |
 | decode | 21.9 tok/s | 20.9 | 22.0 |
+
+**What this table proves is that adding Parakeet and TTS did not degrade the LLM
+— not the absolute capacity of the box.** For capacity, use the observed table
+above.
 
 Final state, measured during the concurrent run — LLM sweep and a paced Parakeet
 transcription in the same window:

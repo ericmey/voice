@@ -25,16 +25,24 @@
 # plus history is the thing that must not truncate, and 24 simultaneous callers
 # is not what this POC has to prove — the L4 does, on 24 GB, without Parakeet.
 #
-# Measured at 24 slots before the cut, retained because it bounds this config:
-#   c=8   TTFT p50 0.54s      c=16  0.96s      c=24  0.83s, 12/12 pass
-#   ~22 tok/s per stream = ~6x speech rate; staying ahead of TTS is the target,
-#   not maximal decode.
-# At 16 slots, measured earlier the same day: c=8 0.72s, c=16 0.88s.
+# CONCURRENCY LABELS IN EARLIER VERSIONS OF THIS COMMENT WERE FALSE. The harness
+# ran len(cases) x repeat work items through a pool of --concurrency workers, so
+# with 12 cases and repeat=1 nothing above 12 was ever in flight. Every "c=16"
+# and "c=24" figure previously quoted here was 12-way. Caught by Yua on review.
+#
+# OBSERVED numbers, peak_in_flight counted around the request lifetime:
+#   16 in flight   21/24 pass   TTFT p50 0.98s  p95 1.36s   decode 12.2 tok/s
+#   24 in flight   21/24 pass   TTFT p50 2.24s  p95 5.24s   decode 11.2 tok/s
+# 16 synchronised requests is QUALIFIED; 24 is REJECTED for voice. "~16" is a
+# conservative operating point, not a discovered maximum — 17..23 is unmeasured.
+# Both are synchronised bursts; staggered arrival is a separate, unrun mode.
 #
 # THE CEILING WAS FOUND BY CROSSING IT: 32 x 16384 loads and reports HEALTHY at
 # 15836/16311 MiB, then ABORTS under real concurrent load because ~475 MiB is not
 # enough for the compute buffers. restart:unless-stopped recovered it, so the
-# watchdog is proven by an actual crash rather than by assertion.
+# watchdog is proven by an actual crash rather than by assertion. NOTE the crash
+# happened under 12-WAY client load, not the 16-way originally reported — the
+# margin is tighter than the first write-up claimed.
 #
 # WHICH IS WHY CO-RESIDENCY NEEDS ITS OWN LOAD TEST, not a health check. ~1.9 GB
 # of margin is between the 3.0 GB that survived and the 0.5 GB that did not. It

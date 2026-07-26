@@ -37,14 +37,16 @@ Deliberately stdlib-only so it runs on any box without a venv.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import statistics
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 DEFAULT_CASES = Path(__file__).parent / "cases" / "phone-agent.json"
@@ -83,8 +85,64 @@ class CaseResult:
 # transport
 
 
+class InFlight:
+    """OBSERVE how many requests were genuinely outstanding, never compute it.
+
+    min(workers, tasks) is an upper BOUND, not a measurement: workers stagger,
+    and a short request can finish before a later one has opened its socket. So
+    a run can report "24 in flight" having never had more than 9. Naming a
+    computed ceiling `actual_` is the same fault one layer down — caught by Yua
+    on review 2026-07-26, immediately after the first fix.
+
+    The barrier makes the claim honest at the start: every worker waits until
+    all N have arrived, so the first wave is genuinely simultaneous. If the
+    SERVER then queues internally, fine — the claim is about requests
+    outstanding from the client, and that is what this counts.
+    """
+
+    def __init__(self, expected: int) -> None:
+        self._lock = threading.Lock()
+        self._now = 0
+        self.peak = 0
+        # FIRST WAVE ONLY. A plain threading.Barrier is CYCLIC: with 24 tasks and
+        # 16 parties, the first 16 release and the remaining 8 enter generation
+        # two, then block for the full timeout waiting on 8 workers that will
+        # never arrive. That is not server latency — it is the instrument — and
+        # it produced a 120s TTFT p95 that I was one message away from reporting
+        # as a capacity finding. Caught by Yua reading the diff, 2026-07-26.
+        self._released = threading.Event()
+        self._barrier = (
+            threading.Barrier(expected, timeout=60, action=self._released.set)
+            if expected > 1 else None
+        )
+
+    def release_wave(self) -> None:
+        """Block only until the first wave has formed. Later tasks pass straight
+        through — they are not part of the wave and must not wait for one."""
+        if self._barrier is None or self._released.is_set():
+            return
+        try:
+            self._barrier.wait()
+        except threading.BrokenBarrierError:
+            self._released.set()   # wave never formed; do not trap anyone else
+        except threading.ThreadError:
+            self._released.set()
+
+    def __enter__(self):
+        with self._lock:
+            self._now += 1
+            self.peak = max(self.peak, self._now)
+        return self
+
+    def __exit__(self, *exc):
+        with self._lock:
+            self._now -= 1
+        return False
+
+
 def stream_chat(base_url: str, model: str, case: dict, timeout: int,
-                api_key: str | None, no_think: bool = False) -> tuple[dict, float, float, int]:
+                api_key: str | None, no_think: bool = False,
+                inflight: InFlight | None = None) -> tuple[dict, float, float, int]:
     """POST a streamed completion. Returns (assembled, ttft_s, total_s, n_tok).
 
     Streaming is not a nicety here — TTFT is a product metric for voice and
@@ -127,7 +185,11 @@ def stream_chat(base_url: str, model: str, case: dict, timeout: int,
     n_tok = 0            # audible tokens
     n_reason = 0         # silent reasoning tokens
 
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    if inflight is not None:
+        inflight.release_wave()
+
+    ctx = inflight if inflight is not None else contextlib.nullcontext()
+    with ctx, urllib.request.urlopen(req, timeout=timeout) as resp:
         for raw_line in resp:
             line = raw_line.decode("utf-8", "replace").strip()
             if not line.startswith("data:"):
@@ -276,9 +338,11 @@ def grade(case: dict, got: dict) -> tuple[bool, str, str]:
 
 
 def run_case(base_url: str, model: str, case: dict, timeout: int,
-             api_key: str | None, no_think: bool = False) -> CaseResult:
+             api_key: str | None, no_think: bool = False,
+             inflight: InFlight | None = None) -> CaseResult:
     try:
-        got, ttft, total, n_tok = stream_chat(base_url, model, case, timeout, api_key, no_think)
+        got, ttft, total, n_tok = stream_chat(base_url, model, case, timeout, api_key,
+                                              no_think, inflight)
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         return CaseResult(
             id=case["id"], category=case.get("category", "-"), ok=False,
@@ -350,7 +414,11 @@ def summarize(results: list[CaseResult], meta: dict) -> dict:
 def print_report(rep: dict) -> None:
     t, lat = rep["totals"], rep["latency"]
     m = rep["meta"]
-    print(f"\n  model={m['model']}  endpoint={m['base_url']}  concurrency={m['concurrency']}")
+    print(f"\n  model={m['model']}  endpoint={m['base_url']}")
+    peak = m.get("peak_in_flight")
+    flag = "" if m.get("concurrency_honest", True) else "   <-- LABEL NOT EARNED"
+    print(f"  {m.get('work_items', '?')} requests, "
+          f"peak {peak} observed in flight (requested {m['concurrency']}){flag}")
     print(f"  {t['passed']}/{t['cases']} passed  ({t['pass_rate']*100:.1f}%)")
 
     if rep["failure_shapes"]:
@@ -434,19 +502,43 @@ def main() -> int:
         return 2
 
     work = [c for _ in range(a.repeat) for c in cases]
-    print(f"eval-call-agent: {len(cases)} cases x{a.repeat} at concurrency {a.concurrency}"
-          f" -> {a.model} @ {a.base_url}")
 
+    # A ThreadPoolExecutor with more workers than tasks does not create load it
+    # does not have. With 12 cases and repeat=1, --concurrency 24 issues at most
+    # TWELVE simultaneous requests, and a report headlined "at c=24" is false.
+    # Caught by Yua on review 2026-07-26 AFTER a full day of results had been
+    # published under inflated concurrency labels. Never silent again.
+    actual = min(len(work), a.concurrency)
+    if actual < a.concurrency:
+        need = -(-a.concurrency // len(cases))
+        print(f"eval-call-agent: REFUSING a false concurrency label.\n"
+              f"  requested --concurrency {a.concurrency} but only {len(work)} work items exist\n"
+              f"  ({len(cases)} cases x repeat {a.repeat}), so at most {actual} requests can be\n"
+              f"  in flight. Re-run with --repeat {need} for a true {a.concurrency}-way test,\n"
+              f"  or --concurrency {actual} to measure what you actually have.",
+              file=sys.stderr)
+        return 2
+
+    # `actual` is REQUESTED wave capacity — an upper bound. Only peak_in_flight,
+    # measured around the request lifetime, may be called observed.
+    print(f"eval-call-agent: {len(cases)} cases x{a.repeat} = {len(work)} requests, "
+          f"wave capacity {actual} (requested) -> {a.model} @ {a.base_url}")
+
+    inflight = InFlight(a.concurrency)
     t0 = time.perf_counter()
     with ThreadPoolExecutor(max_workers=a.concurrency) as pool:
         results = list(pool.map(
-            lambda c: run_case(a.base_url, a.model, c, a.timeout, a.api_key, a.no_think), work))
+            lambda c: run_case(a.base_url, a.model, c, a.timeout, a.api_key, a.no_think,
+                               inflight), work))
     wall = time.perf_counter() - t0
 
     rep = summarize(results, {
         "model": a.model,
         "base_url": a.base_url,
         "concurrency": a.concurrency,
+        "peak_in_flight": inflight.peak,          # OBSERVED, not computed
+        "concurrency_honest": inflight.peak >= a.concurrency,
+        "work_items": len(work),
         "repeat": a.repeat,
         "cases_file": str(a.cases),
         "no_think": a.no_think,
