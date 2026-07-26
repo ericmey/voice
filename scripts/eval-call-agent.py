@@ -111,6 +111,7 @@ class InFlight:
         # it produced a 120s TTFT p95 that I was one message away from reporting
         # as a capacity finding. Caught by Yua reading the diff, 2026-07-26.
         self._released = threading.Event()
+        self.wave_broken = False
         self._barrier = (
             threading.Barrier(expected, timeout=60, action=self._released.set)
             if expected > 1 else None
@@ -124,8 +125,14 @@ class InFlight:
         try:
             self._barrier.wait()
         except threading.BrokenBarrierError:
-            self._released.set()   # wave never formed; do not trap anyone else
+            # Open the gate so nothing else strands — but RECORD it. Releasing
+            # waiters bounds the damage; it does not make the run valid. A run
+            # that reached the barrier timeout carries that timeout inside its
+            # latency and must fail on it rather than be explained away.
+            self.wave_broken = True
+            self._released.set()
         except threading.ThreadError:
+            self.wave_broken = True
             self._released.set()
 
     def __enter__(self):
@@ -417,6 +424,8 @@ def print_report(rep: dict) -> None:
     print(f"\n  model={m['model']}  endpoint={m['base_url']}")
     peak = m.get("peak_in_flight")
     flag = "" if m.get("concurrency_honest", True) else "   <-- LABEL NOT EARNED"
+    if m.get("wave_broken"):
+        flag = "   <-- WAVE BROKEN, latency contaminated by the barrier timeout"
     print(f"  {m.get('work_items', '?')} requests, "
           f"peak {peak} observed in flight (requested {m['concurrency']}){flag}")
     print(f"  {t['passed']}/{t['cases']} passed  ({t['pass_rate']*100:.1f}%)")
@@ -537,7 +546,11 @@ def main() -> int:
         "base_url": a.base_url,
         "concurrency": a.concurrency,
         "peak_in_flight": inflight.peak,          # OBSERVED, not computed
-        "concurrency_honest": inflight.peak >= a.concurrency,
+        # honest requires BOTH: the peak was reached AND the wave formed. A
+        # broken wave can still reach peak later while its timeout sits inside
+        # the latency aggregates.
+        "wave_broken": inflight.wave_broken,
+        "concurrency_honest": inflight.peak >= a.concurrency and not inflight.wave_broken,
         "work_items": len(work),
         "repeat": a.repeat,
         "cases_file": str(a.cases),
