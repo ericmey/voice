@@ -50,10 +50,19 @@ services:
     restart: unless-stopped
     command:
       - --model
-      # ROLLBACK is one line: /models/base/Qwen3.5-9B-Q4_K_M.gguf
-      # sha256 ea1858ef4dc4b648b8dbb44612962a0333e945060dd0545ac0f28d7c4416e4b3
-      # verified against HuggingFace x-linked-etag before first load.
-      - /models/abliterated/Huihui-Qwen3.5-9B-abliterated.Q4_K_M.gguf
+      # QUALIFIED. Base Qwen3.5-9B: 12/12 at 24 concurrent on this profile.
+      - /models/base/Qwen3.5-9B-Q4_K_M.gguf
+      #
+      # EVALUATED AND REJECTED 2026-07-26 — kept mounted, do not promote:
+      #   /models/abliterated/Huihui-Qwen3.5-9B-abliterated.Q4_K_M.gguf
+      #   sha256 ea1858ef4dc4b648b8dbb44612962a0333e945060dd0545ac0f28d7c4416e4b3
+      # Same config, same cases: 9/12 vs base 12/12, at identical speed
+      # (22.39 vs 22.46 tok/s). Three regressions, one of them disqualifying:
+      # given "NEVER invent an order number, ask for it, do not call any tool",
+      # it emitted lookup_order{"order_number":"12345"} — it FABRICATED a
+      # state-changing identifier and called the tool. That is the bad_args
+      # class: silent, and read as success by every layer above the model.
+      # Equal speed does not buy back invented input. See docs/QWEN-POC.md.
       - --alias
       - sumi-local
       - --host
