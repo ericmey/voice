@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# LEGACY/OPTIONAL LITELLM ROUTE ONLY. The current production Sumi worker calls
+# sumi-local-llm directly with the explicit non-secret placeholder
+# SUMI_LLM_API_KEY=local-no-auth. This provisioner is not a prerequisite or
+# repair tool for that deployment.
+#
 # provision-sumi-llm-key.sh (v11) — mint Sumi's scoped LiteLLM key and store it in
 # 1Password via TRANSACTION INVERSION with a unique correlation, an exclusive lock, and
 # a HASH-CORRELATED identity proof. ARTIFACT for review (GO-SECRET-A); NOT run until

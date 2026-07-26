@@ -59,10 +59,12 @@ Three properties matter for a live phone turn, and all three are pinned:
   `openai_plugin.LLM(model="sumi", base_url="http://10.0.20.25:4000/v1",
   api_key=_llm_api_key(), temperature=0.7, max_retries=0, timeout=30)`. Model and
   base URL are env-overridable (`SUMI_LLM_MODEL` / `SUMI_LLM_BASE_URL`).
-- **Fail-loud key.** `_llm_api_key()` reads `SUMI_LLM_API_KEY` (or
-  `LITELLM_API_KEY`) and raises at startup if unset — Sumi's LLM has no cloud
-  fallback and must not start on a default/empty key. Mirrors the persona's
-  refuse-to-start stance.
+- **Fail-loud credential field.** `_llm_api_key()` reads `SUMI_LLM_API_KEY` (or
+  `LITELLM_API_KEY`) and raises at startup if unset. A LiteLLM route supplies a
+  real bearer; the current direct `sumi-local-llm:8080` route supplies the
+  explicit, non-secret placeholder `local-no-auth` because the OpenAI-compatible
+  client requires a non-empty field. The variable name alone is not evidence
+  that a secret or LiteLLM hop exists.
 - The gemini scaffold LLM and its `livekit.plugins.google` import are removed;
   only TTS (elevenlabs, Nyla's id) remains scaffold, for Slice 5.
 - Gate: `ruff` clean, package imports, fail-loud verified both directions, 23/23

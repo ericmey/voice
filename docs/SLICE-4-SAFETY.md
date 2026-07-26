@@ -153,7 +153,14 @@ LiteLLM bearer + `MUSUBI_V2_TOKEN_SUMI`).
 **Receipts:** non-secret only — image ID / tag / digest, container status, labels.
 Never the container env.
 
-## Secret authority for SUMI_LLM_API_KEY (GO-SECRET — PROPOSED, not executed)
+## Historical LiteLLM secret authority (superseded for production)
+
+**Current state, 2026-07-26:** Sumi calls `http://sumi-local-llm:8080/v1`
+directly and passes the explicit non-secret placeholder
+`SUMI_LLM_API_KEY=local-no-auth`. No LiteLLM alias or 1Password item participates
+in that path. The proposal below remains as reviewed history for a deliberate
+future LiteLLM deployment; it is not a prerequisite or repair procedure for the
+current worker.
 
 The Slice-6 launch sourced the scoped LLM key from a `/tmp` captured file. It is
 replaced with a **1Password-backed, least-privilege, op-run-injected** authority.

@@ -379,15 +379,18 @@ def _resolve_max_tokens() -> int:
 
 
 def _llm_api_key() -> str:
-    """LiteLLM bearer for the `sumi` route. FAIL LOUD if absent — Sumi's LLM has
-    no cloud fallback and must not silently start on a default/empty key. Mirrors
-    the persona's refuse-to-start stance: explicit or she does not speak."""
+    """Explicit credential field for the OpenAI-compatible LLM endpoint.
+
+    LiteLLM routes use a real bearer. The direct local llama.cpp route uses the
+    non-secret placeholder ``local-no-auth`` because the OpenAI client still
+    requires a non-empty field. Either way, the deployment must state its route
+    contract explicitly rather than silently inherit an empty/default value.
+    """
     key = os.environ.get("SUMI_LLM_API_KEY") or os.environ.get("LITELLM_API_KEY")
     if not key:
         raise RuntimeError(
-            "SUMI_LLM_API_KEY (LiteLLM bearer for the 'sumi' route) is unset. "
-            "Refusing to start — Sumi's LLM has no cloud fallback and will not "
-            "use a default or empty key."
+            "SUMI_LLM_API_KEY (real bearer or explicit local-no-auth placeholder) "
+            "is unset. Refusing to start with an ambiguous LLM route contract."
         )
     return key
 

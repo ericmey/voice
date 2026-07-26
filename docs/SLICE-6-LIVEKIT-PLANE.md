@@ -1,5 +1,12 @@
 # Slice 6 — LiveKit plane bring-up + isolated Sumi worker — LANDED ✅
 
+> **Current production route (2026-07-26):** Sumi calls
+> `http://sumi-local-llm:8080/v1` directly with model `sumi-local`, server-side
+> thinking disabled, and the explicit non-secret OpenAI-client placeholder
+> `SUMI_LLM_API_KEY=local-no-auth`. There is no LiteLLM or 1Password hop in this
+> path. Older LiteLLM key material below is historical rollback/design context,
+> not a launch prerequisite.
+
 New capability: the media plane is live and an **isolated** Sumi worker is
 registered against it as `phone-sumi`, waiting for dispatch. No SIP, no DID, no
 inbound routing, no Party retirement — the guardrail line ("no SIP/DID mutation
@@ -28,37 +35,28 @@ Pre-state: the media plane was **entirely down** (nothing on 7880/7881/7882/5060
     agent's image build, not just Sumi's.
 - **Run (single container, not the agents compose):**
   ```
-  # SUMI_LLM_API_KEY is resolved from 1Password by `op run` (config/sumi-llm-key.env.tpl, D1)
-  # and passed by NAME (-e SUMI_LLM_API_KEY, no value) — kept out of repo/tmp/argv/history.
-  # (It does land in the container's env metadata, inherent to running the worker; never
-  # print or `docker inspect` that env.)
-  # secrets/livekit-agents.env still supplies the other runtime values. HAZARD: op run
-  # injects at CREATE time — always launch via op run; a bare `docker run` drops the
-  # injection (the op-run-stack deploy hazard). A later `docker start` of the SAME
-  # container reuses the env baked at create, so restarts/rollback are unaffected.
-  # LEAST PRIVILEGE (D1): op-run injects ONLY the Sumi key (config/sumi-llm-key.env.tpl),
-  # not the 8-ref livekit.env.tpl — otherwise the docker CLI process would receive eight
-  # unrelated resolved secrets (LiveKit key/secret, OpenAI, Google, ElevenLabs, three Musubi
-  # tokens) it never needs. The container's other runtime values come from
-  # secrets/livekit-agents.env; SUMI is passed by name into the container.
-  op run --env-file=config/sumi-llm-key.env.tpl -- \
-    docker run -d --name voice-agent-sumi --restart unless-stopped --network voice_default \
+  # secrets/livekit-agents.env supplies the shared LiveKit/Musubi runtime values.
+  # local-no-auth is an explicit non-secret placeholder required by the
+  # OpenAI-compatible client; it is not a bearer and does not route through LiteLLM.
+  docker run -d --name voice-agent-sumi --restart unless-stopped --network voice_default \
     --env-file secrets/livekit-agents.env \
     -e AGENT=sumi -e LIVEKIT_URL=ws://livekit-server:7880 \
     -e LIVEKIT_VOICE_LOGS=/app/logs/voice \
-    -e SUMI_LLM_API_KEY \
+    -e SUMI_LLM_MODEL=sumi-local \
+    -e SUMI_LLM_BASE_URL=http://sumi-local-llm:8080/v1 \
+    -e SUMI_LLM_API_KEY=local-no-auth \
+    -e SUMI_LLM_DISABLE_THINKING=true \
     -v "$PWD/logs/voice:/app/logs/voice" voice-agent:sumi-<shortsha>
   ```
 - **Recovery:** the worker uses `restart=unless-stopped`, matching the managed
   local services. Docker brings it back after daemon/host recovery; a crash is
   restarted rather than leaving the phone route silently without a worker.
-- **Least-privilege LLM key.** Rather than the LiteLLM master key, the worker
-  carries a **scoped virtual key** (`key_alias=sumi-voice-worker-v2`,
-  `models=["sumi"]`) — it can call ONLY the `sumi` route, so even a bug can't
-  reach another model or a cloud provider. Defense-in-depth on top of the route's
-  own no-fallback.
+- **No LLM secret in the current route.** The worker reaches only the local
+  `sumi-local-llm` service on `voice_default`; `local-no-auth` satisfies the
+  client library's non-empty API-key parameter and grants nothing anywhere.
 - **Fail-loud gates all passed** (the container did NOT crash-loop, restarts=0):
-  persona present, `MUSUBI_V2_TOKEN_SUMI` present, `SUMI_LLM_API_KEY` present.
+  persona present, `MUSUBI_V2_TOKEN_SUMI` present, direct base URL explicit,
+  `SUMI_LLM_API_KEY=local-no-auth`, and Qwen thinking disabled.
 
 ## Proof
 
@@ -77,21 +75,13 @@ it does nothing until a job is dispatched to it — there is no inbound phone pa
 - Plane: `docker compose -f docker-compose.yaml down` (redis state persists in the
   `voice_redis_data` volume; `down -v` would wipe it — don't, it holds SIP routing
   for the real deploy).
-- Scoped key — **dual-key lifecycle (do NOT conflate candidate rollback with prior-key
-  retirement):** `sumi-voice-worker-v2` is the NEW candidate key that the accepted replacement
-  worker *uses* — so it is revoked ONLY on the FAILURE branch, and KEPT on success.
-  - **If the candidate deploy FAILS** and the OLD worker is restored + re-accepted: revoke/delete
-    the v2 candidate artifacts — `POST /key/delete {key_aliases:["sumi-voice-worker-v2"]}` (source
-    contract is `key_aliases`, not `keys`; verified) and delete the 1Password item — since nothing
-    live depends on them.
-  - **If the replacement SUCCEEDS:** KEEP `sumi-voice-worker-v2` active (the running worker needs
-    it). Retire the PRIOR key / `/tmp` temp only AFTER the rollback window closes AND under a
-    separate authorization — never as part of this deploy. **Verify the prior alias's metadata
-    LIVE at execution** before retiring it (don't assume its name/scope from this doc).
+- The legacy `sumi-voice-worker-v2` LiteLLM alias is not used by the current
+  worker. Do not provision, revoke, or delete it based on this page; any future
+  LiteLLM migration requires its own live-state readback and authorization.
 
-## Next
+## Current acceptance / next
 
-Slice 7 — the **single-client synthetic turn**: dispatch `phone-sumi` to a room, a
-synthetic caller publishes speech, and Sumi hears (Parakeet) → thinks (Momo) →
-speaks (voicebook-stream) in one loop, captured with latency marks. That pass is
-the guardrail threshold that unlocks Slice 8 (Eric's real call).
+The 2026-07-26 synthetic turn passed on the direct stack: Parakeet → local
+Qwen3.5-9B → Voicebook TTS, with a captured response and zero service restarts.
+The remaining acceptance is Eric's real PSTN call through Twilio and
+`livekit-sip`; the synthetic client does not traverse that media path.

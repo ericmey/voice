@@ -456,9 +456,11 @@ assert_rc 1; assert_has "DELETE_ITEM(MOCKITEM123)"; assert_no_leak; assert_state
 printf '%s' "$OUT" | grep -qF "verify C" && ok "runtime sentinel caught out-of-template injection (belt AND braces)" || fail "runtime sentinel did not fire"
 stop_server
 
-hdr "S36 [E2] canonical launch references the Sumi-only template (doc assertion)"
-grep -qF "op run --env-file=config/sumi-llm-key.env.tpl" docs/SLICE-6-LIVEKIT-PLANE.md && ok "SLICE-6 launch op-runs config/sumi-llm-key.env.tpl" || fail "SLICE-6 launch does not reference the Sumi-only template"
-grep -qE 'op run --env-file=config/livekit\.env\.tpl' docs/SLICE-6-LIVEKIT-PLANE.md && fail "SLICE-6 launch still op-runs the shared livekit.env.tpl" || ok "SLICE-6 launch no longer op-runs the shared template"
+hdr "S36 current launch is direct/local; provisioner template is explicitly legacy"
+grep -qF "SUMI_LLM_BASE_URL=http://sumi-local-llm:8080/v1" docs/SLICE-6-LIVEKIT-PLANE.md && ok "SLICE-6 launch uses direct local LLM route" || fail "SLICE-6 launch does not name the direct local LLM route"
+grep -qF "SUMI_LLM_API_KEY=local-no-auth" docs/SLICE-6-LIVEKIT-PLANE.md && ok "SLICE-6 launch names the non-secret client placeholder" || fail "SLICE-6 launch does not name local-no-auth"
+grep -qF "op run --env-file=config/sumi-llm-key.env.tpl" docs/SLICE-6-LIVEKIT-PLANE.md && fail "SLICE-6 current launch still presents the legacy op-run route" || ok "SLICE-6 current launch does not op-run the legacy template"
+grep -qF "LEGACY LITELLM-ONLY TEMPLATE" config/sumi-llm-key.env.tpl && ok "Sumi key template is marked legacy-only" || fail "Sumi key template looks current"
 grep -qE '=op://' config/livekit.env.tpl && ! grep -qi sumi config/livekit.env.tpl && ok "shared livekit.env.tpl carries NO Sumi ref (E1)" || fail "shared template still references Sumi"
 
 # --- F1: 1Password malformed-but-successful JSON must read UNKNOWN, never absent ---
