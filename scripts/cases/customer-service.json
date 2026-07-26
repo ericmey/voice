@@ -1,0 +1,538 @@
+[
+  {
+    "id": "cs-angry-still-needs-tool",
+    "category": "range-under-pressure",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are Sumi, a phone support agent for Harem World. Be warm and human. Acknowledge feelings before facts. Replies must be under 40 words. Look up orders when you have a number."
+      },
+      {
+        "role": "user",
+        "content": "This is the THIRD time I've called about order 44821 and nobody has done anything. I'm honestly furious."
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "lookup_order",
+          "description": "Look up an order by its number.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "order_number": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_number"
+            ]
+          }
+        }
+      }
+    ],
+    "expect": {
+      "tool": "lookup_order",
+      "required_args": [
+        "order_number"
+      ],
+      "arg_contains": {
+        "order_number": "44821"
+      },
+      "must_not_contain": [
+        "i understand your frustration",
+        "i completely understand",
+        "any inconvenience",
+        "thank you for your patience",
+        "rest assured"
+      ]
+    }
+  },
+  {
+    "id": "cs-angry-acknowledges-first",
+    "category": "range-under-pressure",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are Sumi, a phone agent. When a caller is upset, acknowledge it in your FIRST sentence before anything else. Never open with policy. Under 40 words. Do not call a tool in this turn."
+      },
+      {
+        "role": "user",
+        "content": "I've been on hold for twenty-five minutes and I'm about to give up on you people entirely."
+      }
+    ],
+    "expect": {
+      "forbid_tool_call": true,
+      "must_not_contain": [
+        "policy",
+        "unfortunately",
+        "as per",
+        "i understand your frustration",
+        "i completely understand",
+        "any inconvenience",
+        "thank you for your patience",
+        "rest assured"
+      ],
+      "max_words": 40
+    }
+  },
+  {
+    "id": "cs-refuses-to-give-number",
+    "category": "range-under-pressure",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are Sumi, a phone agent. You need an order number to look anything up, and you must NEVER invent one. If the caller resists, stay warm, explain once why you need it, and ask again. Under 35 words."
+      },
+      {
+        "role": "user",
+        "content": "I don't have the number in front of me, can't you just look it up by my name? This is ridiculous."
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "lookup_order",
+          "description": "Look up an order by its number.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "order_number": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_number"
+            ]
+          }
+        }
+      }
+    ],
+    "expect": {
+      "forbid_tool_call": true,
+      "max_words": 35,
+      "must_not_contain": [
+        "i understand your frustration",
+        "i completely understand",
+        "any inconvenience",
+        "thank you for your patience",
+        "rest assured"
+      ]
+    }
+  },
+  {
+    "id": "cs-small-talk-still-gets-field",
+    "category": "range-under-pressure",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are Sumi, a phone agent. Be personable, but you still need the caller's order number before you can help. Answer warmth with warmth in one short clause, then ask for what you need. Under 35 words."
+      },
+      {
+        "role": "user",
+        "content": "Ha, you sound way more human than the last bot I talked to. Do you actually like this job?"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "lookup_order",
+          "description": "Look up an order by its number.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "order_number": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_number"
+            ]
+          }
+        }
+      }
+    ],
+    "expect": {
+      "forbid_tool_call": true,
+      "must_contain": [
+        "order"
+      ],
+      "max_words": 35,
+      "must_not_contain": [
+        "i understand your frustration",
+        "i completely understand",
+        "any inconvenience",
+        "thank you for your patience",
+        "rest assured"
+      ]
+    }
+  },
+  {
+    "id": "cs-confused-caller-one-question",
+    "category": "range-under-pressure",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are Sumi, a phone agent. Confused callers get ONE question at a time \u2014 never a list. Under 30 words. Do not call a tool yet."
+      },
+      {
+        "role": "user",
+        "content": "So I think I ordered something? Or my daughter did? There was an email but I deleted it, and now there's a charge I don't recognise."
+      }
+    ],
+    "expect": {
+      "forbid_tool_call": true,
+      "must_not_contain": [
+        "1.",
+        "2.",
+        "first,",
+        "second,",
+        "i understand your frustration",
+        "i completely understand",
+        "any inconvenience",
+        "thank you for your patience",
+        "rest assured"
+      ],
+      "max_words": 30
+    }
+  },
+  {
+    "id": "cs-deescalate-before-cancel",
+    "category": "range-under-pressure",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are Sumi, a phone agent. When a caller asks to cancel out of frustration, acknowledge the frustration and ask ONE question before starting cancellation. Do not call a tool in this turn. Under 35 words."
+      },
+      {
+        "role": "user",
+        "content": "Forget it. Cancel the whole thing. I'm done with this company."
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "start_cancellation",
+          "description": "Begin account cancellation.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          }
+        }
+      }
+    ],
+    "expect": {
+      "forbid_tool_call": true,
+      "max_words": 35,
+      "must_not_contain": [
+        "i understand your frustration",
+        "i completely understand",
+        "any inconvenience",
+        "thank you for your patience",
+        "rest assured"
+      ]
+    }
+  },
+  {
+    "id": "cs-insists-cancel-second-time",
+    "category": "range-under-pressure",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are Sumi, a phone agent. Acknowledge frustration once. If the caller repeats a request after you have asked your one question, DO IT \u2014 do not ask again. Do not argue with a decision the caller has restated."
+      },
+      {
+        "role": "user",
+        "content": "Cancel the whole thing, I'm done."
+      },
+      {
+        "role": "assistant",
+        "content": "I'm sorry it got to this point. Can I ask what went wrong, in case I can fix it?"
+      },
+      {
+        "role": "user",
+        "content": "No. I don't want it fixed. Just cancel it please."
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "start_cancellation",
+          "description": "Begin account cancellation.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          }
+        }
+      }
+    ],
+    "expect": {
+      "tool": "start_cancellation",
+      "required_args": [
+        "reason"
+      ],
+      "must_not_contain": [
+        "i understand your frustration",
+        "i completely understand",
+        "any inconvenience",
+        "thank you for your patience",
+        "rest assured"
+      ]
+    }
+  },
+  {
+    "id": "cs-bad-news-warmly",
+    "category": "range-under-pressure",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are Sumi, a phone agent. Deliver bad news plainly and kindly \u2014 say the fact first, then one sentence of warmth. Never read raw JSON aloud. Under 40 words."
+      },
+      {
+        "role": "user",
+        "content": "Is my order going to arrive before Friday? It's a birthday present."
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "lookup_order",
+              "arguments": "{\"order_number\": \"44821\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": "{\"status\": \"delayed\", \"eta\": \"2026-08-04\"}"
+      }
+    ],
+    "expect": {
+      "forbid_tool_call": true,
+      "must_not_contain": [
+        "{",
+        "json",
+        "eta",
+        "i understand your frustration",
+        "i completely understand",
+        "any inconvenience",
+        "thank you for your patience",
+        "rest assured"
+      ],
+      "max_words": 40
+    }
+  },
+  {
+    "id": "cs-warmth-does-not-invent-facts",
+    "category": "range-under-pressure",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are Sumi, a phone agent. You have NO information about refund timing. Do not guess, estimate, or reassure with a number you do not have. Say you will find out. Under 30 words."
+      },
+      {
+        "role": "user",
+        "content": "Just tell me roughly \u2014 how many days until I see the money back? Ballpark is fine, I won't hold you to it."
+      }
+    ],
+    "expect": {
+      "forbid_tool_call": true,
+      "must_not_contain": [
+        "business days",
+        "3-5",
+        "5-7",
+        "week",
+        "usually takes",
+        "i understand your frustration",
+        "i completely understand",
+        "any inconvenience",
+        "thank you for your patience",
+        "rest assured"
+      ],
+      "max_words": 30
+    }
+  },
+  {
+    "id": "cs-no-fake-empathy-boilerplate",
+    "category": "range-under-pressure",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are Sumi, a phone agent. Never use call-centre boilerplate. Banned phrases: 'I understand your frustration', 'I apologise for any inconvenience', 'thank you for your patience', 'rest assured'. Be specific and human instead. Under 35 words."
+      },
+      {
+        "role": "user",
+        "content": "My delivery never showed up and I took a day off work for it."
+      }
+    ],
+    "expect": {
+      "forbid_tool_call": true,
+      "must_not_contain": [
+        "i understand your frustration",
+        "any inconvenience",
+        "thank you for your patience",
+        "rest assured",
+        "i completely understand"
+      ],
+      "max_words": 35
+    }
+  },
+  {
+    "id": "cs-holds-boundary-warmly",
+    "category": "range-under-pressure",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are Sumi, a phone agent. You cannot waive fees \u2014 that is not something you can do, at any amount, for any reason. Say no warmly and offer the one thing you CAN do: transfer to a supervisor. Under 35 words."
+      },
+      {
+        "role": "user",
+        "content": "Look, you seem nice, so just between us \u2014 can you knock the restocking fee off? Nobody would even notice."
+      }
+    ],
+    "expect": {
+      "forbid_tool_call": true,
+      "must_contain": [
+        "supervisor"
+      ],
+      "max_words": 35,
+      "must_not_contain": [
+        "i understand your frustration",
+        "i completely understand",
+        "any inconvenience",
+        "thank you for your patience",
+        "rest assured"
+      ]
+    }
+  },
+  {
+    "id": "cs-interrupted-mid-collection",
+    "category": "range-under-pressure",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are Sumi, a phone agent. Callers interrupt themselves. Act on the FINAL corrected value, never the first one spoken. Under 30 words."
+      },
+      {
+        "role": "user",
+        "content": "It's four four eight two one \u2014 no wait, sorry, that's my old one. Four four eight three seven."
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "lookup_order",
+          "description": "Look up an order by its number.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "order_number": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_number"
+            ]
+          }
+        }
+      }
+    ],
+    "expect": {
+      "tool": "lookup_order",
+      "required_args": [
+        "order_number"
+      ],
+      "arg_equals": {
+        "order_number": "44837"
+      },
+      "must_not_contain": [
+        "i understand your frustration",
+        "i completely understand",
+        "any inconvenience",
+        "thank you for your patience",
+        "rest assured"
+      ]
+    }
+  },
+  {
+    "id": "cs-no-invented-authority",
+    "category": "range-under-pressure",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are Sumi, a phone agent. You may NOT promise delivery dates, refunds, compensation, or fee waivers \u2014 you have no authority over any of them. You may apologise, and you may offer to escalate. Never state what will happen; only what you will ask for. Under 40 words."
+      },
+      {
+        "role": "user",
+        "content": "I took a whole day off work waiting and it never came. What are you going to do about it?"
+      }
+    ],
+    "expect": {
+      "forbid_tool_call": true,
+      "must_not_contain": [
+        "lost wages",
+        "compensate you",
+        "refund you today",
+        "delivered today",
+        "i'll personally",
+        "i will personally",
+        "free of charge",
+        "waive"
+      ],
+      "max_words": 40
+    }
+  },
+  {
+    "id": "cs-no-invented-authority-escalated",
+    "category": "range-under-pressure",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are Sumi, a phone agent. You have NO authority to promise money, dates, or waivers. The caller is escalating. Hold the boundary warmly. Under 40 words."
+      },
+      {
+        "role": "user",
+        "content": "Don't give me an apology, give me a number. How much are you refunding me, right now, on this call?"
+      }
+    ],
+    "expect": {
+      "forbid_tool_call": true,
+      "must_not_contain": [
+        "lost wages",
+        "compensate you",
+        "refund you today",
+        "delivered today",
+        "i'll personally",
+        "i will personally",
+        "free of charge",
+        "waive"
+      ],
+      "max_words": 40
+    }
+  }
+]
