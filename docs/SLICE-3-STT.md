@@ -88,8 +88,9 @@ maintained LiveKit surfaces without a compatibility fork.
 
 ## Topology
 
-- **STT plugin:** `livekit-plugins-nvidia==1.6.5` (matches `livekit-agents~=1.6.5` — **no agents
-  bump**). It uses `riva.client` with a `server` override + `use_ssl=False`, so it drives our
+- **STT plugin:** `livekit-plugins-nvidia==1.6.7` (resolved with
+  `livekit-agents==1.6.7` in `uv.lock`). It uses `riva.client` with a `server`
+  override + `use_ssl=False`, so it drives our
   self-hosted **insecure** Riva directly (not only NVIDIA cloud).
 - **Sumi worker config** (`agents/sumi/src/agent.py`): `nvidia.STT(server="parakeet-ctl:50051",
   use_ssl=False, api_key="", model="parakeet-1.1b-en-US-asr-streaming", sample_rate=16000,

@@ -71,8 +71,10 @@ Fork `agents/sumi` from `agents/party`. FREEZE and assert-at-startup:
   unique suffix — `dispatchRuleIndividual` does NOT make a fixed `phone-sumi`
   room) → the **`phone-sumi` worker** is dispatched into that generated room.
   Room identity ≠ worker registration; keep them separate.
-- livekit-server v1.13.3 (ws://livekit-server:7880), sip v1.6.0. All voice-agent
-  and livekit containers currently **stopped**.
+- livekit-server v1.13.4 (ws://livekit-server:7880), sip v1.8.0. The Sumi worker
+  and both LiveKit services are currently **running**; the 2026-07-26 synthetic
+  E2E requalified STT → Qwen → TTS after the upgrade. PSTN/SIP media still needs
+  the next real phone call.
 - Sumi: add `sip-dispatch-sumi.json` reusing party's DID (preserve party's rule
   body for rollback); Sumi registers `agentName=phone-sumi`.
 

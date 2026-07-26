@@ -97,13 +97,6 @@ the A/B would be measuring the fixture.
 bandpass tone tests and was *not* G.711; the disproof is one value — **G.711
 encodes silence to `0xFF`.**
 
-The phone transform isolates the **codec**, not the transport. It reproduces no
-jitter, packet loss or reordering, RTP pacing, carrier-side transcoding beyond
-the local μ-law stage, or re-INVITE handling. In particular, it cannot test the
-live `jitterBuf: false` path. Treat its output as the codec's contribution to the
-samples, not as a synthetic PSTN call; only a real phone call can qualify the
-packet path.
-
 ### What (c) does NOT reproduce — read this before trusting any number below
 
 It reproduces the **codec**. It reproduces **none of the transport**:
