@@ -5,15 +5,29 @@
 # server for the phone-agent POC. Every change below was made against a measured
 # result, not a preference; the numbers are in docs/QWEN-POC.md.
 #
-#   --parallel 2 -> 16     the old value was the concurrency ceiling, and it was
+#   --parallel 2 -> 24     the old value was the concurrency ceiling, and it was
 #                          being read as a model limit. Measured on the old
 #                          config: decode held flat at 45-48 tok/s from 2 through
 #                          8 concurrent while TTFT p50 went 0.23s -> 2.57s. That
 #                          is a QUEUE, not saturation. Callers 3..8 were waiting.
 #   --ctx-size 16384       ctx is SPLIT across slots (load log: "new slot,
-#     -> 262144            n_ctx = 8192" for each of 2). 16384/2 gave 8K per call
-#                          against a model that trains to 262144. 262144/16 keeps
-#                          16K per call while serving 8x the callers.
+#     -> 393216            n_ctx = 8192" for each of 2). 16384/2 gave 8K per call
+#                          against a model that trains to 262144. 393216/24 keeps
+#                          16K per call while serving 12x the callers.
+#
+# 24 x 16384 is the QUALIFIED profile for a 16 GB card, not a guess. The ceiling
+# was found by crossing it: 32 x 16384 loads and reports healthy at 15836/16311
+# MiB, then ABORTS under real concurrent load because ~475 MiB is not enough for
+# the compute buffers. restart:unless-stopped recovered it — so the watchdog is
+# proven by an actual crash rather than by assertion. Measured at 24 slots:
+#
+#   c=8   TTFT p50 0.54s      c=16  0.96s      c=24  0.83s, 12/12 pass
+#   ~22 tok/s per stream = ~6x speech rate; staying ahead of TTS is the target,
+#   not maximal decode.
+#
+# NOTE the first run after a container start reads ~1.5s at c=8 (cold prompt
+# cache) and settles to ~0.54s on reruns. Discard the first sweep after a
+# restart; it is warm-up, not the server.
 #   --reasoning off        Qwen3.5's template defaults thinking ON. Measured, same
 #     (NEW)                cases, only this changed: pass 7/12 -> 10/12, TTFT p50
 #                          3.50s -> 0.178s (~20x), decode 26.9 -> 67.7 tok/s.
@@ -46,9 +60,9 @@ services:
       - --port
       - "8080"
       - --ctx-size
-      - "262144"
+      - "393216"
       - --parallel
-      - "16"
+      - "24"
       - --reasoning
       - "off"
       - --n-gpu-layers
