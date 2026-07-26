@@ -22,8 +22,18 @@ services:
       # the ONE real run-override (selects the served model profile:
       # parakeet-1.1b-en-US-asr-streaming). Everything else is an image default.
       - NIM_MODEL_PROFILE=28d9961db43ac9078bca3f35c97e8ababbcfb9f37c23ec4c2949ccc4831ed958
+      # Production starts serve the already-qualified Triton repository. A cold RMIR -> TensorRT
+      # build is a provisioning operation, not part of every container start: rebuilding here
+      # consumed the launch headroom shared with TTS and then the wrapper exited 0 after Riva's
+      # acoustic-model load OOM, producing a misleading restart/rebuild loop.
+      - NIM_DISABLE_MODEL_DOWNLOAD=true
+      - NIM_WORKSPACE=/opt/nim/empty-workspace
     volumes:
       - /home/ericmey/models/nim-cache:/opt/nim/.cache
+      # Durable output of the one-time RMIR -> TensorRT build. Keeping it outside the writable
+      # container layer makes restarts/recreates fast and prevents `compose down` from discarding
+      # the qualified engine repository.
+      - /home/ericmey/models/parakeet-model-repository:/data/models
     ports:
       # loopback-only, preserved verbatim from the bare run. Sumi uses service DNS, not this.
       - "127.0.0.1:50051:50051"
