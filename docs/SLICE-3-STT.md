@@ -127,14 +127,15 @@ and was removed from that Monday path. The 2026-07-26 production cutover
 supersedes this disposition while preserving `parakeet-ctl-prev` as the
 prior-image rollback tier.
 
-### Historical live/canonical drift — `start_period`
+### Startup health grace — `start_period`
 
 The migrated container carried `start_period=180s` (it was NOT recreated just to change a
 healthcheck-timing field — that would repeat the 45-min build). The **canonical committed**
-definition is `start_period=900s`, conservatively above the observed cold build. This drift is
-closed now that the managed recreate is absent: 900s applies at the next genuine recreate. (A 180s window marking a legitimately
-*building* container "unhealthy" is the same misclassify-an-expected-state defect fixed in
-monitoring the same day.)
+definition is `start_period=3600s`, conservatively above the observed cold build. The previous
+`900s` value was only 15 minutes and could not satisfy the documented ~45-minute contract.
+The 2026-07-26 managed recreate began under that prior 900-second health configuration; it was
+not destroyed mid-engine-build merely to change health timing. A future genuine recreate uses
+the corrected one-hour grace.
 
 ## Proofs
 
