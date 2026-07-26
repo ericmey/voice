@@ -83,6 +83,60 @@ Human speech is ~3–4 tokens/sec. **22 tok/s per stream is ~6× real-time** —
 model finishes each sentence long before TTS can say it. Chasing maximal decode
 optimises a number nobody hears. Staying ahead of the mouth is the target.
 
+### Final placement — 16 × 16384, qualified with all three tenants resident
+
+The 24-slot profile was qualified and then **superseded by placement**, not by
+tuning. Yua measured steady Parakeet at 3.64 GB and TTS at 13.26 GB, so STT and
+TTS cannot co-reside on one 16 GB card. Clean split: **TTS alone on GPU0, Qwen +
+Parakeet on GPU1** — which this service had to fit inside.
+
+```
+24 × 16384 = 13.31 GB  + 3.64 = 16.95 GB   over the card
+16 × 16384 = 10.68 GB  + 3.64 = 14.32 GB   ~1.5 GB free, measured
+```
+
+**Context per call was kept at 16 K rather than slots at 24.** The equal-memory
+alternative was 24 × 8192. For a tool-calling phone agent the schema plus history
+is what must not truncate, and 24 simultaneous callers is not what this box has
+to prove — the L4 does, on 24 GB, without Parakeet resident.
+
+Three sweeps, same 12 cases, same config, **only placement changing**:
+
+| | pre-repin | + Parakeet | + TTS (all three) |
+|---|---|---|---|
+| pass | 11/12 | 11/12 | 12/12 |
+| TTFT p50 | 1.03 s | 0.84 s | 0.79 s |
+| TTFT p95 | 1.34 s | 1.16 s | 1.09 s |
+| decode | 21.9 tok/s | 20.9 | 22.0 |
+
+Final state, measured during the concurrent run — LLM sweep and a paced Parakeet
+transcription in the same window:
+
+```
+sumi-local-llm   Restarts=0 healthy      GPU0   5384 / 16311 MiB
+parakeet-ctl     Restarts=0 healthy      GPU1  14351 / 16311 MiB
+voicebook-stream Restarts=0 healthy
+```
+
+Parakeet's own simultaneous result: first interim **157 ms**, non-empty final
+transcript.
+
+> **The 12/12 is threshold noise, not an improvement.** The case that flipped is
+> `instr-persona-hold` at **43 words against a 40-word limit** — three words from
+> its boundary, flipping the way borderline cases flip. Co-residency did not make
+> the model better. Reading it as a gain would be the same over-scoping this
+> document already records three times.
+
+**What is genuinely established:** three GPU tenants across two 16 GB cards under
+concurrent LLM load and live transcription, zero restarts, decode within 0.5% of
+the pre-repin baseline, and **GPU1 holding at its idle figure throughout** — no
+allocation spike under load, which is the exact failure mode that killed 32
+slots.
+
+**Co-residency was proven by a load test, not by three containers reporting
+healthy.** ~1.5 GB of margin sits between the 3.0 GB that survived and the
+0.5 GB that did not; health checks passed on the configuration that aborted.
+
 ### Warm-up artifact — discard the first sweep after a restart
 
 The first post-restart sweep at c=8 read **1.47 s** and settled to **0.54 s /
