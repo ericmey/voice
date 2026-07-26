@@ -33,7 +33,10 @@ mu-law is implemented here in numpy rather than via `audioop` on purpose —
 audioop was removed in Python 3.13, and a fixture that dies on the next
 interpreter bump is not a fixture.
 
-RED-PROOFED against cases with a known answer before being trusted:
+TWO STAGES, TWO SEPARATE PROOFS. Proving one and claiming the instrument is
+exactly the mistake this file already made once.
+
+  BANDPASS — tone tests with a known answer:
 
     input           energy outside 300-3400 Hz    expected
     1 kHz tone                   0.02%            ~0    passes
@@ -41,9 +44,21 @@ RED-PROOFED against cases with a known answer before being trusted:
     1k + 6k mix                 50.01%            ~50   half each
     100 Hz tone                 99.99%            ~100  below highpass
 
-mu-law SNR measured 35-38 dB, which is the right figure for 8-bit companded
-G.711. A filter that reports a plausible number without ever being shown a
-signal it must reject is a claim, not an instrument.
+  CODEC — `--selftest`, bit-exact against ffmpeg's pcm_mulaw:
+
+    vectors      9 hand-checked PCM16 values incl. 0, +-1, full scale
+    exhaustive   all 65536 int16 inputs, 0 mismatches
+    decode       all 256 codes back to linear, 0 mismatches
+
+The first version of this file passed the bandpass tests with a codec that was
+NOT G.711 — an idealised `log1p(mu*x)` curve, which has the right shape and the
+wrong quantisation levels, and therefore reported a believable 35-38 dB SNR
+while not being the transfer function the trunk applies. Caught by Yua on
+review, 2026-07-26, with the vector that settles it in one line: G.711 encodes
+silence to 0xFF; the idealised curve encoded it to 0x00.
+
+A stage you did not test is a stage you are guessing about, however good the
+number from the stage you did test looks.
 """
 from __future__ import annotations
 
@@ -55,8 +70,6 @@ from pathlib import Path
 
 import numpy as np
 
-# G.711 mu-law, ITU-T G.711. mu=255, 8-bit.
-_MU = 255.0
 # Telephony passband. The lowpass sits below Nyquist for 8 kHz (4000 Hz) so
 # decimation cannot alias — a real gateway filters before it decimates, and
 # skipping that step would inject distortion the phone leg does NOT have.
@@ -120,17 +133,73 @@ def resample(audio: np.ndarray, src: int, dst: int) -> np.ndarray:
     return np.interp(x_out, np.arange(len(audio)), audio)
 
 
+# G.711 PCMU is NOT continuous log companding. It is piecewise-linear: sign bit,
+# 3-bit exponent selecting one of 8 segments, 4-bit mantissa, whole byte
+# inverted. An idealised log curve has the same SHAPE and different quantisation
+# levels, so it yields a believable SNR while being the wrong transfer function.
+# The decoder below is the ITU-T/Sun reference; the encoder is built from it,
+# and both are checked bit-for-bit against ffmpeg by --selftest.
+
+
+def _g711_decode_u8(codes: np.ndarray) -> np.ndarray:
+    """8-bit PCMU codes -> int16."""
+    u = (~codes.astype(np.int32)) & 0xFF
+    t = (((u & 0x0F) << 3) + 0x84) << ((u & 0x70) >> 4)
+    return np.where(u & 0x80, 0x84 - t, t - 0x84).astype(np.int16)
+
+
+def _build_encode_table() -> np.ndarray:
+    """Build the 16384-entry linear->PCMU table the way ffmpeg does.
+
+    IMPORTANT, and the reason the obvious implementation disagrees: the ITU
+    reference encoder TRUNCATES within a segment, while ffmpeg derives its
+    encode table by inverting the decoder and taking the MIDPOINT between
+    adjacent output levels — i.e. nearest-neighbour quantisation. The two agree
+    on 99.2% of int16 inputs and differ by one code on the 512 samples that sit
+    exactly on a decision boundary.
+
+    We match ffmpeg because ffmpeg is the ground truth we can actually run.
+    That difference is at most one quantisation step, but it is a real
+    difference and it is named here rather than rounded away in a comment.
+    """
+    mask = 0xFF
+    table = np.empty(16384, dtype=np.uint8)
+    levels = _g711_decode_u8(np.arange(256, dtype=np.uint8)).astype(np.int32)
+
+    table[8192] = mask
+    j = 1
+    for i in range(127):
+        v1 = int(levels[i ^ mask])
+        v2 = int(levels[(i + 1) ^ mask])
+        v = (v1 + v2 + 4) >> 3
+        if v > j:
+            table[8192 - np.arange(j, v)] = i ^ (mask ^ 0x80)
+            table[8192 + np.arange(j, v)] = i ^ mask
+            j = v
+    if j < 8192:
+        table[8192 - np.arange(j, 8192)] = 127 ^ (mask ^ 0x80)
+        table[8192 + np.arange(j, 8192)] = 127 ^ mask
+    table[0] = table[1]
+    return table
+
+
+_ENCODE_TABLE = _build_encode_table()
+
+
+def _g711_encode_i16(pcm: np.ndarray) -> np.ndarray:
+    """int16 -> 8-bit PCMU codes. Table lookup on the 14-bit value, as ffmpeg."""
+    idx = (pcm.astype(np.int32) >> 2) + 8192
+    return _ENCODE_TABLE[np.clip(idx, 0, 16383)]
+
+
 def mulaw_encode(audio: np.ndarray) -> np.ndarray:
-    """float [-1,1] -> 8-bit mu-law codes. This is the lossy step."""
-    a = np.clip(audio, -1.0, 1.0)
-    mag = np.log1p(_MU * np.abs(a)) / math.log1p(_MU)
-    return np.clip(np.rint(np.sign(a) * mag * 127.0), -127, 127).astype(np.int8)
+    """float [-1,1] -> 8-bit PCMU codes. This is the lossy step."""
+    pcm = np.clip(np.rint(np.clip(audio, -1.0, 1.0) * 32768.0), -32768, 32767).astype(np.int16)
+    return _g711_encode_i16(pcm)
 
 
 def mulaw_decode(codes: np.ndarray) -> np.ndarray:
-    a = codes.astype(np.float64) / 127.0
-    mag = (np.expm1(np.abs(a) * math.log1p(_MU))) / _MU
-    return np.sign(a) * mag
+    return _g711_decode_u8(codes).astype(np.float64) / 32768.0
 
 
 def phone_leg(audio: np.ndarray, rate: int) -> tuple[np.ndarray, np.ndarray]:
@@ -168,16 +237,92 @@ def measure(before: np.ndarray, after8k: np.ndarray, rate: int) -> dict:
     }
 
 
+def selftest() -> int:
+    """Prove the codec stage against the REAL encoder, not against its shape.
+
+    Two checks. The vector check is human-readable and catches a codebook swap
+    instantly (G.711 silence is 0xFF; an idealised curve gives 0x00). The
+    exhaustive check is the one that actually settles it — all 65536 int16
+    inputs, byte for byte, against ffmpeg's pcm_mulaw.
+    """
+    import shutil
+    import subprocess
+
+    ok = True
+
+    # Yua's review vectors, 2026-07-26.
+    probe = np.array([-32768, -20000, -1000, -1, 0, 1, 1000, 20000, 32767], dtype=np.int16)
+    want = np.array([0, 12, 78, 126, 255, 255, 206, 140, 128], dtype=np.uint8)
+    got = _g711_encode_i16(probe)
+    match = bool(np.array_equal(got, want))
+    print(f"  vectors      {'PASS' if match else 'FAIL'}")
+    if not match:
+        print(f"    input    {probe.tolist()}")
+        print(f"    expected {want.tolist()}")
+        print(f"    got      {got.tolist()}")
+        ok = False
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        print("  exhaustive   SKIPPED — no ffmpeg on PATH")
+        print("               A SKIPPED check is not a passed check.")
+        return 0 if ok else 1
+
+    every = np.arange(-32768, 32768, dtype=np.int16)
+    proc = subprocess.run(
+        [ffmpeg, "-hide_banner", "-loglevel", "error",
+         "-f", "s16le", "-ar", "8000", "-ac", "1", "-i", "pipe:0",
+         "-f", "mulaw", "-acodec", "pcm_mulaw", "pipe:1"],
+        input=every.tobytes(), capture_output=True, check=True,
+    )
+    ref = np.frombuffer(proc.stdout, dtype=np.uint8)
+    mine = _g711_encode_i16(every)
+    n = min(len(ref), len(mine))
+    bad = int(np.count_nonzero(ref[:n] != mine[:n]))
+    print(f"  exhaustive   {'PASS' if bad == 0 else 'FAIL'}  "
+          f"({n} int16 inputs vs ffmpeg pcm_mulaw, {bad} mismatches)")
+    if bad:
+        idx = int(np.flatnonzero(ref[:n] != mine[:n])[0])
+        print(f"    first at pcm={every[idx]}: ffmpeg={ref[idx]} mine={mine[idx]}")
+        ok = False
+
+    # Decode must invert ffmpeg's encode, not just our own.
+    back = _g711_decode_u8(ref[:n])
+    proc2 = subprocess.run(
+        [ffmpeg, "-hide_banner", "-loglevel", "error",
+         "-f", "mulaw", "-ar", "8000", "-ac", "1", "-i", "pipe:0",
+         "-f", "s16le", "-acodec", "pcm_s16le", "pipe:1"],
+        input=ref[:n].tobytes(), capture_output=True, check=True,
+    )
+    ref_back = np.frombuffer(proc2.stdout, dtype="<i2")
+    m = min(len(ref_back), len(back))
+    bad2 = int(np.count_nonzero(ref_back[:m] != back[:m]))
+    print(f"  decode       {'PASS' if bad2 == 0 else 'FAIL'}  ({m} codes, {bad2} mismatches)")
+    if bad2:
+        ok = False
+
+    return 0 if ok else 1
+
+
 def main() -> int:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("input", type=Path)
+    p.add_argument("input", type=Path, nargs="?")
+    p.add_argument("--selftest", action="store_true",
+                   help="validate the codec stage against ffmpeg pcm_mulaw and exit")
     p.add_argument("--out", type=Path, default=None)
     p.add_argument("--keep-8k", action="store_true",
                    help="write the true 8 kHz artifact instead of upsampling back")
     p.add_argument("--measure", action="store_true")
     a = p.parse_args()
 
+    if a.selftest:
+        print("\nphone-leg-transform selftest — G.711 PCMU codec stage\n")
+        return selftest()
+
+    if a.input is None:
+        print("phone-leg-transform: an input file is required", file=sys.stderr)
+        return 2
     if not a.input.is_file():
         print(f"phone-leg-transform: no such file {a.input}", file=sys.stderr)
         return 2
