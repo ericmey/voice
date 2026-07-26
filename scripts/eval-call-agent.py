@@ -7,9 +7,19 @@ Built 2026-07-26 for the Qwen finetune POC. The question this answers is not
     Under realistic concurrency, does it still emit VALID tool calls fast
     enough to stay ahead of TTS, and when it fails, HOW does it fail?
 
-Speaks OpenAI /v1/chat/completions, so the SAME cases run unchanged against
-llama.cpp (--jinja), vLLM, and a hosted L4 target. That is the point: the
+Speaks OpenAI /v1/chat/completions. The intent is that the SAME cases run
+unchanged against llama.cpp (--jinja), vLLM, and a hosted L4 target, because the
 comparison is only meaningful if the inputs are byte-identical.
+
+PORTABILITY IS AN INTENT, NOT A VERIFIED PROPERTY (2026-07-26). This has only
+ever been run against llama.cpp. The docstring previously asserted the
+cross-engine claim as fact, which is the same fault this file's own history
+records twice: true of what was tested, asserted about what was not. The claim
+matters precisely because next week's L4/vLLM run depends on it, so it must be
+PROVEN on the first alternative endpoint rather than assumed. Known risk areas
+when it is: streamed tool_calls delta shape and index handling, the
+reasoning_content field name, and whether chat_template_kwargs is accepted or
+rejected. None of those are exotic; all of them differ between servers.
 
 Four measurements, per case and aggregate:
   1. TOOL-CALL VALIDITY  schema-valid, right tool, right args — not "plausible"
