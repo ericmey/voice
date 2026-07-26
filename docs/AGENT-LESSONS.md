@@ -467,3 +467,21 @@ serving-time failure window. Use observed serving startup plus explicit margin.
 **Why:** A grace period can become a lie without changing a single number. Too
 short marks expected work unhealthy; too long makes a broken production start
 look expected.
+
+## 2026-07-26 — Concurrency is observed over the request lifetime
+
+**Trigger:** A load harness labelled runs from the requested worker count even
+when it had fewer work items, then replaced that label with a computed upper
+bound. Its first observed counter used a cyclic barrier, so a second partial
+wave waited for the timeout and manufactured a 120-second p95.
+
+**Lesson:** Report concurrency only from a counter incremented after a one-shot
+first-wave release and held until each response stream is exhausted. Record the
+observed peak in the receipt. Requested workers and available tasks are inputs,
+not measurements. A broken first wave must also open the one-shot event so later
+work cannot strand. After repairing an instrument, red-test the replacement and
+ask what its new number measures; a corrective result gets no reduced scrutiny.
+
+**Why:** A plausible capacity label can survive reviews and size production
+hardware incorrectly. A barrier or counter bug can then make the corrective run
+look authoritative while measuring the test fixture's own delay.

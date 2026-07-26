@@ -1,0 +1,72 @@
+name: sumi-vllm-l4
+
+# Qualification service for the production-shaped GCP G2 / NVIDIA L4 target.
+#
+# This file deliberately does not download a model. Mount a locally verified
+# export and record its immutable source revision in SUMI_VLLM_MODEL_REVISION.
+# A successful container health check is only readiness; acceptance is earned
+# by scripts/qualify-sumi-vllm-l4.sh at one observed concurrency point per run.
+services:
+  sumi-vllm-l4:
+    container_name: sumi-vllm-l4
+    # vLLM v0.23.0, linux/amd64 child manifest. G2/L4 is x86_64 + sm_89.
+    image: vllm/vllm-openai@sha256:3a1e7f5904e1a1192a02aa0086ceaffc33985d7044c7bb25b3a43d61bdbe3ac0
+    restart: unless-stopped
+    ipc: host
+    environment:
+      # vLLM reads this directly; it therefore never appears in container argv.
+      VLLM_API_KEY: "${SUMI_VLLM_API_KEY:?set SUMI_VLLM_API_KEY}"
+      VLLM_ENFORCE_STRICT_TOOL_CALLING: "true"
+    command:
+      - /model
+      - --served-model-name
+      - "${SUMI_VLLM_SERVED_MODEL:-sumi-local}"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --language-model-only
+      - --max-model-len
+      - "${SUMI_VLLM_MAX_MODEL_LEN:-16384}"
+      - --max-num-seqs
+      # A scheduling ceiling to test, not an accepted caller count.
+      - "${SUMI_VLLM_MAX_NUM_SEQS:-32}"
+      - --gpu-memory-utilization
+      - "${SUMI_VLLM_GPU_MEMORY_UTILIZATION:-0.92}"
+      - --quantization
+      - "${SUMI_VLLM_QUANTIZATION:?set SUMI_VLLM_QUANTIZATION for the mounted export}"
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_xml
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking":false}'
+      - --disable-log-requests
+    volumes:
+      - "${SUMI_VLLM_MODEL_DIR:?set SUMI_VLLM_MODEL_DIR to a verified local model directory}:/model:ro"
+    ports:
+      # Qualification is host-local. Production exposure belongs behind the
+      # deployment's authenticated network/proxy, not an open vLLM socket.
+      - "127.0.0.1:${SUMI_VLLM_HOST_PORT:-8088}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${SUMI_VLLM_GPU_ID:-0}"]
+              capabilities: [gpu]
+    labels:
+      ai.harem.model.revision: "${SUMI_VLLM_MODEL_REVISION:?set immutable source revision}"
+      ai.harem.model.quantization: "${SUMI_VLLM_QUANTIZATION:?set model quantization}"
+      ai.harem.acceptance: "unqualified-until-receipt"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          curl -fsS -H "Authorization: Bearer $$VLLM_API_KEY"
+          http://127.0.0.1:8000/health >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 900s
