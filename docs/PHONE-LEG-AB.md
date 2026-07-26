@@ -39,15 +39,22 @@ tuning.
 
 | component | ours | latest | gap |
 |---|---|---|---|
-| **livekit/sip** | v1.6.0 | v1.8.0 | 2 minor |
-| livekit-server | v1.13.3 | v1.13.4 | patch |
-| livekit-agents | ~=1.6.5 | 1.6.7 | patch |
+| **livekit/sip** | v1.8.0 | v1.8.0 | current |
+| livekit-server | v1.13.4 | v1.13.4 | current |
+| livekit-agents | 1.6.7 | 1.6.7 | current |
 | pedalboard | 0.9.24 | 0.9.24 | current |
 
 **The commits were read, not assumed.** The audio-touching changes in sip
 v1.6.0→v1.8.0 are: RTP destination redirect on re-INVITE, RTP port draining, and
-three DTMF changes. **No codec, resampling, or quality work.** Updating is hygiene;
-it is not the fix.
+three DTMF changes. **No codec, resampling, or quality work.** The update was
+completed on 2026-07-26 as hygiene; it is not claimed as the fix.
+
+Post-cutover acceptance used the installed 1.6.7 NVIDIA client and one fixed
+caller WAV replayed three times through Parakeet. All three runs produced
+**WER 0.0**, first interim at **156–164 ms**, and final text **24–26 ms** after
+audio ended. Server, SIP, Sumi, Parakeet, Qwen, and Voicebook all remained at
+`Restarts=0`. The synthetic E2E does not traverse PSTN/SIP media, so the next
+real phone call remains the acceptance for the phone leg itself.
 
 ## Branches already settled — do not re-run these
 
@@ -89,6 +96,29 @@ the A/B would be measuring the fixture.
 `--selftest`. Its first version was an idealised log curve that passed the
 bandpass tone tests and was *not* G.711; the disproof is one value — **G.711
 encodes silence to `0xFF`.**
+
+The phone transform isolates the **codec**, not the transport. It reproduces no
+jitter, packet loss or reordering, RTP pacing, carrier-side transcoding beyond
+the local μ-law stage, or re-INVITE handling. In particular, it cannot test the
+live `jitterBuf: false` path. Treat its output as the codec's contribution to the
+samples, not as a synthetic PSTN call; only a real phone call can qualify the
+packet path.
+
+### What (c) does NOT reproduce — read this before trusting any number below
+
+It reproduces the **codec**. It reproduces **none of the transport**:
+
+- **no jitter** — and `jitterBuf: false` is one of the three open hypotheses
+- **no packet loss or reordering**
+- **no RTP pacing or timing**
+- **no carrier-side transcoding** beyond our own
+- **no re-INVITE handling** — which `livekit/sip` v1.8.0 changed
+
+> **This tool measures what μ-law does to the samples. It cannot measure what the
+> network does to the packets.**
+>
+> Every number in this document is *the codec stage, isolated*. **A synthetic E2E
+> cannot prove the phone leg and neither can this — only a real PSTN call can.**
 
 ## Results — one utterance, the production E2E reply
 
