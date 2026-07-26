@@ -74,7 +74,9 @@ services:
     restart: unless-stopped
     command:
       - --model
-      # QUALIFIED. Base Qwen3.5-9B: 12/12 at 24 concurrent on this profile.
+      # QUALIFIED. Base Qwen3.5-9B: 21/24 pass at an OBSERVED 16 in flight,
+      # TTFT p95 1.36s. (This line previously read "12/12 at 24 concurrent" —
+      # that run was 12-way. See the concurrency note above.)
       - /models/base/Qwen3.5-9B-Q4_K_M.gguf
       #
       # EVALUATED AND REJECTED 2026-07-26 — kept mounted, do not promote:
