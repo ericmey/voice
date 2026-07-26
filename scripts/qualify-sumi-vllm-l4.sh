@@ -200,8 +200,13 @@ for label in ("phone", "customer-service"):
     shapes = set(report.get("failure_shapes") or {})
     check(
         f"{label}.observed_concurrency",
-        meta.get("concurrency_honest") is True and meta.get("peak_in_flight", 0) >= requested,
-        f"requested={requested} observed={meta.get('peak_in_flight')}",
+        meta.get("concurrency_honest") is True
+        and meta.get("peak_in_flight", 0) >= requested
+        and meta.get("wave_broken") is not True,
+        (
+            f"requested={requested} observed={meta.get('peak_in_flight')} "
+            f"wave_broken={meta.get('wave_broken')}"
+        ),
     )
     check(
         f"{label}.pass_rate",
@@ -233,6 +238,7 @@ receipt = {
     "scope": "one synchronized first-wave concurrency point",
     "requested_concurrency": requested,
     "observed_peak": {label: report["meta"].get("peak_in_flight") for label, report in runs.items()},
+    "wave_broken": {label: report["meta"].get("wave_broken") for label, report in runs.items()},
     "model_revision": os.environ["SUMI_QUAL_MODEL_REVISION"],
     "quantization": os.environ["SUMI_QUAL_QUANTIZATION"],
     "thresholds": {

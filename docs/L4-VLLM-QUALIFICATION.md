@@ -109,10 +109,11 @@ The runner:
 3. calculates enough repeats for both case sets to create the requested work;
 4. runs tool/instruction and customer-service cases;
 5. requires the harness's observed `peak_in_flight` to reach the requested value;
-6. rejects leaked reasoning and dangerous failure shapes;
-7. applies explicit pass-rate, TTFT p95, and decode thresholds;
-8. requires the container restart count to remain unchanged; and
-9. writes a private, hashed artifact bundle.
+6. rejects a broken first wave even if the requested peak is reached later;
+7. rejects leaked reasoning and dangerous failure shapes;
+8. applies explicit pass-rate, TTFT p95, and decode thresholds;
+9. requires the container restart count to remain unchanged; and
+10. writes a private, hashed artifact bundle.
 
 Defaults are:
 
