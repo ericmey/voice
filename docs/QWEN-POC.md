@@ -86,14 +86,29 @@ optimises a number nobody hears. Staying ahead of the mouth is the target.
 ### Final placement — 16 × 16384, qualified with all three tenants resident
 
 The 24-slot profile was qualified and then **superseded by placement**, not by
-tuning. Yua measured steady Parakeet at 3.64 GB and TTS at 13.26 GB, so STT and
-TTS cannot co-reside on one 16 GB card. Clean split: **TTS alone on GPU0, Qwen +
-Parakeet on GPU1** — which this service had to fit inside.
+tuning.
+
+**The decision-time evidence:** Parakeet steady at 3.64 GB, and the **then-running**
+TTS process at 13.26 GB. Against those figures STT and TTS could not share a 16 GB
+card, so the split was **TTS alone on GPU0, Qwen + Parakeet on GPU1** — which this
+service had to fit inside.
 
 ```
 24 × 16384 = 13.31 GB  + 3.64 = 16.95 GB   over the card
 16 × 16384 = 10.68 GB  + 3.64 = 14.32 GB   ~1.5 GB free, measured
 ```
+
+> **NARROWING, and it matters (Yua, same day, before this hardened).** The
+> 13.26 GB was the **pre-recreate** TTS process, which was later stopped. After a
+> Compose recreate — forced because the stopped container tried to reclaim an IP
+> Parakeet had taken — TTS settled at **5.384 GB** and held there through the
+> all-three acceptance.
+>
+> So: **co-residency of STT and TTS was unsafe at decision time on the numbers we
+> had. It is NOT established as impossible now**, and this document previously
+> said it was. **The cause of the 13.26 → 5.384 GB delta is unknown and open.**
+>
+> The placement is still proven — by load, below. The *impossibility* is not.
 
 **Context per call was kept at 16 K rather than slots at 24.** The equal-memory
 alternative was 24 × 8192. For a tool-calling phone agent the schema plus history
