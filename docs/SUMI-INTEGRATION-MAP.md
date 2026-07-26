@@ -1,10 +1,9 @@
 # Sumi voice-integration map — REVISED (second-read corrections folded, 2026-07-23)
 
-> **STT update (2026-07-24):** the Parakeet sections below preserve the original
-> slice design and qualification history. They are superseded for the active
-> phone path by `docs/SLICE-3-STT.md`: local faster-whisper/Speaches on Mizuki
-> GPU 2 is the accepted default; Parakeet and sherpa/Nemotron are explicit
-> rollback/evaluation providers.
+> **STT update (2026-07-26):** Parakeet/Riva is the locked production default.
+> The faster-whisper/Speaches lane tested a GPU-contention hypothesis that did
+> not survive later audio investigation and is now a stopped, explicit rollback.
+> See `docs/SLICE-3-STT.md`; the audio-glitch cause remains separately open.
 
 Read-only recon + design. **CONFIGURED** = in code/config; **RUNNING** = verified
 live; **GAP** = unresolved/unreadable; **DECISION** = resolved below. No
@@ -152,18 +151,17 @@ Shiori).
 
 ## 6. Cloud deps / fallbacks
 
-Sumi's active path is **fully local** (faster-whisper/Speaches + Momo +
+Sumi's active path is **fully local** (Parakeet/Riva + Momo +
 voicebook-stream). Remove from her path: OpenAI Whisper, Google Gemini,
-ElevenLabs. Keep as **documented rollback** (not active): Parakeet/Riva,
+ElevenLabs. Keep as **documented rollback** (not active): faster-whisper/Speaches,
 sherpa/Nemotron, party's cloud chain, and optional Gemini-native Sumi. LiteLLM
 cloud models stay for the OTHER agents.
 
 ## 7. Resident loadout / VRAM (no ghosts)
 
-- **mizuki** (2 x RTX 5060 Ti 16311 MiB, measured 2026-07-24): GPU 0 hosts
-  voicebook-stream at about 6650 MiB; GPU 1 hosts warmed
-  faster-distil-whisper-large-v3 at about 2198 MiB. `voice-agent-sumi` is CPU
-  orchestration. Parakeet is stopped and is not part of the Monday path.
+- **mizuki** (2 x RTX 5060 Ti 16311 MiB): GPU 0 hosts voicebook-stream plus
+  Parakeet/Riva; faster-whisper is stopped rollback only. Physical GPU 1 hosts
+  the local LLM. `voice-agent-sumi` is CPU orchestration.
 - **momo** (2× Intel GPU): Qwen resident, `-np 2`, split. Per-GPU VRAM readback
   a GAP (xpu-smi N/A) — non-blocking; concurrency proven by the two-slot test.
 
@@ -240,7 +238,7 @@ Not all agent-config. Record the exact action + a pre-mutation readback for each
    `docs/SLICE-6-LIVEKIT-PLANE.md`. →
 7. **Single-client synthetic E2E** (latency marks) —
    **✅ PASSED (2026-07-23; requalified 2026-07-24)** — the guardrail threshold.
-   The current local loop is synthetic LiveKit caller → warmed
+   The 2026-07-24 requalification loop was synthetic LiveKit caller → warmed
    faster-whisper/Speaches STT → Momo LLM → voicebook TTS → Sumi's voice. The
    requalification recovered the caller utterance word-for-word and captured
    38.66 seconds of non-silent 48 kHz Sumi audio with zero worker/STT/TTS

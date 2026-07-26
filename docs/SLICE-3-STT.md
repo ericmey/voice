@@ -1,12 +1,20 @@
-# Slice 3 — Sumi STT: faster-whisper accepted for the phone path — LANDED ✅
+# Slice 3 — Sumi STT: Parakeet/Riva production path — LANDED ✅
+
+> **Production decision (2026-07-26):** Parakeet/Riva is again the locked phone
+> default. Faster-whisper was introduced to test whether Parakeet GPU contention
+> caused the audible glitches; that hypothesis did not survive the later audio
+> investigation. Parakeet materially outperformed faster-whisper on recognition,
+> so the mitigation is retired. Speaches remains a stopped, explicit rollback;
+> it is not a warm or automatic fallback. The audio-glitch cause remains a
+> separate question and is not closed by this cutover.
 
 The original Parakeet/Riva capability passed on 2026-07-23.  The Monday-demo
 qualification on 2026-07-24 deliberately reopened the provider choice after
 Parakeet proved operationally expensive and brittle across host recovery.
-Sumi's accepted default is now local `faster-distil-whisper-large-v3` through
+Sumi's accepted default was temporarily local `faster-distil-whisper-large-v3` through
 Speaches and LiveKit's maintained `STT` + `StreamAdapter` path.
 
-This is the production-shaped choice, not the novelty choice:
+The faster-whisper qualification was production-shaped rather than novelty-driven:
 
 - Silero owns endpointing; after end-of-speech, LiveKit sends the utterance to
   Speaches' OpenAI-compatible batch transcription endpoint.
@@ -61,10 +69,10 @@ calls the same batch endpoint, while adding version-specific session-schema and
 loopback defects. `StreamAdapter` gives the same utterance-final behavior through
 maintained LiveKit surfaces without a compatibility fork.
 
-## Accepted topology
+## Historical faster-whisper qualification
 
-- **Sumi worker:** `SUMI_STT_PROVIDER=faster-whisper` (also the fail-loud code
-  default) → `http://speaches-stt:8000/v1` by service DNS.
+- **Sumi worker:** `SUMI_STT_PROVIDER=faster-whisper` →
+  `http://speaches-stt:8000/v1` by service DNS.
 - **Endpointing:** the same local Silero VAD used by `AgentSession`.
 - **Transcription:** LiveKit OpenAI `STT(use_realtime=False)` wrapped in
   `livekit.agents.stt.StreamAdapter`; `SUMI_WHISPER_STT_PROMPT` carries the
@@ -73,10 +81,10 @@ maintained LiveKit surfaces without a compatibility fork.
   immutable image digest, GPU 1 pin, persistent Hugging Face cache, warm-on-every-
   start entrypoint, model-aware healthcheck, `restart: unless-stopped`.
 - **Operations:** `make speaches-stt-up|down|logs`.
-- **Rollback/evaluation:** `SUMI_STT_PROVIDER=sherpa` for CPU Nemotron;
-  `SUMI_STT_PROVIDER=parakeet` for Riva. Unknown providers abort startup.
+- **Current disposition:** stopped rollback only. `SUMI_STT_PROVIDER=parakeet`
+  is the code default; unknown providers abort startup.
 
-## Historical Parakeet/Riva qualification (rollback only)
+## Parakeet/Riva production topology
 
 ## Topology
 
@@ -111,11 +119,13 @@ did not survive reboot and was itself a launch blocker. Its authoritative defini
 ~45-min one-time engine build (`riva-deploy`: `.rmir` → Triton repo + FP8/TensorRT) → ready/live
 200 + voice_default REACH. `parakeet-ctl-prev` remains **stopped as the rollback tier**.
 
-**Current disposition (2026-07-24):** the post-reboot GPU-pinned recreate was
+**Historical disposition (2026-07-24):** the post-reboot GPU-pinned recreate was
 stopped and removed while still rebuilding. Its incomplete writable layer had
 grown to 19.3 GiB; removing it reclaimed about 18 GiB. The prior stopped
-`parakeet-ctl-prev` rollback container was not touched. Parakeet is not running
-and is no longer on Sumi's Monday path.
+`parakeet-ctl-prev` rollback container was not touched. Parakeet was not running
+and was removed from that Monday path. The 2026-07-26 production cutover
+supersedes this disposition while preserving `parakeet-ctl-prev` as the
+prior-image rollback tier.
 
 ### Historical live/canonical drift — `start_period`
 

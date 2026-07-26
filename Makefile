@@ -113,10 +113,20 @@ typecheck: ## Run pyright across sdk/tools/agents.
 
 verify: lint typecheck test ## Lint + typecheck + tests. Green before human testing.
 
-# ---- local STT candidates -------------------------------------------
+# ---- local STT ------------------------------------------------------
+PARAKEET_STT_COMPOSE = docker compose -f deploy/parakeet/docker-compose.parakeet.yaml
 SHERPA_STT_COMPOSE = docker compose -f deploy/sherpa-stt/docker-compose.sherpa-stt.yaml
 SPEACHES_STT_COMPOSE = docker compose -f deploy/speaches-stt/docker-compose.speaches-stt.yaml
 SUMI_LOCAL_LLM_COMPOSE = docker compose -f deploy/sumi-local-llm/docker-compose.sumi-local-llm.yaml
+
+parakeet-stt-up: ## Start production Parakeet/Riva STT on the shared voice network
+	$(PARAKEET_STT_COMPOSE) up -d
+
+parakeet-stt-down: ## Stop Parakeet/Riva STT without deleting its model cache
+	$(PARAKEET_STT_COMPOSE) down
+
+parakeet-stt-logs: ## Follow Parakeet/Riva STT logs
+	$(PARAKEET_STT_COMPOSE) logs -f parakeet-ctl
 
 sherpa-stt-build: ## Build the pinned sherpa-onnx streaming server image
 	$(SHERPA_STT_COMPOSE) build
@@ -130,7 +140,7 @@ sherpa-stt-down: ## Stop Nemotron streaming STT
 sherpa-stt-logs: ## Follow Nemotron streaming STT logs
 	$(SHERPA_STT_COMPOSE) logs -f sherpa-stt
 
-speaches-stt-up: ## Start accepted faster-whisper STT beside Qwen3-TTS on GPU 1
+speaches-stt-up: ## Start parked faster-whisper rollback STT on GPU 1
 	$(SPEACHES_STT_COMPOSE) up -d
 
 speaches-stt-down: ## Stop faster-whisper STT

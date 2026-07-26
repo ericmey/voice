@@ -41,6 +41,30 @@ class TestModuleExports:
 
 
 class TestSttProviderSelection:
+    def test_production_default_is_parakeet(self, agent_module):
+        assert agent_module._STT_PROVIDER == "parakeet"
+
+    def test_parakeet_uses_pinned_riva_contract(self, agent_module, monkeypatch):
+        captured: dict[str, object] = {}
+
+        def fake_nvidia_stt(**kwargs):
+            captured.update(kwargs)
+            return "parakeet-stt"
+
+        monkeypatch.setattr(agent_module, "_STT_PROVIDER", "parakeet")
+        monkeypatch.setattr(agent_module.nvidia_plugin, "STT", fake_nvidia_stt)
+
+        assert agent_module.build_stt(vad=object()) == "parakeet-stt"
+        assert captured == {
+            "server": "parakeet-ctl:50051",
+            "use_ssl": False,
+            "api_key": "",
+            "model": "parakeet-1.1b-en-US-asr-streaming",
+            "language_code": "en-US",
+            "sample_rate": 16000,
+            "punctuate": True,
+        }
+
     def test_faster_whisper_uses_maintained_stream_adapter(self, agent_module, monkeypatch):
         vad = object()
         batch = object()

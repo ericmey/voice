@@ -249,13 +249,12 @@ def build_tts():
     raise ValueError(f"unsupported SUMI_TTS_PROVIDER: {_TTS_PROVIDER!r}")
 
 
-# Slice 3 — LOCAL STT.  The accepted phone default is faster-distil-whisper-
-# large-v3 behind Speaches, with Silero endpointing through LiveKit's maintained
-# StreamAdapter.  The warmed control scored exact on the general and numeric
-# fixtures with ~0.24-0.31s final-after-audio latency.  Parakeet/Riva and
-# sherpa/Nemotron remain explicit rollback/evaluation providers; there is no
-# automatic fallback or cloud transcription path.
-_STT_PROVIDER = os.environ.get("SUMI_STT_PROVIDER", "faster-whisper").strip().lower()
+# Slice 3 — LOCAL STT. Parakeet/Riva is the production phone default after the
+# GPU-contention hypothesis that motivated the faster-whisper qualification was
+# rejected. Faster-whisper and sherpa/Nemotron remain explicit cold rollback /
+# evaluation providers; there is no automatic fallback or cloud transcription
+# path.
+_STT_PROVIDER = os.environ.get("SUMI_STT_PROVIDER", "parakeet").strip().lower()
 _STT_SERVER = os.environ.get("SUMI_STT_SERVER", "parakeet-ctl:50051")
 _STT_MODEL = os.environ.get("SUMI_STT_MODEL", "parakeet-1.1b-en-US-asr-streaming")
 _SHERPA_STT_URL = os.environ.get("SUMI_SHERPA_STT_URL", "ws://sherpa-stt:6006")
@@ -618,9 +617,9 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     trace(f"caller source={caller.source} from={caller_from!r} call_id={call_sid!r}")
 
-    # Slice 3 — LOCAL STT: explicit provider factory. The accepted default is
-    # local faster-whisper; Parakeet and sherpa remain opt-in rollback/eval
-    # providers. No cloud STT or silent fallback is reachable from this path.
+    # Slice 3 — LOCAL STT: explicit provider factory. Parakeet/Riva is the
+    # production default; faster-whisper and sherpa remain opt-in cold rollback
+    # / evaluation providers. No cloud STT or silent fallback is reachable.
     vad = silero_plugin.VAD.load(
         min_speech_duration=0.1,
         min_silence_duration=0.65,
