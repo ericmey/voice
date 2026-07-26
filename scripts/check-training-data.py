@@ -90,7 +90,8 @@ def load_jsonl(path: Path) -> list[dict]:
         try:
             rows.append({"_line": lineno, **json.loads(line)})
         except json.JSONDecodeError as e:
-            raise SystemExit(f"check-training-data: {path}:{lineno} is not valid JSON: {e}")
+            raise SystemExit(
+                f"check-training-data: {path}:{lineno} is not valid JSON: {e}") from e
     return rows
 
 
@@ -206,7 +207,7 @@ def report(res: dict, coverage_ref: set[str] | None) -> bool:
     if coverage_ref:
         missing = sorted(coverage_ref - set(res["categories"]))
         if missing:
-            print(f"\n  COVERAGE GAP — behaviours the eval tests with no training examples:")
+            print("\n  COVERAGE GAP — behaviours the eval tests with no training examples:")
             for c in missing:
                 print(f"    {c}")
             print("  Not a failure. But the finetune cannot learn what it never sees,")
