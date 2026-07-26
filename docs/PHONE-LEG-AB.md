@@ -145,16 +145,48 @@ seg-b            64 ch    first_chunk 0.231 s
 **Splitting buys ~1 ms.** voicebook streams: it emits as soon as the first window
 decodes, so **total text length does not gate time-to-first-audio.**
 
-> **THE CAVEAT THAT LIKELY OVERTURNS THIS.** These captures fed **complete
-> strings**. Production feeds the worker **incrementally from the LLM**, so
-> coalescing lets sentence one dispatch before sentence two has arrived. **That is
-> where the latency win would live, and this measurement structurally cannot see
-> it.**
->
-> So: the policy buys nothing when the text is already complete. Whether it pays
-> against a streaming LLM is **untested**, and that is the question that decides
-> whether to tune it. Scoped further: **one utterance, 173 characters, three
-> requests.** Not a law.
+**These captures fed complete strings**, and production does not — it feeds the
+worker **incrementally from the LLM**, so coalescing lets sentence one dispatch
+before sentence two has arrived. **This measurement structurally cannot see that**,
+which is where the real win would live.
+
+### Measured on the live turn — the head start is real (Yua, same day)
+
+Rather than simulate a token cadence, the qualified E2E turn's own timestamps
+answer it:
+
+```
+Voicebook request-109 synthesis start   ~15:33:22.838   (outcome ts − duration)
+HTTP streaming response logged           15:33:23.069
+Qwen completion                          15:33:23.101
+
+dispatch head start                      ~263 ms
+first stream access log before LLM end   ~32 ms
+```
+
+**So the policy buys ~0.26 s of head start on this turn.** Real, and **not a
+law** — one real turn, one utterance, 173 characters.
+
+### The two halves together
+
+Combining that with the duration measurement above, on this one turn:
+
+```
+BENEFIT   first audio ~263 ms earlier
+COST      total audio +800 ms longer, plus distributed prosody change
+
+net       the caller hears the first word sooner and the LAST word
+          roughly 540 ms LATER
+```
+
+**That arithmetic is worth stating and is not by itself a verdict.** For a phone
+agent, time-to-first-word and total-utterance-time are not interchangeable —
+early audio holds the caller's turn, and a longer utterance delays the handback.
+**Which matters more is a product judgement, not a measurement**, and neither of
+us has made it.
+
+**No tuning change proposed.** `min_token_len=80` may be exactly right; the trade
+is now quantified on both sides rather than assumed on either.
 
 ## Artifacts
 
