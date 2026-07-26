@@ -48,7 +48,7 @@ exactly the mistake this file already made once.
 
     vectors      9 hand-checked PCM16 values incl. 0, +-1, full scale
     exhaustive   all 65536 int16 inputs, 0 mismatches
-    decode       all 256 codes back to linear, 0 mismatches
+    decode       all 256 DISTINCT codes enumerated, 0 mismatches
 
 The first version of this file passed the bandpass tests with a codec that was
 NOT G.711 — an idealised `log1p(mu*x)` curve, which has the right shape and the
@@ -286,20 +286,39 @@ def selftest() -> int:
         print(f"    first at pcm={every[idx]}: ffmpeg={ref[idx]} mine={mine[idx]}")
         ok = False
 
-    # Decode must invert ffmpeg's encode, not just our own.
-    back = _g711_decode_u8(ref[:n])
+    # Decode coverage must be enumerated, not inherited from the encode stream.
+    #
+    # The obvious test — feed ffmpeg's exhaustive encode output back through both
+    # decoders — runs 65536 SAMPLES but only 255 distinct CODES: 0x7F is never
+    # emitted, because it is the overflow branch. Reporting that as "256 codes"
+    # overstates coverage by exactly the one code hardest to reach. Caught by Yua
+    # on review, 2026-07-26, the same day the encode stage was caught.
+    # So: enumerate the codebook directly.
+    every_code = np.arange(256, dtype=np.uint8)
     proc2 = subprocess.run(
         [ffmpeg, "-hide_banner", "-loglevel", "error",
          "-f", "mulaw", "-ar", "8000", "-ac", "1", "-i", "pipe:0",
          "-f", "s16le", "-acodec", "pcm_s16le", "pipe:1"],
-        input=ref[:n].tobytes(), capture_output=True, check=True,
+        input=every_code.tobytes(), capture_output=True, check=True,
     )
     ref_back = np.frombuffer(proc2.stdout, dtype="<i2")
-    m = min(len(ref_back), len(back))
-    bad2 = int(np.count_nonzero(ref_back[:m] != back[:m]))
-    print(f"  decode       {'PASS' if bad2 == 0 else 'FAIL'}  ({m} codes, {bad2} mismatches)")
+    mine_back = _g711_decode_u8(every_code)
+    if len(ref_back) != 256:
+        print(f"  decode       FAIL  ffmpeg returned {len(ref_back)} samples for 256 codes")
+        return 1
+    bad2 = int(np.count_nonzero(ref_back != mine_back))
+    print(f"  decode       {'PASS' if bad2 == 0 else 'FAIL'}  "
+          f"(256 distinct codes vs ffmpeg, {bad2} mismatches)")
     if bad2:
+        idx = int(np.flatnonzero(ref_back != mine_back)[0])
+        print(f"    first at code=0x{idx:02X}: ffmpeg={ref_back[idx]} mine={mine_back[idx]}")
         ok = False
+
+    # Report the coverage the encode stream actually gave, so the two numbers
+    # can never be confused again.
+    distinct = int(np.unique(ref[:n]).size)
+    print(f"  coverage     encode stream carried {distinct}/256 distinct codes "
+          f"across {n} samples")
 
     return 0 if ok else 1
 
