@@ -198,3 +198,36 @@ def test_worker_adapter_coalesces_first_call_sized_phrases(text, expected_reques
     assert frames
     posted_text = " ".join(call[1]["json"]["text"] for call in sess.calls)
     assert " ".join(posted_text.split()) == " ".join(text.split())
+
+
+def test_worker_adapter_reproduces_e2e_sentence_boundary_split():
+    text = (
+        "You know me already, Eric. I'm the one who notices what's out of place and sets it "
+        "right without being asked. I don't speak much, but I am here. What would you like "
+        "to know?"
+    )
+    expected = [
+        "You know me already, Eric. I'm the one who notices what's out of place and sets it "
+        "right without being asked.",
+        "I don't speak much, but I am here. What would you like to know?",
+    ]
+
+    async def go():
+        sess = _FakeSession(_FakeResp(chunks=(_PCM,)))
+        adapter = build_streaming_voicebook_tts(
+            voice_id="sumi-v1",
+            base_url="http://vb:5060",
+            http_session=_as_client_session(sess),
+        )
+        async with adapter.stream() as stream:
+            # Match the incremental shape used by the existing adapter test and
+            # observed in the qualified E2E turn.
+            for start in range(0, len(text), 7):
+                stream.push_text(text[start : start + 7])
+            stream.end_input()
+            async for _ in stream:
+                pass
+        return [call[1]["json"]["text"] for call in sess.calls]
+
+    actual = asyncio.run(go())
+    assert [" ".join(part.split()) for part in actual] == expected
