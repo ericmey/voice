@@ -15,7 +15,14 @@ port: 7880
 rtc:
   tcp_port: 7881
   udp_port: 7882
-  use_external_ip: true
+  # FALSE when every WebRTC peer is on the same box (livekit-sip, the agent
+  # workers, egress) — which is the mizuki shape. With `true`, the server does a
+  # STUN lookup at boot, advertises the WAN address, and then fails to validate it
+  # on any router that will not hairpin — logging `could not validate external IP`
+  # every start and risking a media candidate that routes out and back. Set `true`
+  # only when real external browser clients connect directly to this server.
+  # (livekit-sip keeps its OWN use_external_ip: true — that side faces the carrier.)
+  use_external_ip: false
 
 # livekit-sip coordination. Without this, `lk sip ...` returns
 # "sip not connected (redis required)".
@@ -26,3 +33,8 @@ keys:
   devkey: devsecret-change-me-before-real-use
 
 log_level: info
+
+# Prometheus metrics. Note the NESTED key — the flat `prometheus_port:` form is
+# deprecated and the server warns about it at boot.
+prometheus:
+  port: 6789

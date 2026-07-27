@@ -19,5 +19,17 @@ redis:
   address: "redis:6379"
 
 # Chrome sandbox needs SYS_ADMIN in Docker; compose grants it on the
-# egress service. Keeping the sandbox enabled matches LiveKit's default.
-enable_chrome_sandbox: true
+# egress service. LiveKit's default is enabled — the deployed mizuki config runs
+# it DISABLED, which is the documented escape hatch when the container cannot get
+# the capability. Recorded here so the drift is a visible decision, not a surprise.
+enable_chrome_sandbox: false
+
+# Health + metrics. Both default to 0 (disabled). health_port is what a monitor
+# should probe; egress is a bridge container, so probe it on its container IP.
+health_port: 6792
+prometheus_port: 6793
+
+# Room-composite recordings are written by uid 1001 (egress). EVERY directory it
+# writes into must be group-writable by gid 0 — a subdirectory created by root
+# with 755 fails at open() with a permission error that names the file, not the
+# directory. Prefer 2775 with group 0 so new subdirectories inherit it.

@@ -31,3 +31,27 @@ rtp_port_range_size: 10000
 # behind NAT (typical home setup). Auto-detects via STUN; override with
 # `external_ip:` if the detection is wrong.
 use_external_ip: true
+
+# ---- Inbound jitter buffer -------------------------------------------
+# Smooths jitter on RTP ARRIVING from the carrier, i.e. what STT hears. It does
+# NOT affect audio we send to the caller. Default is false; on by choice here.
+enable_jitter_buffer: true
+
+# ---- Health + metrics ------------------------------------------------
+# Both default to 0 (disabled). health_port is what a monitor should probe —
+# "container is up" cannot see a hung process. SIP runs network_mode: host, so
+# these land directly on the host.
+health_port: 6790
+prometheus_port: 6791
+
+# ---- NOT configured, and deliberately ---------------------------------
+# There is no `tls:` block, so no 5061 SIPS listener exists and SIP signaling is
+# PLAINTEXT. That is a real posture, not an oversight: enabling it is a
+# coordinated change (Twilio secure-trunking setting + certificates + a 5061
+# firewall forward), and half of it would be worse than none.
+#
+# Firewall note (2026-07-27): Twilio publishes EIGHT regional signaling edges and
+# states infrastructure must accept traffic from any of them at all times. A
+# source allowlist carrying only the US edges drops a failover AT THE ROUTER —
+# nothing reaches this service and every log here stays clean.
+# See https://www.twilio.com/docs/sip-trunking/ip-addresses
