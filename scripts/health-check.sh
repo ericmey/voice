@@ -15,9 +15,20 @@
 #   3. livekit-server — container up + :7880 responds
 #   4. livekit-sip    — container up (network_mode: host, no docker port map)
 #   5. livekit-egress — container up
-#   6. agents         — each voice-agent-<name> up, low restart count,
-#                       and a "registered worker" line in its logs
-#   7. SIP routing     — sip_inbound_trunk + sip_dispatch_rule present in Redis
+#   6. agents         — each DEPLOYED voice-agent-<name> up, low restart count,
+#                       and a "registered worker" line in its logs. Agents that
+#                       are planned but not deployed report "skip", never fail —
+#                       and get the full check automatically once they exist.
+#   7. voicebook      — TTS /healthz ready on loopback :5056
+#   8. local-llm      — llama.cpp /health on loopback :8088
+#   9. parakeet       — Riva ready+live on loopback :9000
+#  10. SIP routing    — sip_inbound_trunk + sip_dispatch_rule present in Redis
+#
+# 2026-07-27: the original AGENTS list required nyla/aoi/yua/party — seats that
+# were never deployed — and did not check agent-sumi, voicebook, the LLM, or
+# Parakeet at all. Result: guaranteed-red every cron run for weeks, and blind to
+# the actual production path. A check that is always red is worse than no check;
+# a real failure cannot be seen inside it.
 #
 # Exits 0 if all green, 1 if any check failed.
 #
@@ -39,7 +50,10 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-AGENTS=(nyla aoi yua party)
+# Required = deployed today. Optional = planned seats: skip while absent,
+# fully checked the moment their container exists.
+AGENTS=(sumi)
+OPTIONAL_AGENTS=(nyla aoi yua party)
 # On mizuki the health-check user may not be in the docker group; fall back
 # to sudo (cron typically runs as root or a docker-group user, where the
 # bare docker works and this branch is never taken).
@@ -61,7 +75,7 @@ declare -a RESULTS
 record() {
   local name="$1" status="$2" detail="$3"
   RESULTS+=("${name}|${status}|${detail}")
-  [[ "$status" == "ok" ]] || failed=$((failed + 1))
+  [[ "$status" == "ok" || "$status" == "skip" ]] || failed=$((failed + 1))
 }
 
 _container_up() { [[ "$("${DOCKER[@]}" inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" == "true" ]]; }
@@ -108,11 +122,15 @@ done
 
 # ---- agents --------------------------------------------------------
 _agent_ok_patterns='registered worker|worker started|connected to server'
-for a in "${AGENTS[@]}"; do
-  c="voice-agent-${a}"
+_check_agent() {  # $1=name  $2=required|optional
+  local a="$1" mode="$2" c="voice-agent-$1" restarts reg_line worker_id
   if ! _container_up "$c"; then
-    record "agent-${a}" fail "container not running"
-    continue
+    if [[ "$mode" == "required" ]]; then
+      record "agent-${a}" fail "container not running"
+    else
+      record "agent-${a}" skip "not deployed (checked automatically once it exists)"
+    fi
+    return
   fi
   restarts="$(_restart_count "$c")"
   reg_line="$("${DOCKER[@]}" logs "$c" 2>&1 | grep -E "${_agent_ok_patterns}" | tail -1)"
@@ -124,7 +142,27 @@ for a in "${AGENTS[@]}"; do
     worker_id="$(echo "${reg_line}" | grep -oE '"id": "[^"]+"' | head -1 | cut -d'"' -f4)"
     record "agent-${a}" ok "up, registered worker=${worker_id:-unknown} restarts=${restarts}"
   fi
-done
+}
+for a in "${AGENTS[@]}";          do _check_agent "$a" required; done
+for a in "${OPTIONAL_AGENTS[@]}"; do _check_agent "$a" optional; done
+
+# ---- voicebook / local-llm / parakeet (loopback HTTP contracts) ----
+if curl -fsS --max-time 4 http://127.0.0.1:5056/healthz 2>/dev/null | grep -q '"ready":true'; then
+  record "voicebook" ok "healthz ready on :5056"
+else
+  record "voicebook" fail "no ready healthz on :5056"
+fi
+if curl -fsS --max-time 4 http://127.0.0.1:8088/health >/dev/null 2>&1; then
+  record "local-llm" ok "llama.cpp /health on :8088"
+else
+  record "local-llm" fail "no /health on :8088"
+fi
+if curl -fsS --max-time 4 http://127.0.0.1:9000/v1/health/ready >/dev/null 2>&1 \
+   && curl -fsS --max-time 4 http://127.0.0.1:9000/v1/health/live >/dev/null 2>&1; then
+  record "parakeet" ok "ready+live on :9000"
+else
+  record "parakeet" fail "ready/live not both 200 on :9000"
+fi
 
 # ---- SIP routing (persisted in Redis) ------------------------------
 present="$("${DOCKER[@]}" exec voice-redis redis-cli exists sip_inbound_trunk sip_dispatch_rule 2>/dev/null | tr -d '[:space:]')"
@@ -155,6 +193,7 @@ else
     color=0
     [[ "$status" == "ok"   ]] && color=32
     [[ "$status" == "fail" ]] && color=31
+    [[ "$status" == "skip" ]] && color=33
     printf '%-18s \033[1;%dm%-6s\033[0m %s\n' "$name" "$color" "$status" "$detail"
   done
   if [[ $failed -gt 0 ]]; then
