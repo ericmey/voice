@@ -324,3 +324,39 @@ def test_late_sip_microphone_publication_starts_mic_egress(
     asyncio.run(go())
 
     assert starts == [("mic", "TR_LATE_MIC")]
+
+
+def test_finalize_stops_all_perspectives_concurrently(monkeypatch, tmp_path) -> None:
+    rec = _recording(tmp_path)
+    rec.track_recordings = {
+        perspective: audio_recording.AudioTrackRecording(
+            perspective=perspective,
+            track_sid=f"TR_{perspective.upper()}",
+            egress_id=f"EG_{perspective.upper()}",
+            host_path=tmp_path / f"SCL_views.{perspective}.ogg",
+            container_path=f"/recordings/phone-sumi/SCL_views.{perspective}.ogg",
+            mime_type="audio/ogg",
+        )
+        for perspective in ("mic", "tts")
+    }
+    for path in [rec.host_path, *(item.host_path for item in rec.track_recordings.values())]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"recorded")
+    stop_started = []
+    all_started = asyncio.Event()
+
+    async def fake_stop(item):
+        stop_started.append(item.egress_id)
+        if len(stop_started) == 3:
+            all_started.set()
+        await asyncio.wait_for(all_started.wait(), timeout=0.1)
+
+    async def fake_wait(_path, _timeout_seconds):
+        return True
+
+    monkeypatch.setattr(audio_recording, "_stop_egress", fake_stop)
+    monkeypatch.setattr(audio_recording, "_wait_for_recording", fake_wait)
+
+    asyncio.run(audio_recording.finalize_call_audio_recording(rec))
+
+    assert set(stop_started) == {"EG_composite", "EG_MIC", "EG_TTS"}

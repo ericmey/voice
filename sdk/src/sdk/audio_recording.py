@@ -438,9 +438,17 @@ async def finalize_call_audio_recording(
                 recording.call_sid,
             )
 
-    await _stop_egress(recording)
-    for item in tuple(recording.track_recordings.values()):
-        await _stop_egress(item)
+    # LiveKit gives a job process a short shutdown window. Each Egress API call
+    # can take several seconds even when the room already completed the egress;
+    # serial stops consumed the entire window once three perspectives existed.
+    # Stop all independent views together so recording never makes teardown red.
+    await asyncio.gather(
+        _stop_egress(recording),
+        *(
+            _stop_egress(item)
+            for item in tuple(recording.track_recordings.values())
+        ),
+    )
 
     candidates: list[tuple[str, Path]] = []
     if recording.egress_id:
@@ -450,18 +458,14 @@ async def finalize_call_audio_recording(
         for perspective, item in sorted(recording.track_recordings.items())
         if item.egress_id
     )
-    finalized: list[str] = []
-    missing: list[str] = []
-    for perspective, path in candidates:
+    async def _settle(perspective: str, path: Path) -> tuple[str, bool]:
         ready = await _wait_for_recording(path, timeout_seconds)
         if not ready:
-            missing.append(perspective)
             logger.warning(
                 "audio %s recording finalize: file not ready: %s", perspective, path
             )
             trace(f"audio {perspective} recording finalize: file not ready: {path}")
-            continue
-        finalized.append(perspective)
+            return perspective, False
         logger.info(
             "audio %s recording finalized: %s (%d bytes)",
             perspective,
@@ -469,6 +473,13 @@ async def finalize_call_audio_recording(
             path.stat().st_size,
         )
         trace(f"audio {perspective} recording finalized: {path}")
+        return perspective, True
+
+    settled = await asyncio.gather(
+        *(_settle(perspective, path) for perspective, path in candidates)
+    )
+    finalized = [perspective for perspective, ready in settled if ready]
+    missing = [perspective for perspective, ready in settled if not ready]
 
     logger.info(
         "audio recording perspectives: call_sid=%s finalized=%s missing=%s start_errors=%s",
