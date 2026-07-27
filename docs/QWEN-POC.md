@@ -99,11 +99,25 @@ OBSERVED-c24   work_items=24  requested=24  peak_in_flight=24  wall=7.71s
 
 | in flight (observed) | pass | TTFT p50 | TTFT p95 | decode p50 |
 |---|---|---|---|---|
-| **16** | 21/24 | 0.98 s | **1.36 s** | 12.2 tok/s |
+| **16** — run A | 21/24 | 0.98 s | 1.36 s | 12.2 tok/s |
+| **16** — run B *(retained receipt)* | 22/24 | 1.33 s | **1.71 s** | 12.75 tok/s |
 | 24 | 21/24 | 2.24 s | **5.24 s** | 11.2 tok/s |
 
-**16 synchronised client requests is QUALIFIED** on this box at p95 1.36 s.
+**16 synchronised client requests is QUALIFIED** on this box. **Two honest bursts
+observed p95 between 1.36 s and 1.71 s; quote 1.71 s**, which is the latest and
+the only one whose receipt still exists.
+
+> **Run A's receipt was DESTROYED, and that is a process defect, not a
+> rounding note.** The rerun was written to the same `--out` filename, so the
+> evidence for a published number no longer exists. **A receipt you can
+> overwrite is not a receipt.** `eval-call-agent.py` now refuses to write over an
+> existing output file. Caught by Yua reading the saved JSON against what I had
+> reported.
+
 **24 is REJECTED for voice** at p95 5.24 s.
+
+Single-request live measurement for reference: **TTFT 0.202 s, total 0.439 s**,
+audible reply.
 
 > **"~16" is a conservative OPERATING POINT, not a discovered maximum.** The
 > range 17–23 is unmeasured. Nothing here says 17 fails.

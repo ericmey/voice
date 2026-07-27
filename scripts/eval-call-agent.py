@@ -505,6 +505,18 @@ def main() -> int:
     if not a.cases.is_file():
         print(f"eval-call-agent: no case file at {a.cases}", file=sys.stderr)
         return 2
+
+    # Refuse BEFORE the pool opens. The first version of this guard sat after the
+    # benchmark: it protected the old receipt, burned the whole new run, and then
+    # refused to save it — on leased GPU time that is paying for a test and
+    # discarding its evidence. Same failure, opposite side. Caught by Yua reading
+    # the diff's lifecycle position, 2026-07-26.
+    if a.out and a.out.exists():
+        print(f"eval-call-agent: {a.out} already exists — refusing to START.\n"
+              f"  That file is the receipt for a number someone may have reported.\n"
+              f"  Choose a new name (e.g. {a.out.stem}-2{a.out.suffix}) before spending\n"
+              f"  the run.", file=sys.stderr)
+        return 2
     cases = json.loads(a.cases.read_text())
     if not isinstance(cases, list) or not cases:
         print(f"eval-call-agent: {a.cases} is not a non-empty list", file=sys.stderr)
@@ -566,8 +578,32 @@ def main() -> int:
         compare(rep, json.loads(a.compare.read_text()))
 
     if a.out:
-        a.out.write_text(json.dumps(rep, indent=2))
-        print(f"\n  wrote {a.out}")
+        # REFUSE to overwrite a receipt. On 2026-07-26 a c16 result was reported
+        # (p95 1.36s), then a later rerun was written to the SAME filename — so
+        # the receipt for a published number no longer existed and the figure
+        # could not be defended. A receipt you can overwrite is not a receipt.
+        # Exclusive create: the early exists() check has a race if two runs start
+        # together. If we LOSE that race the completed run is still real evidence,
+        # so it is written beside the winner rather than thrown away — never
+        # destroy a receipt for work already paid for.
+        payload = json.dumps(rep, indent=2)
+        try:
+            with open(a.out, "x") as fh:
+                fh.write(payload)
+            print(f"\n  wrote {a.out}")
+        except FileExistsError:
+            n = 2
+            while True:
+                alt = a.out.with_name(f"{a.out.stem}-{n}{a.out.suffix}")
+                try:
+                    with open(alt, "x") as fh:
+                        fh.write(payload)
+                    break
+                except FileExistsError:
+                    n += 1
+            print(f"\n  {a.out} was created by another run mid-flight.\n"
+                  f"  This run's receipt is PRESERVED at {alt} — not discarded.",
+                  file=sys.stderr)
 
     # Exit non-zero on ANY failure. A harness that always exits 0 is decoration.
     return 0 if rep["totals"]["failed"] == 0 else 1
