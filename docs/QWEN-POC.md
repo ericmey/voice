@@ -1,7 +1,7 @@
 # Qwen phone-agent POC — measured results
 
 **Box:** mizuki, 2× RTX 5060 Ti **16 GB** (Blackwell sm_120), driver 595.84 / CUDA 13.2.
-**Lane:** GPU 1 only. GPU 0 carries STT/TTS (voicebook-stream + Parakeet) and is not ours.
+**Lane:** GPU 1, shared with Parakeet STT. GPU 0 carries voicebook TTS.
 **Production target:** Google G2 **L4, 24 GB**.
 
 > **The POC box has ~2/3 the KV headroom of production.** Every context and
@@ -13,6 +13,43 @@ extraction, mid-turn interruption, post-tool-result phrasing, and instruction
 adherence under pressure. Speaks OpenAI `/v1/chat/completions`. Running the same
 cases against vLLM and the L4 is the INTENT and is **unverified** — see the
 harness docstring for the three concrete requirements that differ per server.
+
+## Current live profile — one shared server, 8 × 32K
+
+The live container remains named `sumi-local-llm` for compatibility with the
+phone worker, but it is a **plain shared Qwen3.5-9B model server**: no persona,
+memory, tools, LiveKit, or Hermes. The name records its first consumer, not its
+ownership. A runtime rename was deliberately parked until a maintenance window.
+
+```
+model       Qwen3.5-9B Q4_K_M
+server      llama.cpp, GPU 1 on mizuki
+slots       8
+ctx/slot    32768
+total ctx   262144
+thinking    off at the server
+KV          q8_0 K and V, flash attention on
+```
+
+Eric deliberately traded concurrency for context after the 16 × 16K profile
+was qualified. The total KV allocation is unchanged: **8 × 32768 = 16 × 16384
+= 262144 tokens**, so the split doubles per-request context without increasing
+the already-surviving allocation.
+
+Observed-peak acceptance of the new shape:
+
+| observed in flight | pass | TTFT p50 | TTFT p95 | decode p50 |
+|---|---|---|---|---|
+| **8** | 10/12 | 0.906 s | 1.222 s | 20.14 tok/s |
+
+The two failures were already present in the single-stream baseline; neither was
+introduced by the 8-way shape. The container remained healthy with zero
+restarts, and GPU 1 measured **13939 / 16311 MiB** with Parakeet resident.
+
+The generic LiteLLM route is `local/qwen3.5-9b`, capped at six parallel proxy
+requests so two of the eight server slots remain outside the proxy for direct
+latency-sensitive use. The phone worker remains direct and unchanged. A route
+name does not create another model instance or another set of slots.
 
 ---
 
@@ -137,7 +174,7 @@ of the mouth is the target.
 that was really **12-way** — fewer streams sharing the GPU, so higher per-stream
 decode. The corrected figure is lower and it is the one that matters.)
 
-### Final placement — 16 × 16384, qualified with all three tenants resident
+### Historical placement — 16 × 16384, qualified with all three tenants resident
 
 The 24-slot profile was qualified and then **superseded by placement**, not by
 tuning.
@@ -164,7 +201,7 @@ service had to fit inside.
 >
 > The placement is still proven — by load, below. The *impossibility* is not.
 
-**Context per call was kept at 16 K rather than slots at 24.** The equal-memory
+At that placement, **context per call was kept at 16 K rather than slots at 24.** The equal-memory
 alternative was 24 × 8192. For a tool-calling phone agent the schema plus history
 is what must not truncate, and 24 simultaneous callers is not what this box has
 to prove — the L4 does, on 24 GB, without Parakeet resident.

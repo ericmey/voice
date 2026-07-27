@@ -1,4 +1,4 @@
-# Sumi's local conversational model. The immutable llama.cpp image and exact
+# Shared local Qwen3.5-9B model server. The immutable llama.cpp image and exact
 # GGUF hash are qualified together; this service has no external model fallback.
 #
 # 2026-07-26 — retuned from a single-caller voice config into a CONCURRENCY
@@ -13,29 +13,43 @@
 #   --ctx-size 16384       ctx is SPLIT across slots (load log: "new slot,
 #     -> 262144            n_ctx = 8192" for each of 2). 16384/2 gave 8K per call
 #                          against a model that trains to 262144. 262144/16 keeps
-#                          16K per call while serving 8x the callers.
+#                          16K per call while serving 8x the callers. This was
+#                          the qualified 2026-07-26 phone-agent profile and is
+#                          retained here as history, not as the live shape.
 #
 # 2026-07-26, SECOND CUT — 24 slots was qualified and is no longer the placement.
 # Parakeet STT (3.64 GB steady) cannot co-reside with TTS (13.26 GB) on GPU0, so
 # STT moves to GPU1 alongside this service. 24 x 16384 is 13.31 GB; 13.31 + 3.64
 # exceeds the card. 16 x 16384 is 10.68 GB, leaving ~1.9 GB after Parakeet.
 #
-# CONTEXT PER CALL WAS KEPT AT 16K RATHER THAN SLOTS AT 24. The alternative fit
+# At that cut, context per call was kept at 16K rather than slots at 24. The alternative fit
 # was 24 x 8192 for the same memory. For a tool-calling phone agent the schema
 # plus history is the thing that must not truncate, and 24 simultaneous callers
 # is not what this POC has to prove — the L4 does, on 24 GB, without Parakeet.
+#
+# 2026-07-26, THIRD CUT — Eric deliberately reversed that trade for shared use.
+# The server is no longer a phone-agent-owned profile. The live split is:
+#
+#   8 slots x 32768 context = 262144 total KV tokens
+#
+# The total KV allocation is unchanged from the qualified 16 x 16384 profile,
+# while usable context per request doubles. At the measured 20.56 KiB/token for
+# q8_0 K+V with flash attention, this keeps the already-surviving allocation and
+# avoids the untested 12 x 24K band. Observed-peak acceptance at 8-way measured
+# TTFT p50 0.906s, p95 1.222s, decode 20.14 tok/s, zero restarts, and the same two
+# case failures already present in the single-stream baseline.
 #
 # CONCURRENCY LABELS IN EARLIER VERSIONS OF THIS COMMENT WERE FALSE. The harness
 # ran len(cases) x repeat work items through a pool of --concurrency workers, so
 # with 12 cases and repeat=1 nothing above 12 was ever in flight. Every "c=16"
 # and "c=24" figure previously quoted here was 12-way. Caught by Yua on review.
 #
-# OBSERVED numbers, peak_in_flight counted around the request lifetime:
+# HISTORICAL 16-SLOT observations, peak_in_flight counted around the request lifetime:
 #   16 in flight   21/24 pass   TTFT p50 0.98s  p95 1.36s   decode 12.2 tok/s
 #   24 in flight   21/24 pass   TTFT p50 2.24s  p95 5.24s   decode 11.2 tok/s
-# 16 synchronised requests is QUALIFIED; 24 is REJECTED for voice. "~16" is a
-# conservative operating point, not a discovered maximum — 17..23 is unmeasured.
-# Both are synchronised bursts; staggered arrival is a separate, unrun mode.
+# These qualify the superseded 16 x 16K profile only. They must not be used as
+# capacity claims for the current 8 x 32K split. Current acceptance belongs in
+# docs/QWEN-POC.md after an observed-peak rerun.
 #
 # THE CEILING WAS FOUND BY CROSSING IT: 32 x 16384 loads and reports HEALTHY at
 # 15836/16311 MiB, then ABORTS under real concurrent load because ~475 MiB is not
@@ -74,9 +88,9 @@ services:
     restart: unless-stopped
     command:
       - --model
-      # QUALIFIED. Base Qwen3.5-9B: 21/24 pass at an OBSERVED 16 in flight,
-      # TTFT p95 1.36s. (This line previously read "12/12 at 24 concurrent" —
-      # that run was 12-way. See the concurrency note above.)
+      # QUALIFIED. Base Qwen3.5-9B on the current 8 x 32K profile: 10/12 pass at
+      # an OBSERVED 8 in flight, TTFT p95 1.222s, decode 20.14 tok/s. The two
+      # failures were already present in the single-stream baseline.
       - /models/base/Qwen3.5-9B-Q4_K_M.gguf
       #
       # EVALUATED AND REJECTED 2026-07-26 — kept mounted, do not promote:
@@ -98,7 +112,7 @@ services:
       - --ctx-size
       - "262144"
       - --parallel
-      - "16"
+      - "8"
       - --reasoning
       - "off"
       - --n-gpu-layers
