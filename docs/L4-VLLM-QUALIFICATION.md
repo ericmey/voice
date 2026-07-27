@@ -75,7 +75,7 @@ Run the canary before a behavioral or capacity test:
 SUMI_VLLM_API_KEY="$SUMI_VLLM_API_KEY" \
   python3 scripts/probe-openai-stream-contract.py \
     --base-url http://127.0.0.1:8088/v1 \
-    --model sumi-local \
+    --model qwen3.5-9b \
     --max-ttft 1.5 \
     --out /tmp/vllm-protocol.json
 ```

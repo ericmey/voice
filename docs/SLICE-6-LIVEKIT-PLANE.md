@@ -1,7 +1,7 @@
 # Slice 6 — LiveKit plane bring-up + isolated Sumi worker — LANDED ✅
 
 > **Current production route (2026-07-26):** Sumi calls
-> `http://sumi-local-llm:8080/v1` directly with model `sumi-local`, server-side
+> `http://sumi-local-llm:8080/v1` directly with model `qwen3.5-9b`, per-request
 > thinking disabled, and the explicit non-secret OpenAI-client placeholder
 > `SUMI_LLM_API_KEY=local-no-auth`. There is no LiteLLM or 1Password hop in this
 > path. Older LiteLLM key material below is historical rollback/design context,
@@ -42,7 +42,7 @@ Pre-state: the media plane was **entirely down** (nothing on 7880/7881/7882/5060
     --env-file secrets/livekit-agents.env \
     -e AGENT=sumi -e LIVEKIT_URL=ws://livekit-server:7880 \
     -e LIVEKIT_VOICE_LOGS=/app/logs/voice \
-    -e SUMI_LLM_MODEL=sumi-local \
+    -e SUMI_LLM_MODEL=qwen3.5-9b \
     -e SUMI_LLM_BASE_URL=http://sumi-local-llm:8080/v1 \
     -e SUMI_LLM_API_KEY=local-no-auth \
     -e SUMI_LLM_DISABLE_THINKING=true \

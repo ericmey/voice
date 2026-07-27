@@ -66,13 +66,16 @@
 # NOTE the first run after a container start reads ~1.5s at c=8 (cold prompt
 # cache) and settles to ~0.54s on reruns. Discard the first sweep after a
 # restart; it is warm-up, not the server.
-#   --reasoning off        Qwen3.5's template defaults thinking ON. Measured, same
-#     (NEW)                cases, only this changed: pass 7/12 -> 10/12, TTFT p50
-#                          3.50s -> 0.178s (~20x), decode 26.9 -> 67.7 tok/s.
-#                          Five cases spent their ENTIRE token budget thinking and
-#                          produced zero audible output. Pinned at the SERVER, not
-#                          left to a per-request kwarg: a caller that forgets it
-#                          gets 3.5s of dead air, and callers forget.
+#   --reasoning off        REMOVED 2026-07-26 for dual-mode serving. llama.cpp
+#     REMOVED              returns to its default `auto`: Qwen3.5 thinks unless
+#                          the request sends enable_thinking=false. The phone
+#                          worker already sends false and refuses ambiguous env;
+#                          LiteLLM exposes explicit regular and -fast routes.
+#                          Future direct callers must choose deliberately.
+#   --reasoning-budget 512 Bounds thinking-enabled requests so a simple turn
+#     (NEW)                cannot consume the caller's entire output allowance
+#                          without producing a final answer. No-thinking requests
+#                          bypass the reasoning phase entirely.
 #   --n-predict 64         a hard 64-token server cap on every reply. Truncation
 #     REMOVED              is the caller's decision via max_tokens, not a global.
 #   --metrics (NEW)        Prometheus endpoint on the serving port. Zero-cost
@@ -104,7 +107,7 @@ services:
       # class: silent, and read as success by every layer above the model.
       # Equal speed does not buy back invented input. See docs/QWEN-POC.md.
       - --alias
-      - sumi-local
+      - qwen3.5-9b
       - --host
       - 0.0.0.0
       - --port
@@ -113,8 +116,8 @@ services:
       - "262144"
       - --parallel
       - "8"
-      - --reasoning
-      - "off"
+      - --reasoning-budget
+      - "512"
       - --n-gpu-layers
       - "99"
       - --flash-attn

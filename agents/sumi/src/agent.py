@@ -323,7 +323,7 @@ def build_stt(*, vad):
 #     a hard error ("No fallback model group found"), never a silent escape to a
 #     cloud model. Sumi goes quiet before she speaks as something that isn't her.
 _LLM_BASE_URL = os.environ.get("SUMI_LLM_BASE_URL", "http://10.0.20.25:4000/v1")
-_LLM_MODEL = os.environ.get("SUMI_LLM_MODEL", "sumi")
+_LLM_MODEL = os.environ.get("SUMI_LLM_MODEL", "qwen3.5-9b")
 
 # Phone turn handling.  The stock streaming defaults are too eager for the
 # self-hosted Parakeet path: on the 2026-07-24 diagnostic call, untranscribed

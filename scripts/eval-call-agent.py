@@ -30,7 +30,7 @@ Four measurements, per case and aggregate:
 
 Deliberately stdlib-only so it runs on any box without a venv.
 
-  eval-call-agent.py --base-url http://127.0.0.1:8088/v1 --model sumi-local
+  eval-call-agent.py --base-url http://127.0.0.1:8088/v1 --model qwen3.5-9b
   eval-call-agent.py --cases cases/phone-agent.json --concurrency 8 --out run.json
   eval-call-agent.py ... --compare baseline.json     # diff two runs
 """
@@ -489,7 +489,7 @@ def main() -> int:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--base-url", default="http://127.0.0.1:8088/v1")
-    p.add_argument("--model", default="sumi-local")
+    p.add_argument("--model", default="qwen3.5-9b")
     p.add_argument("--cases", type=Path, default=DEFAULT_CASES)
     p.add_argument("--concurrency", type=int, default=1,
                    help="simultaneous in-flight calls; 1 measures nothing about a server")

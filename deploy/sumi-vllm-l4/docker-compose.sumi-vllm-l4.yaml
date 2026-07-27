@@ -20,7 +20,7 @@ services:
     command:
       - /model
       - --served-model-name
-      - "${SUMI_VLLM_SERVED_MODEL:-sumi-local}"
+      - "${SUMI_VLLM_SERVED_MODEL:-qwen3.5-9b}"
       - --host
       - 0.0.0.0
       - --port

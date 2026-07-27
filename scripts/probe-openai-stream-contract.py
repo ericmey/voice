@@ -167,7 +167,7 @@ def _check_tool(chunks: list[dict[str, Any]]) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://127.0.0.1:8088/v1")
-    parser.add_argument("--model", default="sumi-local")
+    parser.add_argument("--model", default="qwen3.5-9b")
     parser.add_argument("--max-ttft", type=float, default=1.5)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--out", type=Path, required=True)

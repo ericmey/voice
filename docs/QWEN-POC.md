@@ -27,7 +27,7 @@ server      llama.cpp, GPU 1 on mizuki
 slots       8
 ctx/slot    32768
 total ctx   262144
-thinking    off at the server
+thinking    auto, bounded to 512 tokens when enabled
 KV          q8_0 K and V, flash attention on
 ```
 
@@ -46,10 +46,16 @@ The two failures were already present in the single-stream baseline; neither was
 introduced by the 8-way shape. The container remained healthy with zero
 restarts, and GPU 1 measured **13939 / 16311 MiB** with Parakeet resident.
 
-The generic LiteLLM route is `local/qwen3.5-9b`, capped at six parallel proxy
-requests so two of the eight server slots remain outside the proxy for direct
-latency-sensitive use. The phone worker remains direct and unchanged. A route
-name does not create another model instance or another set of slots.
+LiteLLM exposes two model-facing routes over this one server:
+
+- `qwen/qwen3.5-9b` — thinking enabled;
+- `qwen/qwen3.5-9b-fast` — thinking disabled.
+
+Each route is capped at three parallel requests, preserving the original
+aggregate proxy budget of six so two of the eight server slots remain outside
+the proxy for direct latency-sensitive use. The phone worker remains direct and
+sends `enable_thinking=false` itself. A route name does not create another model
+instance or another set of slots.
 
 ---
 
