@@ -112,13 +112,28 @@ else
 fi
 
 # ---- livekit-sip / egress ------------------------------------------
-for svc in livekit-sip livekit-egress; do
-  if _container_up "voice-${svc}"; then
-    record "${svc}" ok "container up"
+# 2026-07-27: upgraded from "container up" to real liveness probes. Both
+# services expose health_port (sip 6790 on the host net, egress 6792 on the
+# bridge). A hung process shows "up" forever; only the HTTP probe notices.
+if _container_up voice-livekit-sip; then
+  if curl -fsS --max-time 3 http://127.0.0.1:6790/ >/dev/null 2>&1; then
+    record "livekit-sip" ok "health_port 200 on :6790"
   else
-    record "${svc}" fail "container not running"
+    record "livekit-sip" fail "container up but health_port :6790 not answering"
   fi
-done
+else
+  record "livekit-sip" fail "container not running"
+fi
+if _container_up voice-livekit-egress; then
+  _eip="$("${DOCKER[@]}" inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' voice-livekit-egress 2>/dev/null)"
+  if [[ -n "${_eip}" ]] && curl -fsS --max-time 3 "http://${_eip}:6792/" >/dev/null 2>&1; then
+    record "livekit-egress" ok "health_port 200 on ${_eip}:6792"
+  else
+    record "livekit-egress" fail "container up but health_port :6792 not answering"
+  fi
+else
+  record "livekit-egress" fail "container not running"
+fi
 
 # ---- agents --------------------------------------------------------
 _agent_ok_patterns='registered worker|worker started|connected to server'
