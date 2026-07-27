@@ -5,7 +5,7 @@
 # by DNS at http://voicebook-stream:5060 (container port). The host publish is
 # loopback-only for ops/health; Sumi never uses host loopback.
 #
-# Pinned to the accepted F1 image by IMMUTABLE DIGEST; pull disabled. Replaces
+# Pinned to the accepted image by IMMUTABLE DIGEST; pull disabled. Replaces
 # the temporary externally-watched `voicebook-stream-qual` container — Compose
 # (restart policy + healthcheck) is the service manager, not the qual watcher.
 #
@@ -18,7 +18,7 @@ name: voicebook-stream
 services:
   voicebook-stream:
     container_name: voicebook-stream
-    image: voicebook-stream@sha256:3b28aa8102d69b3214687a7e732dcdeca35b8a11ab0d34187e1dad3f9b4472f7
+    image: voicebook-stream@sha256:05e56620dfae79c5b8535ab6b3b2cc0c72996eeca993165a8df1c98727f15c55
     pull_policy: never
     # Host ops/health ONLY (loopback). livekit-sip owns host 5060; this maps
     # host 5056 -> container 5060. Sumi's path is the service DNS, not this.
@@ -40,6 +40,10 @@ services:
       - HF_HOME=/models/hf-cache
       - VOICEBOOK_HOST=0.0.0.0
       - VOICEBOOK_PORT=5060
+      # Eric selected full-text prefill first in all three blind groups on
+      # 2026-07-27 (greeting, medium passage, long story). Temperature and all
+      # other sampling controls remain at the installed defaults.
+      - VOICEBOOK_NON_STREAMING_MODE=true
     networks:
       - voice_default
     deploy:

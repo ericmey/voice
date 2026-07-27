@@ -12,8 +12,11 @@ lets the API/registry/lease/cancellation logic be tested on a GPU-free laptop.
 from __future__ import annotations
 
 import io
+import logging
+import os
 import wave
 from collections.abc import Generator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -29,6 +32,53 @@ SAMPLE_WIDTH = 2  # PCM16
 # sliding-decoder joins and more acoustic context per join, while retaining
 # realtime streaming.
 CHUNK_SIZE = 12
+logger = logging.getLogger("voicebook.synth")
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise SynthesisError(f"{name} must be an explicit boolean, got {raw!r}")
+
+
+def _env_float(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise SynthesisError(f"{name} must be a number, got {raw!r}") from exc
+    if not minimum <= value <= maximum:
+        raise SynthesisError(f"{name} must be between {minimum} and {maximum}, got {value}")
+    return value
+
+
+@dataclass(frozen=True)
+class GenerationOptions:
+    """Explicit quality controls for the resident model.
+
+    Defaults preserve the installed faster-qwen3-tts 0.3.2 contract exactly.
+    Environment overrides exist so a pinned sidecar can qualify one audio
+    variable without editing code or allowing callers to choose generation
+    policy per request.
+    """
+
+    temperature: float = 0.9
+    non_streaming_mode: bool = False
+
+    @classmethod
+    def from_env(cls) -> GenerationOptions:
+        return cls(
+            temperature=_env_float("VOICEBOOK_TEMPERATURE", 0.9, minimum=0.0, maximum=2.0),
+            non_streaming_mode=_env_bool("VOICEBOOK_NON_STREAMING_MODE", False),
+        )
 
 
 class SynthesisError(RuntimeError):
@@ -67,7 +117,23 @@ def pcm16_to_wav(pcm: bytes) -> bytes:
 class StreamingSynthesizer:
     """faster-qwen3-tts, CUDA-graph backend, loaded once and held resident."""
 
-    def __init__(self, model_path: str, device: str = "cuda", max_seq_len: int = 2048) -> None:
+    def __init__(
+        self,
+        model_path: str,
+        device: str = "cuda",
+        max_seq_len: int = 2048,
+        generation_options: GenerationOptions | None = None,
+    ) -> None:
+        # Parse policy before importing torch or allocating model VRAM. A typo
+        # in a sidecar/deploy setting must fail cheap, not after a 5+ GiB load.
+        self._generation_options = generation_options or GenerationOptions.from_env()
+        logger.info(
+            "generation options temperature=%.3f non_streaming_mode=%s chunk_size=%d",
+            self._generation_options.temperature,
+            self._generation_options.non_streaming_mode,
+            CHUNK_SIZE,
+        )
+
         import torch  # pyright: ignore[reportMissingImports]
         from faster_qwen3_tts.model import FasterQwen3TTS  # pyright: ignore[reportMissingImports]
 
@@ -88,6 +154,12 @@ class StreamingSynthesizer:
         )
         self._warm = False
 
+    def _generation_kwargs(self) -> dict[str, float | bool]:
+        return {
+            "temperature": self._generation_options.temperature,
+            "non_streaming_mode": self._generation_options.non_streaming_mode,
+        }
+
     def warmup(self, master_path: Path, reference_transcript: str) -> None:
         """Force CUDA-graph capture. Health must stay red until this completes."""
         for _ in self._model.generate_voice_clone_streaming(
@@ -97,6 +169,7 @@ class StreamingSynthesizer:
             ref_text=reference_transcript,
             max_new_tokens=32,
             chunk_size=CHUNK_SIZE,
+            **self._generation_kwargs(),
         ):
             pass
         self._warm = True
@@ -119,6 +192,7 @@ class StreamingSynthesizer:
                 ref_text=reference_transcript,
                 max_new_tokens=2048,
                 chunk_size=CHUNK_SIZE,
+                **self._generation_kwargs(),
             )
         except Exception as exc:
             raise SynthesisError(f"create: {type(exc).__name__}: {exc}") from exc

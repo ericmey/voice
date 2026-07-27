@@ -13,7 +13,13 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from voicebook_stream.synth import CHUNK_SIZE, SAMPLE_RATE, StreamingSynthesizer, SynthesisError
+from voicebook_stream.synth import (
+    CHUNK_SIZE,
+    SAMPLE_RATE,
+    GenerationOptions,
+    StreamingSynthesizer,
+    SynthesisError,
+)
 
 
 class FakeModel:
@@ -44,6 +50,7 @@ class FakeModel:
 def _synth(model):
     s = StreamingSynthesizer.__new__(StreamingSynthesizer)
     s._model = model
+    s._generation_options = GenerationOptions()
     s._warm = False
     return s
 
@@ -67,6 +74,35 @@ def test_streaming_uses_qualified_engine_chunk_window():
     assert CHUNK_SIZE == 12
     assert len(model.calls) == 1
     assert model.calls[0]["chunk_size"] == 12
+
+
+def test_streaming_preserves_installed_generation_defaults():
+    model = FakeModel(n=1)
+    list(_synth(model).synthesize_stream("hi", REF, "t"))
+    assert model.calls[0]["temperature"] == 0.9
+    assert model.calls[0]["non_streaming_mode"] is False
+
+
+def test_generation_options_read_explicit_sidecar_overrides(monkeypatch):
+    monkeypatch.setenv("VOICEBOOK_TEMPERATURE", "0.8")
+    monkeypatch.setenv("VOICEBOOK_NON_STREAMING_MODE", "true")
+    assert GenerationOptions.from_env() == GenerationOptions(
+        temperature=0.8, non_streaming_mode=True
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("VOICEBOOK_TEMPERATURE", "warm"),
+        ("VOICEBOOK_TEMPERATURE", "2.1"),
+        ("VOICEBOOK_NON_STREAMING_MODE", "maybe"),
+    ],
+)
+def test_generation_options_reject_ambiguous_or_out_of_range_env(monkeypatch, name, value):
+    monkeypatch.setenv(name, value)
+    with pytest.raises(SynthesisError, match=name):
+        GenerationOptions.from_env()
 
 
 def test_no_empty_terminal_chunk():

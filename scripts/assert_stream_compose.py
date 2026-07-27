@@ -6,7 +6,7 @@ writable mount MUST fail here (red-proofed in test-stream-compose.sh)."""
 import json
 import sys
 
-DIGEST = "voicebook-stream@sha256:3b28aa8102d69b3214687a7e732dcdeca35b8a11ab0d34187e1dad3f9b4472f7"
+DIGEST = "voicebook-stream@sha256:05e56620dfae79c5b8535ab6b3b2cc0c72996eeca993165a8df1c98727f15c55"
 
 d = json.load(open(sys.argv[1]))
 fails = []
@@ -25,7 +25,7 @@ ck(d.get("name") == "voicebook-stream", "project name pinned == voicebook-stream
 svc = (d.get("services") or {}).get("voicebook-stream")
 ck(svc is not None, "service voicebook-stream exists")
 svc = svc or {}
-ck(svc.get("image") == DIGEST, "image == immutable digest sha256:3b28aa8102d6")
+ck(svc.get("image") == DIGEST, "image == immutable digest sha256:05e56620dfae")
 ck(svc.get("pull_policy") == "never", "pull_policy never")
 ck(svc.get("restart") == "unless-stopped", "restart unless-stopped")
 
@@ -63,6 +63,10 @@ if isinstance(env, list):
     env = dict(e.split("=", 1) for e in env if "=" in e)
 ck(str(env.get("HF_HUB_OFFLINE")) == "1", "HF_HUB_OFFLINE=1 (offline)")
 ck(str(env.get("VOICEBOOK_PORT")) == "5060", "VOICEBOOK_PORT=5060")
+ck(
+    str(env.get("VOICEBOOK_NON_STREAMING_MODE")).lower() == "true",
+    "VOICEBOOK_NON_STREAMING_MODE=true (blind-selected full-text prefill)",
+)
 ck(env.get("VOICEBOOK_HOST") == "0.0.0.0", "VOICEBOOK_HOST=0.0.0.0 (container-internal bind)")
 ck(env.get("VOICEBOOK_REGISTRY") == "/etc/voicebook/registry.json", "VOICEBOOK_REGISTRY path")
 ck(
@@ -77,6 +81,7 @@ ALLOWED_ENV = {
     "HF_HOME",
     "VOICEBOOK_HOST",
     "VOICEBOOK_PORT",
+    "VOICEBOOK_NON_STREAMING_MODE",
 }
 extra_env = sorted(set(env) - ALLOWED_ENV)
 ck(not extra_env, f"env keys allowlisted (unexpected rejected: {extra_env})")
