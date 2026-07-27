@@ -339,16 +339,21 @@ _LLM_BASE_URL, _LLM_MODEL = _resolve_llm_route(os.environ)
 # audio activity paused Sumi twice for exactly the default 2.0-second false-
 # interruption window, and a final STT transcript arrived after a turn had
 # already been committed.  Require an actual transcribed word before pausing
-# playback, give the streaming transcript a little more time to settle, and
-# make any remaining resumable false pause short enough not to sound like the
-# call dropped.  Real one-word barge-ins ("stop", "wait") still count.
+# playback and give the streaming transcript a little more time to settle.
+# Two recorded 2026-07-27 calls then proved that ghost transcripts arriving
+# with VAD ``speaking=False`` pause playout for exactly the configured timer.
+# LiveKit 1.6.7 has no VAD-corroboration switch for transcript-triggered pauses,
+# and its adaptive interruption gateway rejected this deployment's credentials.
+# Bound that false-pause damage to 150 ms while retaining immediate one-word
+# barge-ins ("stop", "wait"); VAD-corroborated speech does not enter the false
+# timer branch.
 _TURN_HANDLING: TurnHandlingOptions = {
     "endpointing": {"min_delay": 1.2},
     "interruption": {
         "min_duration": 0.5,
         "min_words": 1,
         "resume_false_interruption": True,
-        "false_interruption_timeout": 0.75,
+        "false_interruption_timeout": 0.15,
     },
 }
 

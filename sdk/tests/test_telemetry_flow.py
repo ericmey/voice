@@ -170,6 +170,17 @@ def test_flush_writes_json_with_complete_shape(tmp_path, monkeypatch) -> None:
     c.record_realtime_metrics(_FakeRealtimeMetrics(request_id="r", ttft=0.5, duration=1.0))
     c.record_user_state("listening", "speaking")
     c.record_agent_state("idle", "thinking")
+    c.record_user_transcript(
+        SimpleNamespace(
+            transcript="ghost word",
+            is_final=False,
+            item_id="item-1",
+            speaker_id="caller",
+            language="en",
+        ),
+        user_state="listening",
+        agent_state="speaking",
+    )
     c.record_overlap(SimpleNamespace(is_interruption=True, probability=0.8))
     c.record_tool_execution(
         SimpleNamespace(
@@ -198,6 +209,20 @@ def test_flush_writes_json_with_complete_shape(tmp_path, monkeypatch) -> None:
     assert len(doc["tool_calls"]) == 1
     assert len(doc["user_states"]) == 1
     assert len(doc["agent_states"]) == 1
+    assert doc["summary"]["user_transcripts"] == 1
+    assert doc["summary"]["user_interim_transcripts"] == 1
+    assert doc["user_transcripts"] == [
+        {
+            "timestamp": doc["user_transcripts"][0]["timestamp"],
+            "transcript": "ghost word",
+            "is_final": False,
+            "item_id": "item-1",
+            "speaker_id": "caller",
+            "language": "en",
+            "user_state": "listening",
+            "agent_state": "speaking",
+        }
+    ]
 
 
 def test_flush_is_noop_when_logs_env_missing(tmp_path, monkeypatch) -> None:
@@ -238,6 +263,7 @@ def test_wire_telemetry_capture_subscribes_all_session_events(monkeypatch) -> No
         "conversation_item_added",
         "user_state_changed",
         "agent_state_changed",
+        "user_input_transcribed",
         "overlapping_speech",
         "agent_false_interruption",
         "function_tools_executed",

@@ -4,6 +4,7 @@ Hooks into :class:`AgentSession` events to capture:
 
 - Per-turn latency (e2e, LLM TTFT, TTS TTFB, transcription delay)
 - User / agent state transitions with timestamps
+- Interim and final user transcripts with the state that received them
 - Overlapping speech and interruption data
 - Tool execution timing
 - Token usage breakdown
@@ -112,6 +113,7 @@ class TelemetryCollector:
 
         self.user_states: list[dict[str, Any]] = []
         self.agent_states: list[dict[str, Any]] = []
+        self.user_transcripts: list[dict[str, Any]] = []
 
         self.overlapping_speech: list[dict[str, Any]] = []
         self.false_interruptions: int = 0
@@ -190,6 +192,33 @@ class TelemetryCollector:
     def record_agent_state(self, old: str, new: str) -> None:
         self.agent_states.append(
             {"timestamp": time.time() - self.started_at, "old": old, "new": new}
+        )
+
+    def record_user_transcript(
+        self,
+        event: Any,
+        *,
+        user_state: str,
+        agent_state: str,
+    ) -> None:
+        """Record the exact STT event and the playback state that received it.
+
+        False-interruption pauses can be triggered by an interim transcript that
+        never becomes a conversation item.  Capturing only final conversation
+        history therefore leaves the triggering input invisible during post-call
+        review.
+        """
+        self.user_transcripts.append(
+            {
+                "timestamp": time.time() - self.started_at,
+                "transcript": str(getattr(event, "transcript", "")),
+                "is_final": bool(getattr(event, "is_final", False)),
+                "item_id": getattr(event, "item_id", None),
+                "speaker_id": getattr(event, "speaker_id", None),
+                "language": getattr(event, "language", None),
+                "user_state": user_state,
+                "agent_state": agent_state,
+            }
         )
 
     def record_overlap(self, event: Any) -> None:
@@ -287,6 +316,10 @@ class TelemetryCollector:
             "realtime_ttft": _stats(realtime_ttft_values),
             "interruptions": len(interruptions),
             "false_interruptions": self.false_interruptions,
+            "user_transcripts": len(self.user_transcripts),
+            "user_interim_transcripts": sum(
+                1 for event in self.user_transcripts if not event["is_final"]
+            ),
             "backchannels": len(backchannels),
             "overlapping_speech_events": len(self.overlapping_speech),
             "tool_calls_total": len(self.tool_calls),
@@ -320,6 +353,7 @@ class TelemetryCollector:
             "realtime_metrics": self.realtime_metrics,
             "user_states": self.user_states,
             "agent_states": self.agent_states,
+            "user_transcripts": self.user_transcripts,
             "overlapping_speech": self.overlapping_speech,
             "tool_calls": self.tool_calls,
             "usage": self.usage_snapshots[-1] if self.usage_snapshots else None,
@@ -390,6 +424,14 @@ def wire_telemetry_capture(
         old = str(getattr(ev, "old_state", "?"))
         new = str(getattr(ev, "new_state", "?"))
         collector.record_agent_state(old, new)
+
+    @session.on("user_input_transcribed")
+    def _on_user_transcript(ev: Any) -> None:
+        collector.record_user_transcript(
+            ev,
+            user_state=str(session.user_state),
+            agent_state=str(session.agent_state),
+        )
 
     @session.on("overlapping_speech")
     def _on_overlap(ev: Any) -> None:

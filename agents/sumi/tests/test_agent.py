@@ -333,7 +333,7 @@ class TestPhoneTurnHandling:
 
         assert session.options.endpointing.get("min_delay") == 1.2
         assert session.options.interruption.get("min_words") == 1
-        assert session.options.interruption.get("false_interruption_timeout") == 0.75
+        assert session.options.interruption.get("false_interruption_timeout") == 0.15
 
 
 # keep sys import referenced for conftest path insertion clarity
