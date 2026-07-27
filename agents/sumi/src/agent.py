@@ -54,6 +54,7 @@ from livekit.plugins import silero as silero_plugin
 from pedalboard import Gain, HighpassFilter, PeakFilter
 from pedalboard._pedalboard import Pedalboard
 from sdk.audio_recording import (
+    CallAudioRecording,
     annotate_call_audio_recording,
     start_call_audio_recording,
     wire_call_audio_attachment,
@@ -222,7 +223,7 @@ def _master_audio_frame(
     )
 
 
-def build_tts():
+def build_tts(audio_recording: CallAudioRecording | None = None):
     """Build Sumi's explicitly selected TTS provider; never silently fall back."""
 
     if _TTS_PROVIDER == "voicebook":
@@ -231,6 +232,8 @@ def build_tts():
             base_url=_TTS_BASE_URL,
             wire_format=_TTS_WIRE_FORMAT,
             text_mode=_TTS_TEXT_MODE,
+            capture_dir=audio_recording.host_path.parent if audio_recording else None,
+            capture_call_sid=audio_recording.call_sid if audio_recording else None,
         )
     if _TTS_PROVIDER == "elevenlabs":
         if not _ELEVENLABS_VOICE_ID:
@@ -647,6 +650,20 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     trace(f"caller source={caller.source} from={caller_from!r} call_id={call_sid!r}")
 
+    transcript_sid = call_sid
+    if not transcript_sid and ctx.room.name.startswith("phone-"):
+        transcript_sid = ctx.room.name.removeprefix("phone-")
+
+    # Start the room composite immediately and arm the isolated SIP-mic and
+    # local-agent track taps before session.start publishes Sumi's output track.
+    # The same recording bundle also supplies the per-call raw Voicebook tee.
+    audio_recording = await start_call_audio_recording(
+        ctx,
+        call_sid=transcript_sid,
+        agent_name=reg,
+    )
+    wire_call_audio_attachment(ctx, audio_recording)
+
     # Slice 3 — LOCAL STT: explicit provider factory. Parakeet/Riva is the
     # production default; faster-whisper and sherpa remain opt-in cold rollback
     # / evaluation providers. No cloud STT or silent fallback is reachable.
@@ -665,7 +682,7 @@ async def entrypoint(ctx: JobContext) -> None:
     # TTS provider is explicit and fail-loud. Voicebook remains the local/R&D
     # path; ElevenLabs is the supported LiveKit streaming control for the phone
     # quality experiment. There is no automatic provider fallback.
-    tts = build_tts()
+    tts = build_tts(audio_recording)
 
     extra_tools = [
         EndCallTool(delete_room=True, end_instructions=None),
@@ -676,13 +693,6 @@ async def entrypoint(ctx: JobContext) -> None:
         caller_from=caller_from,
         extra_tools=extra_tools,
     )
-
-    transcript_sid = call_sid
-    if not transcript_sid and ctx.room.name.startswith("phone-"):
-        transcript_sid = ctx.room.name.removeprefix("phone-")
-
-    audio_recording = await start_call_audio_recording(ctx, call_sid=transcript_sid, agent_name=reg)
-    wire_call_audio_attachment(ctx, audio_recording)
 
     # LLM retries at the livekit layer re-run the WHOLE generation and can
     # re-emit already-streamed tokens — a duplicated SPOKEN turn on the phone.

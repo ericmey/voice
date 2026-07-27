@@ -30,6 +30,14 @@ on the stream path; the voice_id selects Sumi's frozen master voice server-side.
 
 from __future__ import annotations
 
+import asyncio
+import itertools
+import json
+import logging
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
 import aiohttp
 from livekit.agents import (
     APIConnectionError,
@@ -61,6 +69,16 @@ _STREAM_CONTEXT_LEN = 30
 _WHOLE_REPLY_TEXT_LEN = 4000  # voicebook-stream's request ceiling
 _TEXT_MODES = {"coalesced", "whole_reply"}
 
+logger = logging.getLogger("voice.agent")
+
+
+@dataclass(frozen=True)
+class _SourceCapturePaths:
+    sequence: int
+    partial: Path
+    final: Path
+    manifest: Path
+
 
 def build_streaming_voicebook_tts(
     *,
@@ -68,6 +86,8 @@ def build_streaming_voicebook_tts(
     base_url: str = "http://voicebook-stream:5060",
     wire_format: str = "pcm",
     text_mode: str = "coalesced",
+    capture_dir: Path | None = None,
+    capture_call_sid: str | None = None,
     http_session: aiohttp.ClientSession | None = None,
 ) -> tts.StreamAdapter:
     """Build Sumi's streaming TTS seam with deliberate phrase coalescing.
@@ -98,6 +118,8 @@ def build_streaming_voicebook_tts(
             voice_id=voice_id,
             base_url=base_url,
             wire_format=wire_format,
+            capture_dir=capture_dir,
+            capture_call_sid=capture_call_sid,
             http_session=http_session,
         ),
         sentence_tokenizer=tokenize.blingfire.SentenceTokenizer(
@@ -123,6 +145,8 @@ class VoicebookTTS(tts.TTS):
         voice_id: str,
         base_url: str = "http://voicebook-stream:5060",
         wire_format: str = "pcm",
+        capture_dir: Path | None = None,
+        capture_call_sid: str | None = None,
         http_session: aiohttp.ClientSession | None = None,
     ) -> None:
         if not voice_id:
@@ -141,6 +165,26 @@ class VoicebookTTS(tts.TTS):
         self._base_url = base_url.rstrip("/")
         self._wire_format = wire_format
         self._session = http_session
+        self._capture_dir = capture_dir
+        self._capture_call_sid = capture_call_sid
+        self._capture_sequence = itertools.count()
+        if (capture_dir is None) != (capture_call_sid is None):
+            raise ValueError("Voicebook raw capture requires both capture_dir and capture_call_sid")
+
+    def _next_capture_paths(self) -> _SourceCapturePaths | None:
+        if self._capture_dir is None or self._capture_call_sid is None:
+            return None
+        sequence = next(self._capture_sequence)
+        request_tag = utils.shortuuid()
+        extension = "wav" if self._wire_format == "wav" else "s16le"
+        stem = f"{self._capture_call_sid}.voicebook.{sequence:03d}-{request_tag}"
+        final_path = self._capture_dir / f"{stem}.{extension}"
+        return _SourceCapturePaths(
+            sequence=sequence,
+            partial=final_path.with_suffix(final_path.suffix + ".partial"),
+            final=final_path,
+            manifest=Path(f"{final_path}.json"),
+        )
 
     def _ensure_session(self) -> aiohttp.ClientSession:
         if not self._session:
@@ -170,6 +214,24 @@ class ChunkedStream(tts.ChunkedStream):
         self._tts: VoicebookTTS = tts
 
     async def _run(self, output_emitter: tts.AudioEmitter) -> None:
+        capture_paths = self._tts._next_capture_paths()
+        capture_file = None
+        capture_bytes = 0
+        capture_chunks = 0
+        capture_started = time.time()
+        capture_outcome = "failed"
+        capture_error: str | None = None
+        if capture_paths is not None:
+            try:
+                capture_paths.partial.parent.mkdir(parents=True, exist_ok=True)
+                capture_file = capture_paths.partial.open("xb")
+            except OSError as exc:
+                capture_error = f"{type(exc).__name__}: {exc}"
+                logger.warning(
+                    "voicebook source capture open failed call_sid=%s: %s",
+                    self._tts._capture_call_sid,
+                    exc,
+                )
         try:
             request = {"voice_id": self._tts._voice_id, "text": self._input_text}
             if self._tts._wire_format == "wav":
@@ -208,21 +270,91 @@ class ChunkedStream(tts.ChunkedStream):
                     ),
                 )
                 async for data, _ in resp.content.iter_chunks():
+                    if capture_file is not None:
+                        try:
+                            capture_file.write(data)
+                            capture_bytes += len(data)
+                            capture_chunks += 1
+                        except OSError as exc:
+                            capture_error = f"{type(exc).__name__}: {exc}"
+                            logger.warning(
+                                "voicebook source capture write failed call_sid=%s: %s",
+                                self._tts._capture_call_sid,
+                                exc,
+                            )
+                            capture_file.close()
+                            capture_file = None
                     output_emitter.push(data)
                 output_emitter.flush()
+                capture_outcome = "completed"
 
         except TimeoutError as e:
+            capture_error = capture_error or f"{type(e).__name__}: {e}"
             raise APITimeoutError() from e
         except aiohttp.ClientResponseError as e:
+            capture_error = capture_error or f"HTTP {e.status}: {e.message}"
             raise APIStatusError(
                 message=e.message,
                 status_code=e.status,
                 request_id=None,
                 body=None,
             ) from e
-        except APIError:
+        except APIError as e:
             # Our own format-guard (and any APIStatusError): keep the status/meaning,
             # don't collapse it into a generic connection error.
+            capture_error = capture_error or f"{type(e).__name__}: {e}"
+            raise
+        except asyncio.CancelledError as e:
+            capture_outcome = "cancelled"
+            capture_error = capture_error or type(e).__name__
             raise
         except Exception as e:
+            capture_error = capture_error or f"{type(e).__name__}: {e}"
             raise APIConnectionError() from e
+        finally:
+            if capture_file is not None:
+                try:
+                    capture_file.flush()
+                    capture_file.close()
+                except OSError as exc:
+                    capture_error = capture_error or f"{type(exc).__name__}: {exc}"
+            if capture_paths is not None:
+                if capture_outcome == "completed" and capture_error is None:
+                    try:
+                        capture_paths.partial.replace(capture_paths.final)
+                    except OSError as exc:
+                        capture_error = f"{type(exc).__name__}: {exc}"
+                manifest = {
+                    "schema": "voicebook-source-capture/v1",
+                    "call_sid": self._tts._capture_call_sid,
+                    "sequence": capture_paths.sequence,
+                    "wire_format": self._tts._wire_format,
+                    "text": self._input_text,
+                    "started_at": capture_started,
+                    "completed_at": time.time(),
+                    "outcome": capture_outcome if capture_error is None else "capture_failed",
+                    "bytes": capture_bytes,
+                    "chunks": capture_chunks,
+                    "path": str(
+                        capture_paths.final
+                        if capture_paths.final.exists()
+                        else capture_paths.partial
+                    ),
+                    "error": capture_error,
+                }
+                try:
+                    capture_paths.manifest.write_text(json.dumps(manifest, indent=2) + "\n")
+                except OSError as exc:
+                    logger.warning(
+                        "voicebook source capture manifest failed call_sid=%s: %s",
+                        self._tts._capture_call_sid,
+                        exc,
+                    )
+                logger.info(
+                    "voicebook source capture: call_sid=%s outcome=%s path=%s bytes=%d chunks=%d",
+                    self._tts._capture_call_sid,
+                    manifest["outcome"],
+                    manifest["path"],
+                    capture_bytes,
+                    capture_chunks,
+                )

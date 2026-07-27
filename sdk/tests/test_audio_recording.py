@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import stat
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from sdk import audio_recording
@@ -153,3 +154,132 @@ def test_langsmith_alias_is_gone() -> None:
     """LangSmith is decommissioned. The back-compat alias claimed "agents
     currently call this name" and no agent ever did."""
     assert not hasattr(audio_recording, "attach_call_audio_to_langsmith")
+
+
+def _recording(tmp_path):
+    return audio_recording.CallAudioRecording(
+        call_sid="SCL_views",
+        agent_name="phone-sumi",
+        room_name="phone-room",
+        egress_id="EG_composite",
+        host_path=tmp_path / "phone-sumi" / "SCL_views.ogg",
+        container_path="/recordings/phone-sumi/SCL_views.ogg",
+        mime_type="audio/ogg",
+        started_at=0.0,
+    )
+
+
+def test_perspective_paths_are_call_sid_scoped(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("LIVEKIT_EGRESS_AUDIO_EXTENSION", "ogg")
+    rec = _recording(tmp_path)
+
+    host, container = audio_recording._perspective_paths(rec, "mic")
+
+    assert host == tmp_path / "phone-sumi" / "SCL_views.mic.ogg"
+    assert container == "/recordings/phone-sumi/SCL_views.mic.ogg"
+
+
+def test_track_finders_keep_sip_input_separate_from_local_output() -> None:
+    audio_kind = "kind_audio"
+    mic_pub = SimpleNamespace(kind=audio_kind, sid="TR_MIC")
+    tts_pub = SimpleNamespace(kind=audio_kind, sid="TR_TTS")
+    room = SimpleNamespace(
+        remote_participants={
+            "egress": SimpleNamespace(
+                identity="EG_1", track_publications={"wrong": tts_pub}
+            ),
+            "caller": SimpleNamespace(
+                identity="sip_+1317", track_publications={"mic": mic_pub}
+            ),
+        },
+        local_participant=SimpleNamespace(track_publications={"tts": tts_pub}),
+    )
+
+    assert audio_recording._find_sip_microphone_track_sid(room) == "TR_MIC"
+    assert audio_recording._find_local_audio_track_sid(room) == "TR_TTS"
+
+
+def test_track_egress_request_records_exact_track(monkeypatch, tmp_path) -> None:
+    from livekit import api
+
+    seen = []
+
+    class FakeEgress:
+        async def start_track_egress(self, request):
+            seen.append(request)
+            return SimpleNamespace(egress_id="EG_MIC")
+
+    class FakeAPI:
+        def __init__(self):
+            self.egress = FakeEgress()
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(api, "LiveKitAPI", FakeAPI)
+    rec = _recording(tmp_path)
+
+    asyncio.run(
+        audio_recording._start_track_egress(
+            rec,
+            perspective="mic",
+            track_sid="TR_MIC",
+        )
+    )
+
+    assert len(seen) == 1
+    assert seen[0].room_name == "phone-room"
+    assert seen[0].track_id == "TR_MIC"
+    assert seen[0].file.filepath == "/recordings/phone-sumi/SCL_views.mic.ogg"
+    assert rec.track_recordings["mic"].egress_id == "EG_MIC"
+
+
+def test_one_track_start_failure_does_not_discard_other_views(monkeypatch, tmp_path) -> None:
+    from livekit import api
+
+    class FakeEgress:
+        async def start_track_egress(self, _request):
+            raise RuntimeError("track unavailable")
+
+    class FakeAPI:
+        def __init__(self):
+            self.egress = FakeEgress()
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(api, "LiveKitAPI", FakeAPI)
+    rec = _recording(tmp_path)
+
+    asyncio.run(
+        audio_recording._start_track_egress(
+            rec,
+            perspective="tts",
+            track_sid="TR_TTS",
+        )
+    )
+
+    assert rec.egress_id == "EG_composite", "composite evidence was discarded"
+    assert rec.track_recordings == {}
+    assert "track unavailable" in rec.start_errors["tts"]
+
+
+def test_finalize_reports_missing_perspective_instead_of_claiming_complete(
+    monkeypatch, tmp_path
+) -> None:
+    rec = _recording(tmp_path)
+    rec.host_path.parent.mkdir(parents=True)
+    rec.host_path.write_bytes(b"composite")
+
+    async def fake_stop(_recording):
+        return None
+
+    async def fake_wait(_path, _timeout_seconds):
+        return True
+
+    monkeypatch.setattr(audio_recording, "_stop_egress", fake_stop)
+    monkeypatch.setattr(audio_recording, "_wait_for_recording", fake_wait)
+
+    asyncio.run(audio_recording.finalize_call_audio_recording(rec))
+
+    assert rec.start_errors == {"mic": "track_not_found", "tts": "track_not_found"}

@@ -8,6 +8,7 @@ session stands in — so CI protects the contract the live seam test proved.
 """
 
 import asyncio
+import json
 import struct
 from typing import cast
 
@@ -185,6 +186,63 @@ def test_wav_wire_format_uses_decoder_backed_emitter_path():
     }
     assert frames
     assert sum(f.samples_per_channel for f in frames) == len(_PCM) // 2
+
+
+def test_wav_wire_format_tees_exact_source_bytes_with_manifest(tmp_path):
+    async def go():
+        wav = _streaming_wav(_PCM)
+        chunks = (wav[:137], wav[137:4096], wav[4096:])
+        sess = _FakeSession(
+            _FakeResp(
+                chunks=chunks,
+                headers={"X-Audio-Format": "wav", "X-Sample-Rate": "24000"},
+            )
+        )
+        t = VoicebookTTS(
+            voice_id="sumi-v1",
+            wire_format="wav",
+            capture_dir=tmp_path,
+            capture_call_sid="SCL_capture",
+            http_session=_as_client_session(sess),
+        )
+        async for _ in t.synthesize("exact source text"):
+            pass
+        return wav, len(chunks)
+
+    wav, chunk_count = asyncio.run(go())
+
+    captures = list(tmp_path.glob("SCL_capture.voicebook.*.wav"))
+    manifests = list(tmp_path.glob("SCL_capture.voicebook.*.wav.json"))
+    assert len(captures) == 1
+    assert captures[0].read_bytes() == wav
+    assert not list(tmp_path.glob("*.partial"))
+    assert len(manifests) == 1
+    manifest = json.loads(manifests[0].read_text())
+    assert manifest["outcome"] == "completed"
+    assert manifest["bytes"] == len(wav)
+    assert manifest["chunks"] == chunk_count
+    assert manifest["text"] == "exact source text"
+
+
+def test_source_capture_failure_never_breaks_spoken_audio(tmp_path):
+    async def go():
+        blocker = tmp_path / "not-a-directory"
+        blocker.write_text("x")
+        sess = _FakeSession(_FakeResp(chunks=(_PCM,)))
+        t = VoicebookTTS(
+            voice_id="sumi-v1",
+            capture_dir=blocker,
+            capture_call_sid="SCL_capture",
+            http_session=_as_client_session(sess),
+        )
+        frames = []
+        async for event in t.synthesize("still speak"):
+            frames.append(event.frame)
+        return frames
+
+    frames = asyncio.run(go())
+
+    assert frames, "diagnostic capture failure muted the live TTS path"
 
 
 def test_http_error_maps_to_apistatuserror_not_silent():

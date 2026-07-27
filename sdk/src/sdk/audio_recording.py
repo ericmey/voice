@@ -34,7 +34,7 @@ import mimetypes
 import os
 import stat
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +53,26 @@ class CallAudioRecording:
     container_path: str
     mime_type: str
     started_at: float
+    track_recordings: dict[str, AudioTrackRecording] = field(default_factory=dict)
+    start_errors: dict[str, str] = field(default_factory=dict)
+    pending_starts: set[asyncio.Task[Any]] = field(
+        default_factory=set,
+        repr=False,
+        compare=False,
+    )
+    starting_perspectives: set[str] = field(default_factory=set, repr=False, compare=False)
+
+
+@dataclass
+class AudioTrackRecording:
+    """One isolated LiveKit track captured beside the room composite."""
+
+    perspective: str
+    track_sid: str
+    egress_id: str | None
+    host_path: Path
+    container_path: str
+    mime_type: str
 
 
 def _enabled() -> bool:
@@ -110,6 +130,18 @@ def _mime_type(path: Path) -> str:
     return mimetypes.guess_type(path.name)[0] or "audio/ogg"
 
 
+def _perspective_paths(
+    recording: CallAudioRecording,
+    perspective: str,
+) -> tuple[Path, str]:
+    extension = _recording_extension()
+    filename = f"{recording.call_sid}.{perspective}.{extension}"
+    return (
+        recording.host_path.parent / filename,
+        f"{_recordings_container_dir().rstrip('/')}/{recording.agent_name}/{filename}",
+    )
+
+
 def _public_audio_url(recording: CallAudioRecording) -> str | None:
     """Build a click-through URL when an operator has stood up a static
     file server in front of the recordings dir. Without one, span
@@ -137,6 +169,17 @@ async def start_call_audio_recording(
     host_path = host_dir / filename
     container_path = f"{_recordings_container_dir().rstrip('/')}/{agent_name}/{filename}"
 
+    recording = CallAudioRecording(
+        call_sid=call_sid,
+        agent_name=agent_name,
+        room_name=ctx.room.name,
+        egress_id=None,
+        host_path=host_path,
+        container_path=container_path,
+        mime_type=_mime_type(host_path),
+        started_at=time.time(),
+    )
+
     try:
         from livekit import api
 
@@ -158,25 +201,146 @@ async def start_call_audio_recording(
     except Exception as exc:
         logger.warning("audio egress start failed for call_sid=%s: %s", call_sid, exc)
         trace(f"audio egress start failed call_sid={call_sid}: {exc}")
-        return None
+        recording.start_errors["composite"] = f"{type(exc).__name__}: {exc}"
+        return recording
 
     egress_id = getattr(res, "egress_id", None)
-    recording = CallAudioRecording(
-        call_sid=call_sid,
-        agent_name=agent_name,
-        room_name=ctx.room.name,
-        egress_id=egress_id,
-        host_path=host_path,
-        container_path=container_path,
-        mime_type=_mime_type(host_path),
-        started_at=time.time(),
-    )
+    recording.egress_id = egress_id
     logger.info("audio egress started: call_sid=%s egress_id=%s", call_sid, egress_id)
     trace(f"audio egress started call_sid={call_sid} egress_id={egress_id}")
     return recording
 
 
-async def _stop_egress(recording: CallAudioRecording) -> None:
+def _publication_audio_track_sid(publication: Any) -> str | None:
+    """Return an audio publication SID without trusting a name convention."""
+    kind = getattr(publication, "kind", None)
+    try:
+        from livekit import rtc
+
+        if kind != rtc.TrackKind.KIND_AUDIO and str(kind).lower() not in {
+            "audio",
+            "kind_audio",
+        }:
+            return None
+    except (ImportError, AttributeError):
+        # Test doubles and older SDKs may expose only the string kind.
+        if str(kind).lower() not in {
+            "audio",
+            "kind_audio",
+        }:
+            return None
+    sid = getattr(publication, "sid", None)
+    return str(sid) if sid else None
+
+
+def _find_sip_microphone_track_sid(room: Any) -> str | None:
+    """Find the caller's published audio track, never an egress/agent track."""
+    participants = getattr(room, "remote_participants", {})
+    values = participants.values() if hasattr(participants, "values") else participants
+    for participant in values:
+        identity = str(getattr(participant, "identity", ""))
+        if not identity.startswith("sip_"):
+            continue
+        publications = getattr(participant, "track_publications", {})
+        pubs = publications.values() if hasattr(publications, "values") else publications
+        for publication in pubs:
+            sid = _publication_audio_track_sid(publication)
+            if sid:
+                return sid
+    return None
+
+
+def _find_local_audio_track_sid(room: Any) -> str | None:
+    participant = getattr(room, "local_participant", None)
+    publications = getattr(participant, "track_publications", {}) if participant else {}
+    pubs = publications.values() if hasattr(publications, "values") else publications
+    for publication in pubs:
+        sid = _publication_audio_track_sid(publication)
+        if sid:
+            return sid
+    return None
+
+
+async def _start_track_egress(
+    recording: CallAudioRecording,
+    *,
+    perspective: str,
+    track_sid: str,
+) -> None:
+    """Start one isolated-track recorder without invalidating other evidence."""
+    if perspective in recording.track_recordings or perspective in recording.starting_perspectives:
+        return
+    recording.starting_perspectives.add(perspective)
+    host_path, container_path = _perspective_paths(recording, perspective)
+    try:
+        from livekit import api
+
+        req = api.TrackEgressRequest(
+            room_name=recording.room_name,
+            track_id=track_sid,
+            # Track egress accepts DirectFileOutput; unlike composite egress it
+            # does not accept EncodedFileOutput or a file_type selector.
+            file=api.DirectFileOutput(filepath=container_path),
+        )
+        lkapi = api.LiveKitAPI()
+        try:
+            res = await lkapi.egress.start_track_egress(req)
+        finally:
+            await lkapi.aclose()
+        item = AudioTrackRecording(
+            perspective=perspective,
+            track_sid=track_sid,
+            egress_id=getattr(res, "egress_id", None),
+            host_path=host_path,
+            container_path=container_path,
+            mime_type=_mime_type(host_path),
+        )
+        recording.track_recordings[perspective] = item
+        logger.info(
+            "audio %s egress started: call_sid=%s track_sid=%s egress_id=%s",
+            perspective,
+            recording.call_sid,
+            track_sid,
+            item.egress_id,
+        )
+        trace(
+            f"audio {perspective} egress started call_sid={recording.call_sid} "
+            f"track_sid={track_sid} egress_id={item.egress_id}"
+        )
+    except Exception as exc:
+        recording.start_errors[perspective] = f"{type(exc).__name__}: {exc}"
+        logger.warning(
+            "audio %s egress start failed for call_sid=%s track_sid=%s: %s",
+            perspective,
+            recording.call_sid,
+            track_sid,
+            exc,
+        )
+        trace(
+            f"audio {perspective} egress start failed call_sid={recording.call_sid}: {exc}"
+        )
+    finally:
+        recording.starting_perspectives.discard(perspective)
+
+
+def _schedule_track_start(
+    recording: CallAudioRecording,
+    *,
+    perspective: str,
+    track_sid: str | None,
+) -> None:
+    if not track_sid:
+        return
+    if perspective in recording.track_recordings or perspective in recording.starting_perspectives:
+        return
+    task = asyncio.create_task(
+        _start_track_egress(recording, perspective=perspective, track_sid=track_sid)
+    )
+    recording.pending_starts.add(task)
+    task.add_done_callback(recording.pending_starts.discard)
+
+
+async def _stop_egress(recording: CallAudioRecording | AudioTrackRecording) -> None:
     if not recording.egress_id:
         return
     try:
@@ -228,6 +392,13 @@ def _annotate_active_span(recording: CallAudioRecording) -> None:
     span.set_attribute("voice.audio.mime_type", recording.mime_type)
     if recording.egress_id:
         span.set_attribute("voice.audio.egress_id", recording.egress_id)
+    for perspective, item in sorted(recording.track_recordings.items()):
+        span.set_attribute(f"voice.audio.{perspective}.path", str(item.host_path))
+        span.set_attribute(f"voice.audio.{perspective}.track_sid", item.track_sid)
+        if item.egress_id:
+            span.set_attribute(f"voice.audio.{perspective}.egress_id", item.egress_id)
+    for perspective, error in sorted(recording.start_errors.items()):
+        span.set_attribute(f"voice.audio.{perspective}.start_error", error)
     public_url = _public_audio_url(recording)
     if public_url:
         span.set_attribute("voice.audio.url", public_url)
@@ -253,24 +424,90 @@ async def finalize_call_audio_recording(
     """
     if recording is None:
         return
+    if recording.pending_starts:
+        await asyncio.gather(*tuple(recording.pending_starts), return_exceptions=True)
+    for perspective in ("mic", "tts"):
+        if (
+            perspective not in recording.track_recordings
+            and perspective not in recording.start_errors
+        ):
+            recording.start_errors[perspective] = "track_not_found"
+            logger.warning(
+                "audio %s egress never started for call_sid=%s: track not found",
+                perspective,
+                recording.call_sid,
+            )
+
     await _stop_egress(recording)
-    ready = await _wait_for_recording(recording.host_path, timeout_seconds)
-    if not ready:
-        logger.warning("audio recording finalize: file not ready: %s", recording.host_path)
-        trace(f"audio recording finalize: file not ready: {recording.host_path}")
-        return
-    logger.info(
-        "audio recording finalized: %s (%d bytes)",
-        recording.host_path,
-        recording.host_path.stat().st_size,
+    for item in tuple(recording.track_recordings.values()):
+        await _stop_egress(item)
+
+    candidates: list[tuple[str, Path]] = []
+    if recording.egress_id:
+        candidates.append(("composite", recording.host_path))
+    candidates.extend(
+        (perspective, item.host_path)
+        for perspective, item in sorted(recording.track_recordings.items())
+        if item.egress_id
     )
-    trace(f"audio recording finalized: {recording.host_path}")
+    finalized: list[str] = []
+    missing: list[str] = []
+    for perspective, path in candidates:
+        ready = await _wait_for_recording(path, timeout_seconds)
+        if not ready:
+            missing.append(perspective)
+            logger.warning(
+                "audio %s recording finalize: file not ready: %s", perspective, path
+            )
+            trace(f"audio {perspective} recording finalize: file not ready: {path}")
+            continue
+        finalized.append(perspective)
+        logger.info(
+            "audio %s recording finalized: %s (%d bytes)",
+            perspective,
+            path,
+            path.stat().st_size,
+        )
+        trace(f"audio {perspective} recording finalized: {path}")
+
+    logger.info(
+        "audio recording perspectives: call_sid=%s finalized=%s missing=%s start_errors=%s",
+        recording.call_sid,
+        finalized,
+        missing,
+        sorted(recording.start_errors),
+    )
 
 
 def wire_call_audio_attachment(ctx: Any, recording: CallAudioRecording | None) -> None:
-    """Register a shutdown hook that finalizes the recording file."""
+    """Start isolated track taps and register one evidence-preserving finalizer."""
     if recording is None:
         return
+
+    room = getattr(ctx, "room", None)
+    if room is not None:
+        _schedule_track_start(
+            recording,
+            perspective="mic",
+            track_sid=_find_sip_microphone_track_sid(room),
+        )
+        _schedule_track_start(
+            recording,
+            perspective="tts",
+            track_sid=_find_local_audio_track_sid(room),
+        )
+
+        on = getattr(room, "on", None)
+        if on is not None:
+
+            @on("local_track_published")
+            def _on_local_track_published(publication: Any, _track: Any) -> None:
+                _schedule_track_start(
+                    recording,
+                    perspective="tts",
+                    track_sid=_publication_audio_track_sid(publication),
+                )
+
     add_shutdown_callback = getattr(ctx, "add_shutdown_callback", None)
     if add_shutdown_callback is None:
         return
