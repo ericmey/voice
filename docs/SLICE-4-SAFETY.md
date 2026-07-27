@@ -1,5 +1,32 @@
 # Slice 4 — Sumi LLM output-cap safety repair (ARTIFACT v11 — post v10 second-read)
 
+## 2026-07-27 live-turn amendment — bounded 256-token replies
+
+The original 64-token ceiling below remains the historical fix for the
+2026-07-23 uncapped-generation incident, but it is no longer the current worker
+contract. A live requested story on 2026-07-27 reached exactly 64 completion
+tokens and ended mid-clause. The provider and both TTS requests completed
+normally; the worker then stored the truncated turn as though it were complete.
+
+Current contract:
+
+- `_LLM_MAX_TOKENS_CEILING = 256`; `SUMI_LLM_MAX_TOKENS` remains lower-only and
+  still fails loud above the compiled ceiling, below 1, or when unparseable.
+- A normally drained provider stream whose usage reaches the cap appends an
+  explicit spoken/history notice: `I reached my reply limit before I could
+  finish that. Ask me to continue.`
+- No notice is emitted for below-cap completion, cancellation, consumer close,
+  or provider error.
+- Because usage arrives after streamed tokens, the notice cannot retract an
+  already-spoken incomplete tail. Preventing that tail would require buffering
+  the whole reply and is a separate latency experiment.
+- 256 is a bounded first expansion, not a claim about the final long-form phone
+  policy and not permission for unlimited generation.
+
+The 2026-07-27 receipt is 74/74 Sumi tests passed with ruff clean. The original
+64-token implementation and receipts below are retained as incident history;
+they must not be read as the current live value.
+
 **v11** closes Yua's v10 second-read: **G1** — the cleanup item-get schema (v10) required only
 *some* string `id` + a `fields` array; it did not bind the returned `.id` to the requested id and
 accepted malformed field entries, so `{id:WRONGITEM,fields:[]}` or `{id:MOCKITEM123,fields:[null]}`

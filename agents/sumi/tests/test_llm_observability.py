@@ -50,10 +50,54 @@ def test_cap_reached_is_visible(caplog):
         return [chunk async for chunk in _observe_llm_stream(source(), max_tokens=64)]
 
     with caplog.at_level(logging.INFO, logger="voice.agent"):
-        asyncio.run(go())
+        chunks = asyncio.run(go())
 
+    assert len(chunks) == 2
+    assert chunks[-1] == (
+        "\n\nI reached my reply limit before I could finish that. Ask me to continue."
+    )
     assert "outcome=completed" in caplog.text
     assert "cap_reached=True" in caplog.text
+
+
+def test_cap_notice_is_not_emitted_below_cap():
+    async def source():
+        yield llm.ChatChunk(
+            id="turn-1",
+            delta=llm.ChoiceDelta(role="assistant", content="A complete answer."),
+        )
+        yield _usage_chunk(completion_tokens=63)
+
+    async def go():
+        return [chunk async for chunk in _observe_llm_stream(source(), max_tokens=64)]
+
+    chunks = asyncio.run(go())
+    assert len(chunks) == 2
+    assert all(not isinstance(chunk, str) for chunk in chunks)
+
+
+def test_provider_error_does_not_fabricate_cap_notice(caplog):
+    seen: list[llm.ChatChunk | str | FlushSentinel] = []
+
+    async def source():
+        yield llm.ChatChunk(
+            id="turn-1",
+            delta=llm.ChoiceDelta(role="assistant", content="An interrupted answer"),
+        )
+        raise RuntimeError("provider stream failed")
+
+    async def go():
+        with pytest.raises(RuntimeError, match="provider stream failed"):
+            async for chunk in _observe_llm_stream(source(), max_tokens=64):
+                seen.append(chunk)
+
+    with caplog.at_level(logging.INFO, logger="voice.agent"):
+        asyncio.run(go())
+
+    assert len(seen) == 1
+    assert all(not isinstance(chunk, str) for chunk in seen)
+    assert "outcome=error" in caplog.text
+    assert "cap_reached=False" in caplog.text
 
 
 def test_pipeline_cancellation_is_distinct_from_normal_completion(caplog):

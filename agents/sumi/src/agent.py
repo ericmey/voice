@@ -348,19 +348,27 @@ _TURN_HANDLING: TurnHandlingOptions = {
     },
 }
 
-# CAPACITY-SAFETY cap — bound EVERY spoken turn to a short conversational length.
-# An uncapped request lets the backend run toward its huge default n_predict
-# (65536 on Momo). On a memory-thin host that pins a slot + KV and can grind
-# under swap, pressuring the host to distress. A phone turn is one or two
-# sentences; 64 completion tokens is plenty and makes a worker-side runaway
-# generation structurally impossible. This is a SAFETY bound first, brevity
-# second — it is the direct fix for the 2026-07-23 uncapped-generation incident.
-_LLM_MAX_TOKENS_CEILING = 64  # HARD ceiling. The env override may only LOWER it.
+# CAPACITY-SAFETY cap — bound EVERY spoken turn while permitting a deliberate
+# longer answer. An uncapped request lets a backend run toward a huge default
+# n_predict, pinning a slot + KV indefinitely. The original 64-token guard fixed
+# the 2026-07-23 uncapped-generation incident, but the 2026-07-27 live story turn
+# proved that it can truncate an ordinary requested answer mid-clause. 256 is a
+# bounded first expansion, not an unlimited-generation policy. The environment
+# may still only LOWER it.
+_LLM_MAX_TOKENS_CEILING = 256
+
+# Usage arrives at the end of the provider stream, after preceding tokens may
+# already have been spoken. We cannot retract a truncated tail in a streaming
+# pipeline, but we can make the cutoff audible and keep conversation history
+# from representing the turn as a completed answer.
+_LLM_CAP_NOTICE = (
+    "\n\nI reached my reply limit before I could finish that. Ask me to continue."
+)
 
 
 def _resolve_max_tokens() -> int:
-    """Per-turn output cap. Defaults to the 64-token ceiling; SUMI_LLM_MAX_TOKENS may
-    only LOWER it (1..64). A value above the ceiling, non-numeric, or < 1 FAILS LOUD:
+    """Per-turn output cap. Defaults to the compiled ceiling; SUMI_LLM_MAX_TOKENS may
+    only LOWER it. A value above the ceiling, non-numeric, or < 1 FAILS LOUD:
     the env must never be able to raise or defeat the safety bound. An override that
     can lift the cap is not a cap — that is the exact hole the 2026-07-23 incident
     came through, and the reason this is validated rather than a bare int()."""
@@ -475,6 +483,11 @@ async def _observe_llm_stream(
                 if chunk.usage is not None:
                     completion_tokens = chunk.usage.completion_tokens
             yield chunk
+        if completion_tokens is not None and completion_tokens >= max_tokens:
+            # This yield is deliberately inside the guarded stream lifetime. If
+            # the consumer closes while receiving it, the receipt must say
+            # consumer_closed rather than completed.
+            yield _LLM_CAP_NOTICE
     except asyncio.CancelledError:
         outcome = "cancelled"
         raise
@@ -636,7 +649,7 @@ async def entrypoint(ctx: JobContext) -> None:
     stt = build_stt(vad=vad)
     # Slice 4 — LOCAL LLM: Momo via the explicit LiteLLM `sumi` route, built by the
     # single build_llm() factory — the SAME construction path the safety tests
-    # exercise. Its cap is _resolve_max_tokens() (hard 64 ceiling; env may only
+    # exercise. Its cap is _resolve_max_tokens() (hard 256 ceiling; env may only
     # lower). max_retries=0 so a phone turn is never spoken twice; the route is
     # num_retries:0 with no cloud fallback.
     llm = build_llm()

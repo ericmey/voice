@@ -13,8 +13,8 @@ Addresses the review blockers:
        handwritten context manager. Still zero network.
 
 Honest limitation: this proves the worker/OpenAI-client closes the downstream HTTP
-stream on interrupt. Whether the LiteLLM proxy then aborts the momo upstream on that
-close is proxy behavior NOT exercised here; the 64-token cap bounds the blast radius
+stream on interrupt. Whether the LiteLLM proxy then aborts the upstream on that
+close is proxy behavior NOT exercised here; the 256-token cap bounds the blast radius
 regardless.
 """
 
@@ -29,7 +29,7 @@ import pytest
 from agent import _LLM_MAX_TOKENS_CEILING, build_llm
 from livekit.agents import llm as llm_mod
 
-CEIL = _LLM_MAX_TOKENS_CEILING  # 64
+CEIL = _LLM_MAX_TOKENS_CEILING
 
 
 def _sse(delta: str | None = None, finish: str | None = None, usage: bool = False) -> bytes:
@@ -117,7 +117,7 @@ async def _drive_full_turn(recorded: dict) -> None:
 
 
 def test_outbound_request_capped_at_ceiling_by_default(monkeypatch):
-    """build_llm() with no override sends max_completion_tokens=64 on the wire."""
+    """build_llm() sends the compiled ceiling on the real wire by default."""
     monkeypatch.delenv("SUMI_LLM_MAX_TOKENS", raising=False)
     recorded: dict = {}
     asyncio.run(_drive_full_turn(recorded))
