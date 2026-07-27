@@ -87,6 +87,7 @@ logger = logging.getLogger("voice.agent")
 # are env-overridable.
 _TTS_VOICE_ID = os.environ.get("SUMI_TTS_VOICE_ID", "sumi-v1")
 _TTS_BASE_URL = os.environ.get("SUMI_TTS_BASE_URL", "http://voicebook-stream:5060")
+_TTS_WIRE_FORMAT = os.environ.get("SUMI_TTS_WIRE_FORMAT", "pcm").strip().lower()
 _TTS_PROVIDER = os.environ.get("SUMI_TTS_PROVIDER", "voicebook").strip().lower()
 _ELEVENLABS_VOICE_ID = os.environ.get("SUMI_ELEVENLABS_VOICE_ID", "AEW6JTgnyoPaoB9zlK3S")
 _ELEVENLABS_MODEL = os.environ.get("SUMI_ELEVENLABS_MODEL", "eleven_flash_v2_5")
@@ -225,7 +226,11 @@ def build_tts():
     """Build Sumi's explicitly selected TTS provider; never silently fall back."""
 
     if _TTS_PROVIDER == "voicebook":
-        return build_streaming_voicebook_tts(voice_id=_TTS_VOICE_ID, base_url=_TTS_BASE_URL)
+        return build_streaming_voicebook_tts(
+            voice_id=_TTS_VOICE_ID,
+            base_url=_TTS_BASE_URL,
+            wire_format=_TTS_WIRE_FORMAT,
+        )
     if _TTS_PROVIDER == "elevenlabs":
         if not _ELEVENLABS_VOICE_ID:
             raise ValueError("SUMI_ELEVENLABS_VOICE_ID is required for ElevenLabs TTS")

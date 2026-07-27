@@ -1,6 +1,6 @@
 """HTTP surface for the streaming voicebook service.
 
-    POST /speak/stream  -> raw s16le PCM stream (LiveKit)
+    POST /speak/stream  -> progressive s16le PCM or WAV stream (LiveKit)
     POST /speak         -> completed audio/wav (Hermes)
     GET  /healthz       -> 503 while warming, 200 only after CUDA-graph warmup
 
@@ -25,9 +25,10 @@ Design invariants, each earned by a review cycle:
 from __future__ import annotations
 
 import logging
+import struct
 import time
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
@@ -51,6 +52,38 @@ logger = logging.getLogger("voicebook.stream")
 class SpeakRequest(BaseModel):
     voice_id: str = Field(min_length=1)
     text: str = Field(min_length=1)
+    response_format: Literal["pcm", "wav"] = "pcm"
+
+
+def _streaming_wav_header(*, sample_rate: int = SAMPLE_RATE, channels: int = 1) -> bytes:
+    """Return a PCM16 WAV header whose unknown stream sizes are left open.
+
+    The body is generated progressively, so its final byte count is unavailable
+    when response headers are sent. FFmpeg/LiveKit accept the conventional
+    0xffffffff RIFF and data sizes and decode samples as they arrive. This is the
+    same progressive-container shape used by Kokoro-FastAPI, without adding an
+    encode/decode dependency to a stream that is already PCM16.
+    """
+
+    bits_per_sample = 16
+    block_align = channels * bits_per_sample // 8
+    byte_rate = sample_rate * block_align
+    return struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF",
+        0xFFFFFFFF,
+        b"WAVE",
+        b"fmt ",
+        16,
+        1,
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bits_per_sample,
+        b"data",
+        0xFFFFFFFF,
+    )
 
 
 def _safe_rid(raw: str | None) -> str:
@@ -106,6 +139,7 @@ class ReservationStreamingResponse(StreamingResponse):
         voice_id: str,
         chars: int,
         start: float,
+        wire_format: Literal["pcm", "wav"] = "pcm",
     ) -> None:
         self._reservation = reservation
         self._body = body
@@ -113,12 +147,14 @@ class ReservationStreamingResponse(StreamingResponse):
         self._voice_id = voice_id
         self._chars = chars
         self._start = start
+        media_type = "audio/wav" if wire_format == "wav" else "application/octet-stream"
+        audio_format = "wav" if wire_format == "wav" else "s16le"
         super().__init__(
             content=body,
-            media_type="application/octet-stream",
+            media_type=media_type,
             headers={
                 "X-Request-ID": request_id,
-                "X-Audio-Format": "s16le",
+                "X-Audio-Format": audio_format,
                 "X-Sample-Rate": str(SAMPLE_RATE),
                 "X-Channels": "1",
                 "Cache-Control": "no-store",
@@ -280,7 +316,12 @@ def create_app(registry: VoiceRegistry, synthesizer: Synthesizer, lease: OneFlig
                 raise HTTPException(
                     status_code=502, detail=f"synthesis failed: {type(exc).__name__}: {exc}"
                 ) from None
-            body = _PrependIter(first, sync_gen)
+            pcm_body = _PrependIter(first, sync_gen)
+            body = (
+                _PrependIter(_streaming_wav_header(), pcm_body)
+                if req.response_format == "wav"
+                else pcm_body
+            )
             resp = ReservationStreamingResponse(
                 reservation,
                 body,
@@ -288,6 +329,7 @@ def create_app(registry: VoiceRegistry, synthesizer: Synthesizer, lease: OneFlig
                 voice_id=req.voice_id,
                 chars=chars,
                 start=start,
+                wire_format=req.response_format,
             )
         except HTTPException as exc:
             # typed pre-handoff failure (404/500, or 502 from prefetch already

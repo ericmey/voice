@@ -8,6 +8,7 @@ session stands in — so CI protects the contract the live seam test proved.
 """
 
 import asyncio
+import struct
 from typing import cast
 
 import aiohttp
@@ -19,6 +20,25 @@ from yarl import URL
 
 # 0.5 s of known s16le PCM @ 24 kHz (non-empty so AudioEmitter accepts the turn).
 _PCM = b"\x01\x02" * 6000
+
+
+def _streaming_wav(pcm: bytes) -> bytes:
+    return struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF",
+        0xFFFFFFFF,
+        b"WAVE",
+        b"fmt ",
+        16,
+        1,
+        1,
+        24000,
+        48000,
+        2,
+        16,
+        b"data",
+        0xFFFFFFFF,
+    ) + pcm
 
 
 class _FakeContent:
@@ -94,6 +114,11 @@ def test_empty_voice_id_fails_loud():
         VoicebookTTS(voice_id="")
 
 
+def test_unknown_wire_format_fails_loud():
+    with pytest.raises(ValueError, match="wire_format"):
+        VoicebookTTS(voice_id="sumi-v1", wire_format="mp3")
+
+
 def test_worker_adapter_is_explicitly_streaming():
     t = build_streaming_voicebook_tts(voice_id="sumi-v1")
     assert t.capabilities.streaming is True
@@ -124,6 +149,37 @@ def test_run_posts_correct_request_and_maps_frames():
     assert frames, "adapter yielded no audio frames"
     assert all(f.sample_rate == 24000 and f.num_channels == 1 for f in frames)
     assert sum(f.samples_per_channel for f in frames) > 0
+
+
+def test_wav_wire_format_uses_decoder_backed_emitter_path():
+    async def go():
+        wav = _streaming_wav(_PCM)
+        sess = _FakeSession(
+            _FakeResp(
+                chunks=(wav[:137], wav[137:]),
+                headers={"X-Audio-Format": "wav", "X-Sample-Rate": "24000"},
+            )
+        )
+        t = VoicebookTTS(
+            voice_id="sumi-v1",
+            base_url="http://vb:5060/",
+            wire_format="wav",
+            http_session=_as_client_session(sess),
+        )
+        frames = []
+        async for ev in t.synthesize("hello Eric"):
+            frames.append(ev.frame)
+        return sess, frames
+
+    sess, frames = asyncio.run(go())
+    _, kw = sess.calls[0]
+    assert kw["json"] == {
+        "voice_id": "sumi-v1",
+        "text": "hello Eric",
+        "response_format": "wav",
+    }
+    assert frames
+    assert sum(f.samples_per_channel for f in frames) == len(_PCM) // 2
 
 
 def test_http_error_maps_to_apistatuserror_not_silent():

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import struct
 import wave
 from pathlib import Path
 
@@ -130,6 +131,26 @@ def test_stream_returns_pcm_and_releases_after(env):
     assert r.headers["x-sample-rate"] == "24000"
     assert lease.locked is False  # released after completion
     assert synth.closed is True  # generator closed
+
+
+def test_stream_can_wrap_progressive_pcm_as_wav(env):
+    reg, synth, lease, client = env
+    with client.stream(
+        "POST",
+        "/speak/stream",
+        json={"voice_id": "sumi-v1", "text": "hi", "response_format": "wav"},
+    ) as r:
+        body = b"".join(r.iter_bytes())
+
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "audio/wav"
+    assert r.headers["x-audio-format"] == "wav"
+    assert body[:4] == b"RIFF" and body[8:12] == b"WAVE"
+    assert struct.unpack_from("<I", body, 4)[0] == 0xFFFFFFFF
+    assert struct.unpack_from("<I", body, 40)[0] == 0xFFFFFFFF
+    assert body[44:] == b"pcm0pcm1pcm2"
+    assert lease.locked is False
+    assert synth.closed is True
 
 
 def test_completed_wav_route(env):

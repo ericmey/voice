@@ -4,8 +4,8 @@ This is Sumi speaking in her own accepted master voice, locally — replacing th
 inherited ElevenLabs (Nyla's id) scaffold. It drives the managed voicebook-stream
 service's LiveKit-facing endpoint:
 
-    POST {base_url}/speak/stream   body {"voice_id","text"}
-      -> raw s16le PCM, 24000 Hz mono (X-Audio-Format: s16le, X-Sample-Rate: 24000)
+    POST {base_url}/speak/stream   body {"voice_id","text","response_format"}
+      -> progressive PCM or WAV, 24000 Hz mono
 
 Contract notes that shaped this adapter (from voicebook-stream QUALIFICATION + app.py):
   - Input is FULL TEXT, not token-streamed, so ``VoicebookTTS`` itself declares
@@ -45,9 +45,7 @@ from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
 # voicebook-stream's fixed output contract (synth.SAMPLE_RATE / CHANNELS).
 _SAMPLE_RATE = 24000
 _NUM_CHANNELS = 1
-# Raw little-endian s16 PCM — audio/pcm makes AudioEmitter treat bytes as raw PCM
-# (no container demux), which is exactly what /speak/stream emits.
-_MIME_TYPE = "audio/pcm"
+_WIRE_FORMATS = {"pcm", "wav"}
 
 # The default LiveKit sentence adapter emits every sentence independently.  On
 # Sumi's first real call that turned 373 characters into 11 voicebook requests,
@@ -65,6 +63,7 @@ def build_streaming_voicebook_tts(
     *,
     voice_id: str,
     base_url: str = "http://voicebook-stream:5060",
+    wire_format: str = "pcm",
     http_session: aiohttp.ClientSession | None = None,
 ) -> tts.StreamAdapter:
     """Build Sumi's streaming TTS seam with deliberate phrase coalescing.
@@ -78,6 +77,7 @@ def build_streaming_voicebook_tts(
         tts=VoicebookTTS(
             voice_id=voice_id,
             base_url=base_url,
+            wire_format=wire_format,
             http_session=http_session,
         ),
         sentence_tokenizer=tokenize.blingfire.SentenceTokenizer(
@@ -102,10 +102,16 @@ class VoicebookTTS(tts.TTS):
         *,
         voice_id: str,
         base_url: str = "http://voicebook-stream:5060",
+        wire_format: str = "pcm",
         http_session: aiohttp.ClientSession | None = None,
     ) -> None:
         if not voice_id:
             raise ValueError("VoicebookTTS requires a voice_id — Sumi does not speak anonymously.")
+        wire_format = wire_format.strip().lower()
+        if wire_format not in _WIRE_FORMATS:
+            raise ValueError(
+                f"VoicebookTTS wire_format must be one of {sorted(_WIRE_FORMATS)}, got {wire_format!r}"
+            )
         super().__init__(
             capabilities=tts.TTSCapabilities(streaming=False),
             sample_rate=_SAMPLE_RATE,
@@ -113,6 +119,7 @@ class VoicebookTTS(tts.TTS):
         )
         self._voice_id = voice_id
         self._base_url = base_url.rstrip("/")
+        self._wire_format = wire_format
         self._session = http_session
 
     def _ensure_session(self) -> aiohttp.ClientSession:
@@ -144,9 +151,13 @@ class ChunkedStream(tts.ChunkedStream):
 
     async def _run(self, output_emitter: tts.AudioEmitter) -> None:
         try:
+            request = {"voice_id": self._tts._voice_id, "text": self._input_text}
+            if self._tts._wire_format == "wav":
+                request["response_format"] = "wav"
+
             async with self._tts._ensure_session().post(
                 f"{self._tts._base_url}/speak/stream",
-                json={"voice_id": self._tts._voice_id, "text": self._input_text},
+                json=request,
                 timeout=aiohttp.ClientTimeout(
                     total=None,  # streamed audio: bounded by sock_connect, not total
                     sock_connect=self._conn_options.timeout,
@@ -156,11 +167,15 @@ class ChunkedStream(tts.ChunkedStream):
 
                 # Defence-in-depth: a 200 must be the raw-PCM contract, not some
                 # other body. Verify the instrument rather than trust the status.
+                expected_format = "wav" if self._tts._wire_format == "wav" else "s16le"
                 fmt = resp.headers.get("X-Audio-Format", "")
-                if fmt and fmt.lower() != "s16le":
+                if fmt and fmt.lower() != expected_format:
                     body = await resp.text()
                     raise APIError(
-                        message=f"voicebook-stream returned X-Audio-Format={fmt!r}, not s16le",
+                        message=(
+                            f"voicebook-stream returned X-Audio-Format={fmt!r}, "
+                            f"not {expected_format}"
+                        ),
                         body=body,
                     )
 
@@ -168,7 +183,9 @@ class ChunkedStream(tts.ChunkedStream):
                     request_id=utils.shortuuid(),
                     sample_rate=_SAMPLE_RATE,
                     num_channels=_NUM_CHANNELS,
-                    mime_type=_MIME_TYPE,
+                    mime_type=(
+                        "audio/wav" if self._tts._wire_format == "wav" else "audio/pcm"
+                    ),
                 )
                 async for data, _ in resp.content.iter_chunks():
                     output_emitter.push(data)
