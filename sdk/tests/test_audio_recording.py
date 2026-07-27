@@ -283,3 +283,44 @@ def test_finalize_reports_missing_perspective_instead_of_claiming_complete(
     asyncio.run(audio_recording.finalize_call_audio_recording(rec))
 
     assert rec.start_errors == {"mic": "track_not_found", "tts": "track_not_found"}
+
+
+def test_late_sip_microphone_publication_starts_mic_egress(
+    monkeypatch, tmp_path
+) -> None:
+    events = {}
+    starts = []
+
+    class FakeRoom:
+        name = "phone-room"
+        remote_participants = {}
+        local_participant = SimpleNamespace(track_publications={})
+
+        def on(self, event):
+            def register(callback):
+                events[event] = callback
+                return callback
+
+            return register
+
+    async def fake_start(_recording, *, perspective, track_sid):
+        starts.append((perspective, track_sid))
+
+    monkeypatch.setattr(audio_recording, "_start_track_egress", fake_start)
+    ctx = SimpleNamespace(
+        room=FakeRoom(),
+        add_shutdown_callback=lambda _callback: None,
+    )
+    rec = _recording(tmp_path)
+
+    async def go():
+        audio_recording.wire_call_audio_attachment(ctx, rec)
+        events["track_published"](
+            SimpleNamespace(kind="kind_audio", sid="TR_LATE_MIC"),
+            SimpleNamespace(identity="sip_late_caller"),
+        )
+        await asyncio.sleep(0)
+
+    asyncio.run(go())
+
+    assert starts == [("mic", "TR_LATE_MIC")]

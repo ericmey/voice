@@ -508,6 +508,16 @@ def wire_call_audio_attachment(ctx: Any, recording: CallAudioRecording | None) -
                     track_sid=_publication_audio_track_sid(publication),
                 )
 
+            @on("track_published")
+            def _on_remote_track_published(publication: Any, participant: Any) -> None:
+                if not str(getattr(participant, "identity", "")).startswith("sip_"):
+                    return
+                _schedule_track_start(
+                    recording,
+                    perspective="mic",
+                    track_sid=_publication_audio_track_sid(publication),
+                )
+
     add_shutdown_callback = getattr(ctx, "add_shutdown_callback", None)
     if add_shutdown_callback is None:
         return
