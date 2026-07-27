@@ -485,3 +485,22 @@ ask what its new number measures; a corrective result gets no reduced scrutiny.
 **Why:** A plausible capacity label can survive reviews and size production
 hardware incorrectly. A barrier or counter bug can then make the corrective run
 look authoritative while measuring the test fixture's own delay.
+
+## 2026-07-27 — A recorder is not armed until it writes a red-proof artifact
+
+**Trigger:** `VOICE_RECORD_AUDIO=true`, a running egress service, and successful
+subscription to both room tracks looked like an armed diagnostic recorder. At
+call finalization, egress failed to write `/recordings/phone-sumi/...ogg` because
+the root worker had created the agent directory as `2755 root:root`; the pinned
+egress process runs as uid 1001, gid 0 and needs group write. The call completed,
+but no waveform existed.
+
+**Lesson:** Before spending a human call, red-test the full recording lifecycle:
+create the directory through the worker path, write through the actual egress
+identity, finalize a file, and verify nonzero bytes at the host path. Starting
+egress and observing track subscriptions prove capture intent, not retention.
+Shared recording directories must be setgid and group-writable (`2775` here).
+
+**Why:** A collector can be live for the entire event and still discard its only
+evidence at the final filesystem hop. A recording receipt is the finalized,
+readable artifact—not the enable flag, egress ID, or subscription log.

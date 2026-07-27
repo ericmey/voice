@@ -253,6 +253,21 @@ class TestTTSProviderSelection:
 
         assert agent_module.build_tts() is sentinel
 
+    def test_voicebook_text_mode_crosses_factory_boundary(self, agent_module, monkeypatch):
+        recorded = {}
+
+        def fake_build(**kwargs):
+            recorded.update(kwargs)
+            return object()
+
+        monkeypatch.setattr(agent_module, "_TTS_PROVIDER", "voicebook")
+        monkeypatch.setattr(agent_module, "_TTS_TEXT_MODE", "whole_reply")
+        monkeypatch.setattr(agent_module, "build_streaming_voicebook_tts", fake_build)
+
+        agent_module.build_tts()
+
+        assert recorded["text_mode"] == "whole_reply"
+
     def test_elevenlabs_control_is_native_streaming(self, agent_module, monkeypatch):
         monkeypatch.setenv("ELEVEN_API_KEY", "fake-test-key")
         monkeypatch.setattr(agent_module, "_TTS_PROVIDER", "elevenlabs")

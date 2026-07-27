@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import stat
 from unittest.mock import MagicMock
 
 from sdk import audio_recording
@@ -11,6 +12,20 @@ def test_recording_dirs_default_under_voice_logs(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("LIVEKIT_VOICE_LOGS", str(tmp_path / "voice"))
 
     assert audio_recording._recordings_host_dir() == tmp_path / "voice" / "recordings"
+
+
+def test_recording_dir_is_group_writable_for_egress(monkeypatch, tmp_path) -> None:
+    """The root worker must not leave egress uid=1001,gid=0 a read-only bind."""
+    root = tmp_path / "recordings"
+    existing = root / "phone-sumi"
+    existing.mkdir(parents=True, mode=0o755)
+    existing.chmod(0o2755)  # exact live failure from SCL_CUS2NHcPcjmm
+    monkeypatch.setenv("LIVEKIT_EGRESS_HOST_RECORDINGS_DIR", str(root))
+
+    prepared = audio_recording._prepare_agent_recording_dir("phone-sumi")
+
+    assert prepared == existing
+    assert stat.S_IMODE(prepared.stat().st_mode) == 0o2775
 
 
 def test_enabled_when_env_true(monkeypatch) -> None:

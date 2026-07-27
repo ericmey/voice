@@ -124,6 +124,11 @@ def test_worker_adapter_is_explicitly_streaming():
     assert t.capabilities.streaming is True
 
 
+def test_unknown_text_mode_fails_loud():
+    with pytest.raises(ValueError, match="text_mode"):
+        build_streaming_voicebook_tts(voice_id="sumi-v1", text_mode="maybe")
+
+
 # --- async behaviour ---------------------------------------------------
 
 
@@ -287,3 +292,31 @@ def test_worker_adapter_reproduces_e2e_sentence_boundary_split():
 
     actual = asyncio.run(go())
     assert [" ".join(part.split()) for part in actual] == expected
+
+
+def test_whole_reply_mode_sends_long_turn_as_one_request():
+    text = (
+        "There was once a grandfather clock in a house that had grown very still. "
+        "The pendulum had stopped swinging, and the gears had forgotten how to turn. "
+        "For years it sat in the corner, collecting dust and memories. "
+    ) * 5
+
+    async def go():
+        sess = _FakeSession(_FakeResp(chunks=(_PCM,)))
+        adapter = build_streaming_voicebook_tts(
+            voice_id="sumi-v1",
+            base_url="http://vb:5060",
+            text_mode="whole_reply",
+            http_session=_as_client_session(sess),
+        )
+        async with adapter.stream() as stream:
+            for start in range(0, len(text), 7):
+                stream.push_text(text[start : start + 7])
+            stream.end_input()
+            async for _ in stream:
+                pass
+        return sess.calls
+
+    calls = asyncio.run(go())
+    assert len(calls) == 1
+    assert " ".join(calls[0][1]["json"]["text"].split()) == " ".join(text.split())

@@ -32,6 +32,7 @@ import asyncio
 import logging
 import mimetypes
 import os
+import stat
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -73,6 +74,25 @@ def _recordings_container_dir() -> str:
     return os.environ.get("LIVEKIT_EGRESS_CONTAINER_RECORDINGS_DIR", "/recordings")
 
 
+def _prepare_agent_recording_dir(agent_name: str) -> Path:
+    """Create the shared host directory with the egress writer contract.
+
+    Agent workers run as root and the pinned LiveKit egress image writes as
+    uid=1001,gid=0. A plain ``mkdir`` therefore creates ``0755 root:root``:
+    readable by egress but not writable. Setgid + group-write keeps subsequent
+    files in the shared group and makes the bind mount actually recordable.
+    """
+    host_dir = _recordings_host_dir() / agent_name
+    host_dir.mkdir(parents=True, exist_ok=True)
+    host_dir.chmod(0o2775)
+    mode = stat.S_IMODE(host_dir.stat().st_mode)
+    if mode != 0o2775:
+        raise RuntimeError(
+            f"recording directory {host_dir} has mode {mode:o}, expected 2775"
+        )
+    return host_dir
+
+
 def _recording_extension() -> str:
     return os.environ.get("LIVEKIT_EGRESS_AUDIO_EXTENSION", "ogg").lstrip(".") or "ogg"
 
@@ -111,8 +131,7 @@ async def start_call_audio_recording(
     if not _enabled() or not call_sid:
         return None
 
-    host_dir = _recordings_host_dir() / agent_name
-    host_dir.mkdir(parents=True, exist_ok=True)
+    host_dir = _prepare_agent_recording_dir(agent_name)
     extension = _recording_extension()
     filename = f"{call_sid}.{extension}"
     host_path = host_dir / filename

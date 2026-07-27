@@ -10,8 +10,9 @@ service's LiveKit-facing endpoint:
 Contract notes that shaped this adapter (from voicebook-stream QUALIFICATION + app.py):
   - Input is FULL TEXT, not token-streamed, so ``VoicebookTTS`` itself declares
     capabilities.streaming=False. ``build_streaming_voicebook_tts`` wraps it in
-    an explicit StreamAdapter whose coalescing policy is part of Sumi's tested
-    worker contract (rather than the SDK's per-sentence default).
+    an explicit StreamAdapter. The production coalescing policy stays the
+    default; an explicit ``whole_reply`` diagnostic mode buffers until end-input
+    so one LLM turn becomes one synthesis request.
   - The service holds a ONE-FLIGHT lease: a second concurrent synthesis gets 429.
     For a single Sumi call that is fine; a 429 is a transient, retryable state.
   - Cancellation is safe: LiveKit cancels the _run task, aiohttp closes the
@@ -57,6 +58,8 @@ _MIN_SYNTH_TEXT_LEN = 80
 _MAX_SYNTH_TEXT_LEN = 180
 _MIN_SENTENCE_LEN = 30
 _STREAM_CONTEXT_LEN = 30
+_WHOLE_REPLY_TEXT_LEN = 4000  # voicebook-stream's request ceiling
+_TEXT_MODES = {"coalesced", "whole_reply"}
 
 
 def build_streaming_voicebook_tts(
@@ -64,15 +67,32 @@ def build_streaming_voicebook_tts(
     voice_id: str,
     base_url: str = "http://voicebook-stream:5060",
     wire_format: str = "pcm",
+    text_mode: str = "coalesced",
     http_session: aiohttp.ClientSession | None = None,
 ) -> tts.StreamAdapter:
     """Build Sumi's streaming TTS seam with deliberate phrase coalescing.
 
-    ``VoicebookTTS`` accepts full text.  The LiveKit pipeline otherwise wraps it
+    ``VoicebookTTS`` accepts full text. The LiveKit pipeline otherwise wraps it
     in a default sentence adapter that flushes every sentence, including tiny
-    fragments.  Constructing the adapter explicitly makes the batching policy a
+    fragments. Constructing the adapter explicitly makes the batching policy a
     tested part of Sumi's worker rather than an implicit SDK default.
+
+    ``coalesced`` preserves the qualified 80--180 character streaming policy.
+    ``whole_reply`` holds incremental LLM text until end-input (bounded by the
+    service's 4000-character request limit) and is intentionally opt-in because
+    it trades first-audio latency for acoustic continuity.
     """
+    text_mode = text_mode.strip().lower()
+    if text_mode not in _TEXT_MODES:
+        raise ValueError(
+            f"Voicebook text_mode must be one of {sorted(_TEXT_MODES)}, got {text_mode!r}"
+        )
+    min_text_len = (
+        _WHOLE_REPLY_TEXT_LEN if text_mode == "whole_reply" else _MIN_SYNTH_TEXT_LEN
+    )
+    max_text_len = (
+        _WHOLE_REPLY_TEXT_LEN if text_mode == "whole_reply" else _MAX_SYNTH_TEXT_LEN
+    )
     return tts.StreamAdapter(
         tts=VoicebookTTS(
             voice_id=voice_id,
@@ -82,8 +102,8 @@ def build_streaming_voicebook_tts(
         ),
         sentence_tokenizer=tokenize.blingfire.SentenceTokenizer(
             min_sentence_len=_MIN_SENTENCE_LEN,
-            min_token_len=_MIN_SYNTH_TEXT_LEN,
-            max_token_len=_MAX_SYNTH_TEXT_LEN,
+            min_token_len=min_text_len,
+            max_token_len=max_text_len,
             stream_context_len=_STREAM_CONTEXT_LEN,
             retain_format=True,
         ),
