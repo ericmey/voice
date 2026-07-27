@@ -2,9 +2,8 @@
 
 Registers as "phone-sumi" with LiveKit. Her pipeline is her own, end to end, and
 runs entirely on self-hosted services — no cloud provider on the speaking path:
-  - Slice 3 STT: faster-distil-whisper-large-v3 via local Speaches + LiveKit's
-    maintained batch-to-stream adapter;
-  - Slice 4 LLM: Momo (qwen3.6-35b-a3b) via the explicit LiteLLM `sumi` route;
+  - Slice 3 STT: Parakeet 1.1B through the local NVIDIA/Riva streaming contract;
+  - Slice 4 LLM: local Qwen3.5-9B via direct llama.cpp on mizuki;
   - Slice 5 TTS: voicebook-stream in Sumi's own accepted master voice (`sumi-v1`).
 The inherited Gemini/ElevenLabs scaffold is gone. (VAD stays silero — local.)
 
@@ -25,7 +24,7 @@ import asyncio
 import logging
 import math
 import os
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Mapping
 from pathlib import Path
 
 import httpx
@@ -315,22 +314,25 @@ def build_stt(*, vad):
     raise ValueError(f"unsupported SUMI_STT_PROVIDER: {_STT_PROVIDER!r}")
 
 
-# Slice 4 — LOCAL LLM: Sumi's mind is Momo (qwen3.6-35b-a3b) via the explicit
-# LiteLLM `sumi` route, reached OpenAI-compatibly at the proven voice_default
-# endpoint http://10.0.20.25:4000/v1 (TCP + HTTP 200 verified from the network).
-# The route is deliberately CONSTRAINED for a live phone turn (created/proven
-# 2026-07-23):
-#   - no-think: the backend is a reasoning model that, left in thinking mode,
-#     emits reasoning_content with an EMPTY content field. Voice needs a spoken
-#     content field, so the route pins chat_template_kwargs enable_thinking:false
-#     (proven finish=stop, reason_len=0, TTFT ~0.32s / total ~0.39s);
-#   - no duplicate spoken turns: the route is num_retries:0 AND we set
-#     max_retries=0 here — a retried completion could speak the same words twice;
-#   - NO cloud fallback: the route has no fallback group, so a Momo outage yields
-#     a hard error ("No fallback model group found"), never a silent escape to a
-#     cloud model. Sumi goes quiet before she speaks as something that isn't her.
-_LLM_BASE_URL = os.environ.get("SUMI_LLM_BASE_URL", "http://10.0.20.25:4000/v1")
-_LLM_MODEL = os.environ.get("SUMI_LLM_MODEL", "qwen3.5-9b")
+# Slice 4 — LOCAL LLM: the phone worker calls the resident Qwen3.5-9B llama.cpp
+# server directly over Docker's private ``voice_default`` network. LiteLLM is a
+# separate shared-access path and is deliberately absent from the latency-critical
+# phone route. Keep the fallback as the direct service address: a missing deployment
+# env must never silently switch Sumi onto a proxy route, a thinking route, or a
+# different model. The explicit deployment env still documents the live contract.
+_DEFAULT_LLM_BASE_URL = "http://sumi-local-llm:8080/v1"
+_DEFAULT_LLM_MODEL = "qwen3.5-9b"
+
+
+def _resolve_llm_route(environ: Mapping[str, str]) -> tuple[str, str]:
+    """Resolve the direct local route without an obsolete proxy fallback."""
+    return (
+        environ.get("SUMI_LLM_BASE_URL", _DEFAULT_LLM_BASE_URL),
+        environ.get("SUMI_LLM_MODEL", _DEFAULT_LLM_MODEL),
+    )
+
+
+_LLM_BASE_URL, _LLM_MODEL = _resolve_llm_route(os.environ)
 
 # Phone turn handling.  The stock streaming defaults are too eager for the
 # self-hosted Parakeet path: on the 2026-07-24 diagnostic call, untranscribed
@@ -649,11 +651,11 @@ async def entrypoint(ctx: JobContext) -> None:
         prefix_padding_duration=0.4,
     )
     stt = build_stt(vad=vad)
-    # Slice 4 — LOCAL LLM: Momo via the explicit LiteLLM `sumi` route, built by the
-    # single build_llm() factory — the SAME construction path the safety tests
-    # exercise. Its cap is _resolve_max_tokens() (hard 256 ceiling; env may only
-    # lower). max_retries=0 so a phone turn is never spoken twice; the route is
-    # num_retries:0 with no cloud fallback.
+    # Slice 4 — LOCAL LLM: Qwen3.5-9B through the direct local llama.cpp route,
+    # built by the single build_llm() factory — the SAME construction path the
+    # safety tests exercise. Its cap is _resolve_max_tokens() (hard 256 ceiling;
+    # env may only lower). max_retries=0 at the LiveKit and OpenAI-client layers
+    # so a phone turn is never spoken twice.
     llm = build_llm()
     # TTS provider is explicit and fail-loud. Voicebook remains the local/R&D
     # path; ElevenLabs is the supported LiveKit streaming control for the phone

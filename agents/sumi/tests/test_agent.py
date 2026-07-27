@@ -40,6 +40,22 @@ class TestModuleExports:
         assert isinstance(agent_module.server, AgentServer)
 
 
+class TestLlmRouteDefaults:
+    def test_missing_env_stays_on_direct_local_qwen(self, agent_module):
+        assert agent_module._resolve_llm_route({}) == (
+            "http://sumi-local-llm:8080/v1",
+            "qwen3.5-9b",
+        )
+
+    def test_explicit_route_still_wins(self, agent_module):
+        assert agent_module._resolve_llm_route(
+            {
+                "SUMI_LLM_BASE_URL": "http://example.invalid/v1",
+                "SUMI_LLM_MODEL": "test-model",
+            }
+        ) == ("http://example.invalid/v1", "test-model")
+
+
 class TestSttProviderSelection:
     def test_production_default_is_parakeet(self, agent_module):
         assert agent_module._STT_PROVIDER == "parakeet"
