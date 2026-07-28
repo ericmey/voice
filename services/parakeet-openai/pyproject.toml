@@ -1,0 +1,18 @@
+[project]
+name = "parakeet-openai"
+version = "0.1.0"
+description = "OpenAI-shaped /v1/audio/transcriptions in front of NVIDIA Riva/Parakeet streaming gRPC"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "nvidia-riva-client>=2.15",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

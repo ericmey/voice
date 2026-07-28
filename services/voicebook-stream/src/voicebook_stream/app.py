@@ -1,8 +1,9 @@
 """HTTP surface for the streaming voicebook service.
 
-    POST /speak/stream  -> progressive s16le PCM or WAV stream (LiveKit)
-    POST /speak         -> completed audio/wav (Hermes)
-    GET  /healthz       -> 503 while warming, 200 only after CUDA-graph warmup
+    POST /speak/stream       -> progressive s16le PCM or WAV stream (LiveKit)
+    POST /speak              -> completed audio/wav (Hermes)
+    POST /v1/audio/speech    -> completed audio/wav, OpenAI-shaped request body
+    GET  /healthz            -> 503 while warming, 200 only after CUDA-graph warmup
 
 Design invariants, each earned by a review cycle:
 
@@ -20,6 +21,13 @@ Design invariants, each earned by a review cycle:
     so even a teardown failure is logged.
   * Wire format is little-endian s16le, labelled application/octet-stream with
     explicit X-Audio-Format headers — NOT audio/L16 (big-endian, RFC 2586).
+  * /v1/audio/speech is a REQUEST-SHAPE alias, nothing more. It translates the
+    OpenAI field names and then calls the same in-process completed-response
+    helper /speak calls, so the readiness, char-limit, registry, lease,
+    synthesis, logging and error contracts are shared by construction rather
+    than by a second implementation that has to be kept in agreement. It does
+    NOT loop back through HTTP — a self-request would take a second lease and
+    deadlock against the one-flight design.
 """
 
 from __future__ import annotations
@@ -53,6 +61,25 @@ class SpeakRequest(BaseModel):
     voice_id: str = Field(min_length=1)
     text: str = Field(min_length=1)
     response_format: Literal["pcm", "wav"] = "pcm"
+
+
+class OpenAISpeechRequest(BaseModel):
+    """The OpenAI /v1/audio/speech body, as much of it as we honestly serve.
+
+    `model` is accepted as compatibility metadata and logged, not dispatched on:
+    SDKs require the field, and this service has exactly one engine. `voice` is
+    our voice_id. Anything we cannot actually honour — an unsupported
+    response_format, a speed we do not apply — is REFUSED with a typed error
+    rather than accepted and quietly ignored, because a client that asked for
+    mp3 at 1.5x and receives 1.0x wav has been given wrong audio that looks like
+    a success.
+    """
+
+    model: str = "voicebook"
+    input: str = Field(min_length=1)
+    voice: str = Field(min_length=1)
+    response_format: str = "wav"
+    speed: float = 1.0
 
 
 def _streaming_wav_header(*, sample_rate: int = SAMPLE_RATE, channels: int = 1) -> bytes:
@@ -351,15 +378,18 @@ def create_app(registry: VoiceRegistry, synthesizer: Synthesizer, lease: OneFlig
             raise
         return resp
 
-    @app.post("/speak")
-    def speak(req: SpeakRequest, x_request_id: str | None = Header(default=None)) -> Response:
-        rid = _safe_rid(x_request_id)
-        start = time.monotonic()
-        _pre_header_checks(req, rid, "unary", start)
+    def _completed_response(req: SpeakRequest, rid: str, kind: str, start: float) -> Response:
+        """The completed-audio path: checks, lease, resolve, synthesize, log.
+
+        Shared by /speak and /v1/audio/speech. `kind` is the log label so the two
+        surfaces stay distinguishable in correlation records while running the
+        identical code — one implementation, two request shapes.
+        """
+        _pre_header_checks(req, rid, kind, start)
         try:
             reservation = lease.reserve()
         except Busy:
-            _log_pre("unary", rid, req.voice_id, len(req.text), "429_busy", start)
+            _log_pre(kind, rid, req.voice_id, len(req.text), "429_busy", start)
             raise HTTPException(
                 status_code=429, detail="a generation is already in flight"
             ) from None
@@ -384,6 +414,45 @@ def create_app(registry: VoiceRegistry, synthesizer: Synthesizer, lease: OneFlig
             ) from None
         finally:
             reservation.close()
-            _log_pre("unary", rid, req.voice_id, len(req.text), outcome, start)
+            _log_pre(kind, rid, req.voice_id, len(req.text), outcome, start)
+
+    @app.post("/speak")
+    def speak(req: SpeakRequest, x_request_id: str | None = Header(default=None)) -> Response:
+        return _completed_response(req, _safe_rid(x_request_id), "unary", time.monotonic())
+
+    @app.post("/v1/audio/speech")
+    def openai_speech(
+        req: OpenAISpeechRequest, x_request_id: str | None = Header(default=None)
+    ) -> Response:
+        rid = _safe_rid(x_request_id)
+        start = time.monotonic()
+        # Translate-then-delegate. Everything below the translation is the same
+        # code /speak runs, so the contracts cannot drift apart.
+        if req.response_format != "wav":
+            _log_pre("openai", rid, req.voice, len(req.input), "400_format", start)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"response_format {req.response_format!r} is not supported; "
+                    "this service returns 'wav' only. Refused rather than "
+                    "silently returning a different format."
+                ),
+            )
+        if req.speed != 1.0:
+            _log_pre("openai", rid, req.voice, len(req.input), "400_speed", start)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"speed {req.speed} is not supported; this service synthesizes at "
+                    "1.0 only. Refused rather than returning audio at the wrong rate."
+                ),
+            )
+        logger.info("openai request_id=%s model=%s (metadata only)", rid, req.model)
+        return _completed_response(
+            SpeakRequest(voice_id=req.voice, text=req.input, response_format="wav"),
+            rid,
+            "openai",
+            start,
+        )
 
     return app
