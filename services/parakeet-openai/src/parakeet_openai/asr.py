@@ -14,6 +14,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+import grpc
+
 TARGET_RATE = 16000
 # Chunk the PCM the way a live microphone would. Riva's streaming recognizer is
 # built for real-time arrival; feeding one enormous buffer is legal but pushes
@@ -61,6 +63,22 @@ class RivaTranscriber:
         self._riva = riva.client
         self._auth = riva.client.Auth(uri=self.uri, use_ssl=False)
         self._asr = riva.client.ASRService(self._auth)
+
+    def check_ready(self, timeout_s: float = 3.0) -> None:
+        """Require the backend gRPC channel to reach READY within the deadline.
+
+        ``riva.client.Auth`` constructs a lazy gRPC channel; construction alone
+        succeeds even when the target is down. Health and request admission must
+        therefore wait on the channel itself, or a dead Parakeet backend can
+        present as a green shim.
+        """
+        try:
+            grpc.channel_ready_future(self._auth.channel).result(timeout=timeout_s)
+        except Exception as exc:  # noqa: BLE001 - normalize the gRPC surface
+            raise AsrError(
+                f"backend {self.uri} did not become ready within {timeout_s:g}s: "
+                f"{type(exc).__name__}"
+            ) from exc
 
     def _config(self):
         cfg = self._riva.RecognitionConfig(

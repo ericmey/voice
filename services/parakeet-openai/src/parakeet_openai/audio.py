@@ -20,9 +20,13 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import shutil
 import subprocess
 import wave
+
+# glog / absl format, e.g. "I0728 18:39:38.146224 2465799 ev_poll_posix.cc:593] ..."
+_GLOG_LINE = re.compile(r"^[IWEF]\d{4} \d{2}:\d{2}:\d{2}\.\d+ +\d+ ")
 
 TARGET_RATE = 16000
 TARGET_WIDTH = 2  # s16
@@ -78,12 +82,20 @@ def _via_ffmpeg(data: bytes) -> bytes:
         )
     proc = subprocess.run(  # noqa: S603 - fixed argv, absolute exe, bytes on stdin
         [
-            exe, "-v", "error", "-nostdin",
-            "-i", "pipe:0",
-            "-f", "s16le",
-            "-acodec", "pcm_s16le",
-            "-ac", str(TARGET_CHANNELS),
-            "-ar", str(TARGET_RATE),
+            exe,
+            "-v",
+            "error",
+            "-nostdin",
+            "-i",
+            "pipe:0",
+            "-f",
+            "s16le",
+            "-acodec",
+            "pcm_s16le",
+            "-ac",
+            str(TARGET_CHANNELS),
+            "-ar",
+            str(TARGET_RATE),
             "pipe:1",
         ],
         input=data,
@@ -91,9 +103,26 @@ def _via_ffmpeg(data: bytes) -> bytes:
         timeout=120,
     )
     if proc.returncode != 0 or not proc.stdout:
-        reason = proc.stderr.decode(errors="replace").strip()[:300] or "no output produced"
+        reason = _ffmpeg_reason(proc.stderr) or "no output produced"
         raise AudioError(f"could not decode audio: {reason}")
     return proc.stdout
+
+
+def _ffmpeg_reason(stderr: bytes) -> str:
+    """Extract ffmpeg's own complaint, dropping inherited gRPC log noise.
+
+    The forked child inherits the parent's fd 2, and grpc's fork handler writes
+    glog-format lines to it before exec. Those land in ffmpeg's stderr and, left
+    alone, become the first 300 characters of the error a caller sees -- so
+    someone debugging a corrupt upload reads gRPC internals instead of "Invalid
+    data found when processing input".
+    """
+    keep = [
+        line
+        for line in stderr.decode(errors="replace").splitlines()
+        if line.strip() and not _GLOG_LINE.match(line)
+    ]
+    return " ".join(keep).strip()[:300]
 
 
 def to_riva_pcm(data: bytes) -> tuple[bytes, float]:

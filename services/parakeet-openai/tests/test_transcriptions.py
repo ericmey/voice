@@ -37,11 +37,22 @@ class FakeBackend:
     uri = "fake:50051"
     language = "en-US"
 
-    def __init__(self, *, text="hello there", fail=False, construct_fail=False):
+    def __init__(
+        self,
+        *,
+        text="hello there",
+        fail=False,
+        construct_fail=False,
+        ready=True,
+    ):
         if construct_fail:
             raise RuntimeError("no riva client")
-        self.text, self.fail = text, fail
+        self.text, self.fail, self.ready = text, fail, ready
         self.seen: bytes | None = None
+
+    def check_ready(self) -> None:
+        if not self.ready:
+            raise AsrError("backend channel unavailable")
 
     def transcribe(self, pcm: bytes) -> Transcript:
         self.seen = pcm
@@ -165,6 +176,22 @@ def test_healthz_is_red_when_the_backend_cannot_be_built():
     assert "riva" in r.json()["error"]
 
 
+def test_healthz_is_red_when_lazy_client_exists_but_backend_is_down():
+    """Client construction is not readiness: gRPC channels connect lazily."""
+    client = TestClient(create_app(lambda: FakeBackend(ready=False)))
+    r = client.get("/healthz")
+    assert r.status_code == 503
+    assert r.json()["ready"] is False
+    assert "backend channel unavailable" in r.json()["error"]
+
+
+def test_transcribe_is_503_when_lazy_client_exists_but_backend_is_down():
+    client = TestClient(create_app(lambda: FakeBackend(ready=False)))
+    r = _post(client, _wav_bytes())
+    assert r.status_code == 503
+    assert "backend channel unavailable" in r.json()["detail"]
+
+
 def test_transcribe_is_503_when_the_backend_cannot_be_built():
     def broken():
         raise RuntimeError("connection refused")
@@ -201,6 +228,24 @@ def test_target_shape_wav_skips_ffmpeg_entirely(monkeypatch):
     pcm, secs = audio_mod.to_riva_pcm(_wav_bytes(rate=16000, channels=1, seconds=0.5))
     assert len(pcm) == 16000
     assert secs == pytest.approx(0.5, abs=0.01)
+
+
+def test_decode_error_drops_inherited_grpc_log_noise():
+    """grpc's fork handler writes glog lines to the inherited fd 2, which land
+    in ffmpeg's stderr. Left alone they become the first 300 chars of the error,
+    so someone debugging a corrupt upload reads gRPC internals instead of the
+    actual reason."""
+    from parakeet_openai.audio import _ffmpeg_reason
+
+    stderr = (
+        b"I0728 18:39:38.146224 2465799 ev_poll_posix.cc:593] FD from fork parent "
+        b"still in poll list: fd(17, generation: 1)\n"
+        b"[in#0 @ 0xc0cc10000] Error opening input: Invalid data found when processing input\n"
+    )
+    reason = _ffmpeg_reason(stderr)
+    assert "Invalid data found" in reason
+    assert "fork parent" not in reason
+    assert "ev_poll_posix" not in reason
 
 
 def test_missing_ffmpeg_is_a_clear_error_not_a_crash(monkeypatch):

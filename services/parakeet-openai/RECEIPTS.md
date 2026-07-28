@@ -1,6 +1,7 @@
 # Receipts — the two OpenAI shims
 
-Built 2026-07-28 by Aoi, under the boundary Yua ACKed (CID `openai-shims`):
+Built 2026-07-28 by Aoi and integration-reviewed/deployed the same day by Yua,
+under the boundary Yua ACKed (CID `openai-shims`):
 
 > voicebook `/v1/audio/speech` as the narrow in-process alias to the shared
 > completed-response helper under the existing lease/readiness/limits/logging/
@@ -8,9 +9,9 @@ Built 2026-07-28 by Aoi, under the boundary Yua ACKed (CID `openai-shims`):
 > shim. **Build and test only; do not deploy either until I review your
 > receipts.**
 
-Nothing is deployed. mizuki is untouched — no image built there, no container
-recreated, no config changed. The live TTS service on 5056 was *called* twice as
-a client (to generate a test clip), which is ordinary traffic, not a change.
+The first two sections preserve Aoi's build-time evidence. The later live
+deployment section records what changed after Yua's review; it supersedes the
+original build-only state without rewriting that history.
 
 ---
 
@@ -135,29 +136,34 @@ failure took an error branch first.
 definition; accumulating them produces duplicated, truncated text that reads as
 a plausible transcript and is not one.
 
-**Readiness is measured against the backend**, not against the process being up,
-and the Riva client is constructed lazily so a slow Parakeet start shows up as a
-red `/healthz` with a reason rather than a crash-loop with a restart counter.
+**Readiness is measured against the backend**, not against the process being up.
+The original build receipt overstated this: constructing `riva.client.Auth`
+only creates a lazy gRPC channel and therefore did not prove the backend was
+reachable. Yua's integration review added an explicit bounded
+`grpc.channel_ready_future(...).result()` check before `/healthz` or a
+transcription may report ready. Two red-path tests now cover the exact state in
+which client construction succeeds while Parakeet is unavailable.
 
 **Bind is `0.0.0.0`, deliberately.** nyla.mey.house, hana.mey.house and the
 command chair all need this. A loopback bind makes the service look healthy on
 mizuki and be invisible to every caller — the exact fault that cost us Nyla's
 5pm brief this morning.
 
-### Unit coverage — 18 tests
+### Unit coverage — 21 tests after integration review
 
 Happy path in all three response formats; `model` accepted and ignored;
 resample-before-recognizer (a 48 kHz stereo upload must reach the backend as
 32000 bytes = 1 s of 16 kHz mono, not 192000); undecodable → 400; empty → 400;
 oversize → 413; bad format → 400; backend error → 502 not empty text; genuine
 silence → 200 with `""`; `/healthz` red when the backend cannot be built;
-transcribe → 503 in the same condition; fast path skips ffmpeg; missing ffmpeg
-is a clear error.
+transcribe → 503 in the same condition; lazy gRPC client with an unreachable
+backend → 503 from both `/healthz` and transcription; fast path skips ffmpeg;
+missing ffmpeg is a clear error; and inherited gRPC fork-handler log noise is
+removed from ffmpeg failures so the caller receives the actual decode error.
 
 ```
-$ PYTHONPATH=src aoi-verify --expect "18 passed" -- python -m pytest tests -q
-18 passed, 1 warning in 0.31s
-VERIFIED: real exit 0, output present, 1 sentinel(s) matched.
+$ PYTHONPATH=src python -m pytest tests -q
+21 passed, 1 warning
 ```
 
 ### Live end-to-end — real Riva, real audio
@@ -219,7 +225,7 @@ It does not change the plan — `openai` with a custom `base_url` is still the
 right seam — but the claim was inaccurate and I would rather correct it than let
 it sit in a receipt.
 
-### Intended wiring (NOT applied — for Yua's review)
+### Hermes profile wiring (not applied in this change)
 
 `_resolve_openai_audio_client_config` (line 1857) takes the config branch when
 `stt.openai.api_key` is non-empty, and then honors `stt.openai.base_url`:
@@ -244,6 +250,55 @@ Current state of the four profiles, verified tonight:
 
 So the shim would take Sumi off a paid cloud dependency and give Fire & Ice ears
 they currently do not have.
+
+---
+
+## 3. Yua integration and live deployment
+
+Yua's review found that `riva.client.Auth` constructs a lazy gRPC channel, so
+the original `/healthz` could report green while Parakeet was down. The deployed
+version forces a bounded channel-ready result; two tests red-prove both health
+and transcription in the lazy-client/dead-backend state. The service was also
+added to the monorepo lock, test loop, Ruff scope, and Pyright environments.
+
+Scoped gates: 21 STT tests pass, Ruff passes, and Pyright reports zero errors.
+The full monorepo `make test` passes. Full `make verify` remains blocked by Ruff
+findings in pre-existing, untracked Voicebook qualification scripts outside
+this change; those files were preserved rather than silently reformatted.
+
+### Live services
+
+| surface | live state |
+| --- | --- |
+| Voicebook OpenAI speech | `10.0.20.25:5056/v1/audio/speech`, healthy, capacity 2 |
+| Parakeet OpenAI transcription | `10.0.20.25:5057/v1/audio/transcriptions`, healthy against `parakeet-ctl:50051` |
+
+The Voicebook image is an exact derivation of the already-qualified N=2 image:
+only the reviewed app module changed. Live image ID:
+`sha256:39e78199d212868de790bad89fde979dc24e7f240e140f0557396952cb424a6a`.
+The prior qualified image remains available at
+`sha256:cab09a6a18b0439dec97bd606bbdd20bf708bc97289c52dc1ba1ceaf1f313310`.
+The canonical compose and app rollback copies are under
+`/home/ericmey/voicebook-stream-deploy/backups/20260728-openai-shims-predeploy/`.
+
+The standalone STT image ID is
+`sha256:0b996470cf6f6545e473d79b0fa8c009e8b37cd30c5d0ae48823d1abbd0f6160`;
+its Compose source is `/home/ericmey/parakeet-openai-deploy/`, with
+`restart: unless-stopped`, an honest backend-aware health check, and a LAN bind
+only on `10.0.20.25:5057`.
+
+### Live outcome proof
+
+`yua-v1` synthesized a 5.28-second PCM WAV: 24 kHz, mono, 16-bit, 253,484
+bytes. That exact artifact passed through the deployed multipart shim and
+returned:
+
+> Eric, I'm hooked up now. I can speak and I can hear my own voice clearly.
+
+The real OpenAI Python SDK then passed both endpoints over live sockets. The
+fleet-standard `voice` client also passed its own Yua round trip:
+`voice say -v yua-v1` produced a 3.2-second WAV and `voice hear --json` returned
+“Eric, the fleet voice tool is mine now too.” exactly.
 
 ---
 

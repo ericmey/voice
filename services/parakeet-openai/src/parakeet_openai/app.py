@@ -30,12 +30,14 @@ import logging
 import os
 import time
 import uuid
+from collections.abc import Callable
+from typing import Protocol
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.responses import Response
 
-from .asr import AsrError, RivaTranscriber
+from .asr import AsrError, RivaTranscriber, Transcript
 from .audio import AudioError, to_riva_pcm
 
 logger = logging.getLogger("parakeet.openai")
@@ -44,7 +46,18 @@ MAX_UPLOAD_BYTES = int(os.environ.get("PARAKEET_MAX_UPLOAD_BYTES", 25 * 1024 * 1
 SUPPORTED_FORMATS = ("json", "text", "verbose_json")
 
 
-def create_app(transcriber_factory=RivaTranscriber) -> FastAPI:
+class Transcriber(Protocol):
+    uri: str
+    language: str
+
+    def check_ready(self) -> None: ...
+
+    def transcribe(self, pcm: bytes) -> Transcript: ...
+
+
+def create_app(
+    transcriber_factory: Callable[[], Transcriber] = RivaTranscriber,
+) -> FastAPI:
     """Build the app. The factory is injectable so tests never need the SDK."""
     app = FastAPI(title="parakeet-openai", version="0.1.0")
     state: dict = {"transcriber": None, "error": None}
@@ -65,7 +78,16 @@ def create_app(transcriber_factory=RivaTranscriber) -> FastAPI:
                 raise HTTPException(
                     status_code=503, detail=f"ASR backend unavailable: {state['error']}"
                 ) from None
-        return state["transcriber"]
+        backend = state["transcriber"]
+        try:
+            backend.check_ready()
+            state["error"] = None
+        except Exception as exc:  # noqa: BLE001 - surfaced, not swallowed
+            state["error"] = f"{type(exc).__name__}: {exc}"
+            raise HTTPException(
+                status_code=503, detail=f"ASR backend unavailable: {state['error']}"
+            ) from None
+        return backend
 
     @app.get("/healthz")
     def healthz() -> JSONResponse:
@@ -101,8 +123,7 @@ def create_app(transcriber_factory=RivaTranscriber) -> FastAPI:
 
         def log(outcome: str, chars: int = 0) -> None:
             logger.info(
-                "transcribe request_id=%s model=%s filename=%s outcome=%s "
-                "chars=%d duration_ms=%d",
+                "transcribe request_id=%s model=%s filename=%s outcome=%s chars=%d duration_ms=%d",
                 rid,
                 model,
                 file.filename,

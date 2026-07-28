@@ -1,0 +1,23 @@
+services:
+  parakeet-openai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: parakeet-openai:20260728
+    container_name: parakeet-openai
+    restart: unless-stopped
+    environment:
+      PARAKEET_URI: parakeet-ctl:50051
+      PARAKEET_LANGUAGE: en-US
+      PARAKEET_PUNCTUATE: "true"
+      PARAKEET_OPENAI_HOST: 0.0.0.0
+      PARAKEET_OPENAI_PORT: "5057"
+    ports:
+      - "10.0.20.25:5057:5057"
+    networks:
+      - voice
+
+networks:
+  voice:
+    external: true
+    name: voice_default

@@ -109,3 +109,10 @@ root = "services/voicebook-stream/src"
 [[tool.pyright.executionEnvironments]]
 root = "services/voicebook-stream/tests"
 extraPaths = ["services/voicebook-stream/src"]
+
+[[tool.pyright.executionEnvironments]]
+root = "services/parakeet-openai/src"
+
+[[tool.pyright.executionEnvironments]]
+root = "services/parakeet-openai/tests"
+extraPaths = ["services/parakeet-openai/src"]

@@ -8,6 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "python-multipart>=0.0.9",
     "nvidia-riva-client>=2.15",
+    "grpcio>=1.60",
 ]
 
 [build-system]

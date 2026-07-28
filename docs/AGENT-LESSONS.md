@@ -504,3 +504,19 @@ Shared recording directories must be setgid and group-writable (`2775` here).
 **Why:** A collector can be live for the entire event and still discard its only
 evidence at the final filesystem hop. A recording receipt is the finalized,
 readable artifact—not the enable flag, egress ID, or subscription log.
+
+## 2026-07-28 — A lazy gRPC client is not backend readiness
+
+**Trigger:** A new HTTP-to-Riva transcription shim constructed
+`riva.client.Auth` successfully and treated that as its backend readiness
+proof. The object only created a lazy gRPC channel, so `/healthz` could have
+reported green while Parakeet was unreachable.
+
+**Lesson:** When a client library connects lazily, readiness must force a
+bounded transport-level result against the real backend. Red-test the state in
+which construction succeeds but the endpoint is down, and require both health
+and request paths to fail closed.
+
+**Why:** Object construction proves local configuration and imports, not remote
+service availability. Treating it as readiness recreates the exact silent
+proxy failure that a backend-aware health endpoint is meant to prevent.

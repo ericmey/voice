@@ -96,7 +96,7 @@ loki-smoke: ## Query Grafana/Loki for post-smoke-test failures (requires GRAFANA
 
 test: ## Run pytest across all workspace members
 	@for d in sdk tools agents/nyla agents/aoi agents/yua agents/party agents/sumi scripts \
-	  services/voicebook-tts services/voicebook-stream; do \
+	  services/voicebook-tts services/voicebook-stream services/parakeet-openai; do \
 	  echo ">> $$d"; \
 	  (cd $$d && PYTHONPATH="$$(pwd)/src$${PYTHONPATH:+:$$PYTHONPATH}" uv run pytest -q) \
 	    || { code=$$?; [[ $$code == 5 ]] && echo "  (no tests)" || exit $$code; }; \
@@ -108,7 +108,7 @@ lint: ## Run ruff (lint + format check). Clean exit = ready.
 	uv run ruff check .
 	uv run ruff format --check .
 
-typecheck: ## Run pyright across sdk/tools/agents.
+typecheck: ## Run pyright across sdk/tools/agents/services.
 	uv run pyright
 
 verify: lint typecheck test ## Lint + typecheck + tests. Green before human testing.
