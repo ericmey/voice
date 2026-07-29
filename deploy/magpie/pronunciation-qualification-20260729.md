@@ -92,3 +92,21 @@ unselected sentence-final draws of the plain text alias were delivered as one
 auditory montage. No Musubi experiment was promoted. If the montage is not
 consistently acceptable to Eric, use the semantic speech alias “the memory
 system” rather than continuing phoneme tuning.
+
+## Final-CV shape hypothesis
+
+Tsumugi (`tsu-mu-gi`), Musubi (`mu-su-bi`), Mizuki (`mi-zu-ki`), and Shiori
+(`shi-o-ri`) all have three syllables ending in a light consonant-vowel unit.
+Mizuki and Shiori were tested at five draws in both positions to determine
+whether all four shared one terminal-unit failure class.
+
+| Name | Sentence-final | Mid-sentence | Finding |
+| --- | --- | --- | --- |
+| Mizuki | Miki x4; Suzuki x1 | Suzuki x4; Miki x1 | final `ki` preserved 10/10; earlier substitution |
+| Shiori | so; Shri x2; shy; Shore | Si x3; Sri; so | whole-name compression, not stable final-unit deletion |
+
+The shared-shape hypothesis is refuted. Position changes the attractor
+distribution, but Mizuki preserves its final unit in every draw and Shiori's
+compression does not match Musubi's deterministic dropped-`bi` behavior. Treat
+these as distinct pronunciation defects rather than applying one class-wide
+alias or tuning strategy.
