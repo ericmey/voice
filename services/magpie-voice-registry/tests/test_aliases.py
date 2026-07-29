@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from magpie_voice_registry.aliases import apply_speech_aliases, load_speech_aliases
+from magpie_voice_registry.pronunciation import load_pronunciations
 from magpie_voice_registry.registry import RegistryError
 
 
@@ -39,6 +40,19 @@ def test_hana_uses_the_qualified_lexical_alias_at_word_boundaries() -> None:
         "Hannah said Hannah's name."
     )
     assert apply_speech_aliases("Shanahan", aliases) == "Shanahan"
+
+
+def test_production_aliases_do_not_shadow_pronunciation_entries() -> None:
+    repo_root = Path(__file__).parents[3]
+    aliases = load_speech_aliases(
+        repo_root / "deploy/magpie/speech-aliases.production.json"
+    )
+    pronunciations = load_pronunciations(
+        repo_root / "deploy/magpie/pronunciations.production.json"
+    )
+    alias_keys = {key.casefold() for key in aliases.entries}
+    pronunciation_keys = {key.casefold() for key in pronunciations.entries}
+    assert alias_keys.isdisjoint(pronunciation_keys)
 
 
 @pytest.mark.parametrize("payload", [{}, {"Tsumugi": ""}])
