@@ -33,6 +33,14 @@ def test_aliases_do_not_replace_inside_larger_words() -> None:
     )
 
 
+def test_hana_uses_the_qualified_lexical_alias_at_word_boundaries() -> None:
+    aliases = {"Hana": "Hannah"}
+    assert apply_speech_aliases("Hana said Hana's name.", aliases) == (
+        "Hannah said Hannah's name."
+    )
+    assert apply_speech_aliases("Shanahan", aliases) == "Shanahan"
+
+
 @pytest.mark.parametrize("payload", [{}, {"Tsumugi": ""}])
 def test_rejects_empty_aliases(tmp_path: Path, payload: dict) -> None:
     path = tmp_path / "aliases.json"
