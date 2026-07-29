@@ -110,3 +110,18 @@ distribution, but Mizuki preserves its final unit in every draw and Shiori's
 compression does not match Musubi's deterministic dropped-`bi` behavior. Treat
 these as distinct pronunciation defects rather than applying one class-wide
 alias or tuning strategy.
+
+## Lexical-attraction confound
+
+Many ASR outputs are nearby high-frequency words or real names: `Hannah`,
+`Miki`, `Suzuki`, `Shore`, and `SmugMug`. This suggests lexical attraction, but
+does not establish which model supplies it. Parakeet is itself a lexical decoder
+and can map an acoustically reasonable unfamiliar name to a familiar token.
+
+Riva's gRPC response schema exposes experimental `meta.processed_text`, which
+could separate Magpie preprocessing from downstream ASR. A live native Magpie
+probe returned seven streaming chunks with the metadata field empty in every
+chunk, so that discriminator is unavailable in this deployment. Treat lexical
+attraction as a hypothesis, not a generator finding. Do not derive a class-wide
+pronunciation rule from ASR vocabulary alone; retain per-name controlled draws
+and Eric's auditory acceptance.
