@@ -18,7 +18,7 @@ sample.
 | Entry | Exact ASR recovery | Five outputs | Assessment |
 | --- | ---: | --- | --- |
 | Aoi | 0/5 | we; Ai; a; empty; Ai | ear review |
-| Hana | 0/5 | Hannah x5 | ear review; confident real-name substitution |
+| Hana | unresolved | Hannah x5 | ASR cannot distinguish Hana from Hannah |
 | Katy | 5/5 | Katie x5 | stable detector pass |
 | Mia | 5/5 | Mia x5 | stable detector pass |
 | Mizuki | 0/5 | Suzuki x3; Miki x2 | ear review |
@@ -125,3 +125,17 @@ chunk, so that discriminator is unavailable in this deployment. Treat lexical
 attraction as a hypothesis, not a generator finding. Do not derive a class-wide
 pronunciation rule from ASR vocabulary alone; retain per-name controlled draws
 and Eric's auditory acceptance.
+
+### Hana discrimination control
+
+Four sentence-final renders each of written `Hana` and written `Hannah` all
+decoded as `Hannah`. Parakeet therefore cannot discriminate the target HAH-nah
+from the near-miss HAN-uh under this test, and the earlier claim that Magpie was
+rendering Hana as Hannah is withdrawn. Hana remains auditorily unresolved.
+
+Before trusting ASR to separate any two pronunciation candidates, first test
+whether it can distinguish human-verified reference audio for them. Identical
+decodes invalidate the discriminator. Different decodes are necessary but not
+sufficient evidence: a same-TTS spelling control can still contain synthesis
+error and cannot create acoustic ground truth. Gross corruption remains useful
+for triage, but no ASR transcript replaces human auditory acceptance.

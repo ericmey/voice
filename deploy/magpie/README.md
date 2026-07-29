@@ -76,6 +76,14 @@ hide a pronunciation that fails in ordinary production draws. ASR transcripts
 are useful failure detectors, but Eric's auditory review remains the acceptance
 test.
 
+Before using ASR to distinguish a target pronunciation from a near miss, prove
+that the recognizer can distinguish human-verified reference audio for those
+alternatives. If both references decode to the same token, the ASR result is
+non-discriminating and cannot support a TTS finding. A same-TTS spelling control
+can disprove a discriminator but cannot establish acoustic ground truth, because
+the synthesis side remains uncontrolled. Treat grossly collapsed transcripts as
+triage flags, not auditory verdicts.
+
 Speech-only semantic rewrites are separate from phoneme overrides and live in
 `deploy/magpie/speech-aliases.production.json`. They preserve canonical written
 text while replacing terms that should be spoken differently. Both the registry
