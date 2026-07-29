@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 from fastapi.testclient import TestClient
 from magpie_voice_registry.app import create_app
+from magpie_voice_registry.pronunciation import PronunciationDictionary
 from magpie_voice_registry.registry import load_registry
 
 
@@ -39,6 +40,8 @@ def app_for(tmp_path: Path, *, nim_status: int = 200):
         assert b"40" in body
         assert b'name="audio_prompt"' in body
         assert b'name="audio_prompt_transcript"' not in body
+        assert b'name="custom_dictionary"' in body
+        assert "Aoi  aʊi,Nyla  naɪlə".encode() in body
         return httpx.Response(
             nim_status, content=b"upstream failed" if nim_status != 200 else b"\x01\x00\x02\x00"
         )
@@ -49,7 +52,14 @@ def app_for(tmp_path: Path, *, nim_status: int = 200):
         def __init__(self, **kwargs):
             super().__init__(transport=transport, **kwargs)
 
-    return create_app(load_registry(registry_path), "http://nim", client_factory=MockClient)
+    return create_app(
+        load_registry(registry_path),
+        "http://nim",
+        pronunciations=PronunciationDictionary(
+            entries={"Aoi": "aʊi", "Nyla": "naɪlə"}, sha256="dictionary-sha"
+        ),
+        client_factory=MockClient,
+    )
 
 
 def test_health_and_roster(tmp_path: Path) -> None:
@@ -57,6 +67,8 @@ def test_health_and_roster(tmp_path: Path) -> None:
     health = client.get("/healthz").json()
     assert health["ready"] is True
     assert health["voices"] == ["sumi-v1"]
+    assert health["pronunciations"] == 2
+    assert health["pronunciation_sha256"] == "dictionary-sha"
     assert client.get("/voices").json()["voices"][0]["quality"] == 40
 
 
@@ -73,6 +85,39 @@ def test_completed_route_wraps_wav(tmp_path: Path) -> None:
     response = client.post("/speak", json={"voice_id": "sumi-v1", "text": "hello"})
     assert response.status_code == 200
     assert response.content[:4] == b"RIFF"
+
+
+def test_openai_speech_translates_to_completed_route(tmp_path: Path) -> None:
+    client = TestClient(app_for(tmp_path))
+    response = client.post(
+        "/v1/audio/speech",
+        json={
+            "model": "magpie-tts-zeroshot",
+            "input": "hello",
+            "voice": "sumi-v1",
+            "response_format": "wav",
+        },
+    )
+    assert response.status_code == 200
+    assert response.content[:4] == b"RIFF"
+
+
+def test_openai_speech_refuses_unsupported_options(tmp_path: Path) -> None:
+    client = TestClient(app_for(tmp_path))
+    assert (
+        client.post(
+            "/v1/audio/speech",
+            json={"input": "hello", "voice": "sumi-v1", "response_format": "mp3"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/v1/audio/speech",
+            json={"input": "hello", "voice": "sumi-v1", "speed": 1.5},
+        ).status_code
+        == 400
+    )
 
 
 def test_unknown_voice_fails_loud(tmp_path: Path) -> None:

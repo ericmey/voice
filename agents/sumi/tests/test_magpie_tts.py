@@ -69,7 +69,12 @@ def test_quality_outside_riva_contract_fails_loud(tmp_path, quality):
 
 def test_synthesis_passes_zero_shot_fields_and_maps_audio(tmp_path):
     async def go():
-        provider = MagpieZeroShotTTS(server="riva:50051", prompt_path=_prompt(tmp_path), quality=27)
+        provider = MagpieZeroShotTTS(
+            server="riva:50051",
+            prompt_path=_prompt(tmp_path),
+            quality=27,
+            pronunciations={"Aoi": "aʊi"},
+        )
         service = _FakeService()
         provider._tts_service = cast(Any, service)
         frames = []
@@ -87,8 +92,9 @@ def test_synthesis_passes_zero_shot_fields_and_maps_audio(tmp_path):
     _, kwargs = service.calls[0]
     assert kwargs["voice_name"] is None
     assert kwargs["sample_rate_hz"] == 22050
-    assert kwargs["zero_shot_audio_prompt_file"] == str(provider._prompt_path)
+    assert kwargs["zero_shot_audio_prompt_file"] == provider._prompt_path
     assert kwargs["zero_shot_quality"] == 27
+    assert kwargs["custom_dictionary"] == {"Aoi": "aʊi"}
 
 
 def test_default_quality_uses_accepted_high_quality_setting(tmp_path):

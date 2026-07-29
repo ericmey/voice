@@ -9,6 +9,8 @@ This is Mizuki's production TTS stack. It has two services:
 Sumi's LiveKit worker uses the NIM's native gRPC endpoint directly and keeps her
 prompt and quality setting in Compose. Other callers use the registry so names
 such as `yua-v1`, `nyla-v2`, and `sumi-v1` remain reusable voice identities.
+The production deployment also requires the complete 17-ID roster at startup;
+a missing or unexpected voice prevents the registry from becoming ready.
 
 ## Model artifacts
 
@@ -35,11 +37,45 @@ The original export is retained unchanged for inspection and rollback.
 - admitted concurrency: 8
 - GPU: device 0, Blackwell `sm_120`
 
+Registry routes:
+
+| Route | Use |
+| --- | --- |
+| `GET /healthz` | readiness, exact voice roster, dictionary count and hash |
+| `GET /voices` | reusable public voice IDs |
+| `POST /speak` | completed WAV using the native registry request shape |
+| `POST /speak/stream` | raw PCM streaming using the native registry request shape |
+| `POST /v1/audio/speech` | completed-WAV OpenAI-compatible alias |
+
+The OpenAI-compatible alias accepts the standard `input`, `voice`, `model`,
+`response_format`, and `speed` fields, but deliberately supports only WAV and
+speed `1.0`. Unsupported options fail with HTTP 400 instead of being silently
+ignored. Fleet `voice` and the Hermes command adapters use the native registry
+routes today; the alias exists for OpenAI-shaped consumers.
+
 The prompt registry is deployed at
 `/home/ericmey/voice/magpie-registry/registry.json`; prompt WAVs are under
 `/home/ericmey/voice/voice-prompts`. Registry startup validates that every
 prompt is mono signed-16-bit 22.05 kHz audio, peaks at -12 dBFS, and matches its
 declared SHA-256.
+
+The shared pronunciation dictionary is deployed from
+`deploy/magpie/pronunciations.production.json`. The registry sends it on every
+HTTP synthesis request, and Sumi's native gRPC worker loads the same file. Riva
+uses a grapheme-to-IPA mapping, so name changes are centralized rather than
+copied into each voice. Both services fail startup on a missing, empty, or
+malformed dictionary. Treat the dictionary hash in `/healthz` as the deployed
+identity and confirm phoneme changes with an auditory names test.
+
+## Zero Shot versus Flow
+
+Zero Shot is the production fleet engine: it streams, supports the qualified
+batch size of eight, and serves both phone and Discord paths. Magpie Flow can
+use a reference prompt plus its exact transcript for higher-fidelity offline
+cloning, but it is not a streaming replacement. Its memory requirement does not
+fit beside the current Zero Shot deployment on GPU 0, so evaluate Flow on a
+separate GPU or during a planned model swap rather than competing with live
+phone capacity.
 
 ## Start and verify
 

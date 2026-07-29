@@ -12,7 +12,9 @@ from __future__ import annotations
 import asyncio
 import queue
 import threading
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any, cast
 
 from livekit.agents import APIConnectOptions, tokenize, tts, utils
 from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
@@ -38,6 +40,7 @@ class MagpieZeroShotTTS(nvidia_plugin.TTS):
         language_code: str = "en-US",
         use_ssl: bool = False,
         api_key: str = "",
+        pronunciations: Mapping[str, str] | None = None,
     ) -> None:
         prompt = Path(prompt_path)
         if not prompt.is_file():
@@ -57,6 +60,7 @@ class MagpieZeroShotTTS(nvidia_plugin.TTS):
         )
         self._prompt_path = prompt
         self._quality = quality
+        self._pronunciations = dict(pronunciations or {})
 
         # LiveKit's plugin currently fixes TTS output at 16 kHz. Magpie's native
         # output is 22.05 kHz, and retaining it avoids an avoidable pre-phone
@@ -144,8 +148,12 @@ class _MagpieZeroShotStream(tts.SynthesizeStream):
                         voice_name=None,
                         language_code=self._tts._opts.language_code,
                         sample_rate_hz=_SAMPLE_RATE,
-                        zero_shot_audio_prompt_file=str(self._tts._prompt_path),
+                        # nvidia-riva-client 2.26 types this as str but calls
+                        # ``.open()`` at runtime. Preserve Path until upstream
+                        # makes its annotation and implementation agree.
+                        zero_shot_audio_prompt_file=cast(Any, self._tts._prompt_path),
                         zero_shot_quality=self._tts._quality,
+                        custom_dictionary=self._tts._pronunciations,
                     )
                     for response in responses:
                         event_loop.call_soon_threadsafe(output_emitter.push, response.audio)

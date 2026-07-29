@@ -46,9 +46,11 @@ services:
       SUMI_MAGPIE_SERVER: 10.0.20.25:51052
       SUMI_MAGPIE_PROMPT_PATH: /run/voice-prompts/sumi.wav
       SUMI_MAGPIE_QUALITY: "40"
+      SUMI_MAGPIE_PRONUNCIATIONS: /run/voice-config/pronunciations.json
     volumes:
       - ./logs/voice:/app/logs/voice
       - ./voice-prompts/sumi-roster-prompt-5s-peak-minus12.wav:/run/voice-prompts/sumi.wav:ro
+      - ./deploy/magpie/pronunciations.production.json:/run/voice-config/pronunciations.json:ro
 
   agent-aoi:
     <<: *agent-common

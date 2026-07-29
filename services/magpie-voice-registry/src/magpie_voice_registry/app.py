@@ -13,6 +13,7 @@ from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from .pronunciation import PronunciationDictionary, empty_pronunciations
 from .registry import UnknownVoice, VoiceRegistry, VoiceSpec
 
 LOG = logging.getLogger("magpie_voice_registry")
@@ -22,6 +23,14 @@ MAX_INPUT_CHARS = 2000
 class SpeakRequest(BaseModel):
     voice_id: str = Field(min_length=1)
     text: str = Field(min_length=1, max_length=MAX_INPUT_CHARS)
+
+
+class OpenAISpeechRequest(BaseModel):
+    model: str = "magpie-tts-zeroshot"
+    input: str = Field(min_length=1, max_length=MAX_INPUT_CHARS)
+    voice: str = Field(min_length=1)
+    response_format: str = "wav"
+    speed: float = 1.0
 
 
 def _wav(payload: bytes, sample_rate: int) -> bytes:
@@ -39,11 +48,13 @@ def create_app(
     nim_url: str,
     *,
     capacity: int = 8,
+    pronunciations: PronunciationDictionary | None = None,
     client_factory=httpx.AsyncClient,
 ) -> FastAPI:
     app = FastAPI(title="Magpie named voice registry", version="0.1.0")
     semaphore = asyncio.Semaphore(capacity)
     endpoint = f"{nim_url.rstrip('/')}/v1/audio/synthesize_online"
+    pronunciation_dictionary = pronunciations or empty_pronunciations()
 
     def resolve(voice_id: str) -> VoiceSpec:
         try:
@@ -85,6 +96,7 @@ def create_app(
                         "sample_rate_hz": str(spec.sample_rate),
                         "encoding": "LINEAR_PCM",
                         "prompt_quality": str(spec.quality),
+                        "custom_dictionary": pronunciation_dictionary.riva_value,
                     },
                     files={"audio_prompt": (spec.prompt_path.name, prompt, "audio/wav")},
                 )
@@ -179,6 +191,8 @@ def create_app(
             "sample_rate": 22050,
             "max_input_chars": MAX_INPUT_CHARS,
             "capacity": capacity,
+            "pronunciations": pronunciation_dictionary.count,
+            "pronunciation_sha256": pronunciation_dictionary.sha256,
         }
 
     @app.get("/voices")
@@ -225,6 +239,28 @@ def create_app(
             _wav(bytes(payload), spec.sample_rate),
             media_type="audio/wav",
             headers={"X-Request-ID": request_id},
+        )
+
+    @app.post("/v1/audio/speech")
+    async def openai_speech(
+        request: OpenAISpeechRequest, x_request_id: str | None = Header(default=None)
+    ) -> Response:
+        if request.response_format != "wav":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"response_format {request.response_format!r} is unsupported; "
+                    "Magpie returns 'wav' on the completed OpenAI-compatible route"
+                ),
+            )
+        if request.speed != 1.0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"speed {request.speed} is unsupported; only 1.0 is accepted",
+            )
+        return await speak(
+            SpeakRequest(voice_id=request.voice, text=request.input),
+            x_request_id=x_request_id,
         )
 
     return app

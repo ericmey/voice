@@ -70,6 +70,15 @@ class VoiceRegistry:
         except KeyError:
             raise UnknownVoice(voice_id) from None
 
+    def require_exactly(self, required_voice_ids: set[str]) -> None:
+        actual = set(self._entries)
+        missing = sorted(required_voice_ids - actual)
+        unexpected = sorted(actual - required_voice_ids)
+        if missing or unexpected:
+            raise RegistryError(
+                f"voice roster mismatch; missing={missing}, unexpected={unexpected}"
+            )
+
 
 def load_registry(path: str | Path) -> VoiceRegistry:
     registry_path = Path(path)

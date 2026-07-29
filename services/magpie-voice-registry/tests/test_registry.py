@@ -34,6 +34,17 @@ def test_loads_checked_prompt(tmp_path: Path) -> None:
     assert spec.prompt_path == prompt
 
 
+def test_required_roster_must_match_exactly(tmp_path: Path) -> None:
+    prompt = tmp_path / "sumi.wav"
+    digest = make_prompt(prompt)
+    registry_path = tmp_path / "registry.json"
+    write_registry(registry_path, prompt, digest)
+    registry = load_registry(registry_path)
+    registry.require_exactly({"sumi-v1"})
+    with pytest.raises(RegistryError, match="missing=\\['yua-v1'\\]"):
+        registry.require_exactly({"sumi-v1", "yua-v1"})
+
+
 def test_hash_mismatch_fails_loud(tmp_path: Path) -> None:
     prompt = tmp_path / "sumi.wav"
     make_prompt(prompt)
