@@ -13,6 +13,7 @@ from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from .aliases import SpeechAliases, empty_speech_aliases
 from .pronunciation import PronunciationDictionary, empty_pronunciations
 from .registry import UnknownVoice, VoiceRegistry, VoiceSpec
 
@@ -49,12 +50,14 @@ def create_app(
     *,
     capacity: int = 8,
     pronunciations: PronunciationDictionary | None = None,
+    speech_aliases: SpeechAliases | None = None,
     client_factory=httpx.AsyncClient,
 ) -> FastAPI:
     app = FastAPI(title="Magpie named voice registry", version="0.1.0")
     semaphore = asyncio.Semaphore(capacity)
     endpoint = f"{nim_url.rstrip('/')}/v1/audio/synthesize_online"
     pronunciation_dictionary = pronunciations or empty_pronunciations()
+    aliases = speech_aliases or empty_speech_aliases()
 
     def resolve(voice_id: str) -> VoiceSpec:
         try:
@@ -91,7 +94,7 @@ def create_app(
                     "POST",
                     endpoint,
                     data={
-                        "text": text,
+                        "text": aliases.apply(text),
                         "language": spec.language,
                         "sample_rate_hz": str(spec.sample_rate),
                         "encoding": "LINEAR_PCM",
@@ -193,6 +196,8 @@ def create_app(
             "capacity": capacity,
             "pronunciations": pronunciation_dictionary.count,
             "pronunciation_sha256": pronunciation_dictionary.sha256,
+            "speech_aliases": aliases.count,
+            "speech_aliases_sha256": aliases.sha256,
         }
 
     @app.get("/voices")

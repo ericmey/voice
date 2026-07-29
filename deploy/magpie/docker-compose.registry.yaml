@@ -10,11 +10,13 @@ services:
       MAGPIE_VOICE_REGISTRY: /config/registry.json
       MAGPIE_VOICE_CAPACITY: "8"
       MAGPIE_PRONUNCIATION_DICTIONARY: /config/pronunciations.json
+      MAGPIE_SPEECH_ALIASES: /config/speech-aliases.json
       MAGPIE_REQUIRED_VOICE_IDS: aoi-v1,hana-v1,katy-v1,mia-v1,mizuki-v1,momo-alt-v1,momo-v1,nana-v1,nyla-v1,nyla-v2,rika-v1,shiori-v1,sumi-v1,sumi-v2,tama-v1,vesper-v1,yua-v1
     volumes:
       - /home/ericmey/voice/voice-prompts:/prompts:ro
       - /home/ericmey/voice/magpie-registry/registry.json:/config/registry.json:ro
       - /home/ericmey/voice/deploy/magpie/pronunciations.production.json:/config/pronunciations.json:ro
+      - /home/ericmey/voice/deploy/magpie/speech-aliases.production.json:/config/speech-aliases.json:ro
     ports:
       - "10.0.20.25:5056:5056"
     healthcheck:

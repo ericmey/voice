@@ -74,12 +74,13 @@ def test_synthesis_passes_zero_shot_fields_and_maps_audio(tmp_path):
             prompt_path=_prompt(tmp_path),
             quality=27,
             pronunciations={"Aoi": "aʊi"},
+            speech_aliases={"Tsumugi": "the documentation standard"},
         )
         service = _FakeService()
         provider._tts_service = cast(Any, service)
         frames = []
         async for event in provider.synthesize(
-            "A sufficiently long sentence for the configured phrase tokenizer to emit cleanly."
+            "Tsumugi is a sufficiently long documentation topic for the phrase tokenizer."
         ):
             frames.append(event.frame)
         return provider, service, frames
@@ -89,7 +90,9 @@ def test_synthesis_passes_zero_shot_fields_and_maps_audio(tmp_path):
     assert frames
     assert all(frame.sample_rate == 22050 and frame.num_channels == 1 for frame in frames)
     assert service.calls
-    _, kwargs = service.calls[0]
+    spoken_text, kwargs = service.calls[0]
+    assert "the documentation standard" in spoken_text
+    assert "Tsumugi" not in spoken_text
     assert kwargs["voice_name"] is None
     assert kwargs["sample_rate_hz"] == 22050
     assert kwargs["zero_shot_audio_prompt_file"] == provider._prompt_path

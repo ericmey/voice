@@ -7,12 +7,14 @@ from pathlib import Path
 
 import httpx
 from fastapi.testclient import TestClient
+from magpie_voice_registry.aliases import SpeechAliases
 from magpie_voice_registry.app import create_app
 from magpie_voice_registry.pronunciation import PronunciationDictionary
 from magpie_voice_registry.registry import load_registry
 
 
 def app_for(tmp_path: Path, *, nim_status: int = 200):
+    nim_bodies: list[bytes] = []
     prompt = tmp_path / "sumi.wav"
     with wave.open(str(prompt), "wb") as wav:
         wav.setnchannels(1)
@@ -36,6 +38,7 @@ def app_for(tmp_path: Path, *, nim_status: int = 200):
         if request.url.path == "/v1/health/ready":
             return httpx.Response(200, json={"status": "ready"})
         body = request.read()
+        nim_bodies.append(body)
         assert b'name="prompt_quality"' in body
         assert b"40" in body
         assert b'name="audio_prompt"' in body
@@ -52,14 +55,19 @@ def app_for(tmp_path: Path, *, nim_status: int = 200):
         def __init__(self, **kwargs):
             super().__init__(transport=transport, **kwargs)
 
-    return create_app(
+    app = create_app(
         load_registry(registry_path),
         "http://nim",
         pronunciations=PronunciationDictionary(
             entries={"Aoi": "aʊi", "Nyla": "naɪlə"}, sha256="dictionary-sha"
         ),
+        speech_aliases=SpeechAliases(
+            entries={"Tsumugi": "the documentation standard"}, sha256="aliases-sha"
+        ),
         client_factory=MockClient,
     )
+    app.state.nim_bodies = nim_bodies
+    return app
 
 
 def test_health_and_roster(tmp_path: Path) -> None:
@@ -69,6 +77,8 @@ def test_health_and_roster(tmp_path: Path) -> None:
     assert health["voices"] == ["sumi-v1"]
     assert health["pronunciations"] == 2
     assert health["pronunciation_sha256"] == "dictionary-sha"
+    assert health["speech_aliases"] == 1
+    assert health["speech_aliases_sha256"] == "aliases-sha"
     assert client.get("/voices").json()["voices"][0]["quality"] == 40
 
 
@@ -85,6 +95,15 @@ def test_completed_route_wraps_wav(tmp_path: Path) -> None:
     response = client.post("/speak", json={"voice_id": "sumi-v1", "text": "hello"})
     assert response.status_code == 200
     assert response.content[:4] == b"RIFF"
+
+
+def test_speech_alias_is_applied_before_nim(tmp_path: Path) -> None:
+    client = TestClient(app_for(tmp_path))
+    response = client.post("/speak", json={"voice_id": "sumi-v1", "text": "Tsumugi is ready."})
+    assert response.status_code == 200
+    body = client.app.state.nim_bodies[-1]
+    assert b"the documentation standard is ready" in body
+    assert b"Tsumugi" not in body
 
 
 def test_openai_speech_translates_to_completed_route(tmp_path: Path) -> None:

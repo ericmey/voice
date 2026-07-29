@@ -76,6 +76,15 @@ hide a pronunciation that fails in ordinary production draws. ASR transcripts
 are useful failure detectors, but Eric's auditory review remains the acceptance
 test.
 
+Speech-only semantic rewrites are separate from phoneme overrides and live in
+`deploy/magpie/speech-aliases.production.json`. They preserve canonical written
+text while replacing terms that should be spoken differently. Both the registry
+and Sumi apply the same longest-match, case-insensitive alias set before sending
+text to Magpie. Production currently speaks `Tsumugi` as “the documentation
+standard” and `tsumugi-lint` as “the lint”; Tsumugi is therefore
+not present in the pronunciation dictionary. `/healthz` exposes the alias count
+and SHA-256 independently from the pronunciation dictionary.
+
 Text position is part of that fixed contract. Test each candidate both
 sentence-final (`The name is <candidate>.`) and mid-sentence with a trailing
 clause (`The name is <candidate>, and that is all.`). Report the frame with

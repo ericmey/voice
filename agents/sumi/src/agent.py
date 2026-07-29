@@ -52,6 +52,7 @@ from livekit.plugins import nvidia as nvidia_plugin
 from livekit.plugins import openai as openai_plugin
 from livekit.plugins import silero as silero_plugin
 from magpie_tts import MagpieZeroShotTTS
+from magpie_voice_registry.aliases import load_speech_aliases
 from magpie_voice_registry.pronunciation import load_pronunciations
 from pedalboard import Gain, HighpassFilter, PeakFilter
 from pedalboard._pedalboard import Pedalboard
@@ -97,6 +98,9 @@ _MAGPIE_PROMPT_PATH = os.environ.get("SUMI_MAGPIE_PROMPT_PATH", "/run/voice-prom
 _MAGPIE_QUALITY = int(os.environ.get("SUMI_MAGPIE_QUALITY", "40"))
 _MAGPIE_PRONUNCIATIONS = os.environ.get(
     "SUMI_MAGPIE_PRONUNCIATIONS", "/run/voice-config/pronunciations.json"
+)
+_MAGPIE_SPEECH_ALIASES = os.environ.get(
+    "SUMI_MAGPIE_SPEECH_ALIASES", "/run/voice-config/speech-aliases.json"
 )
 _ELEVENLABS_VOICE_ID = os.environ.get("SUMI_ELEVENLABS_VOICE_ID", "AEW6JTgnyoPaoB9zlK3S")
 _ELEVENLABS_MODEL = os.environ.get("SUMI_ELEVENLABS_MODEL", "eleven_flash_v2_5")
@@ -245,6 +249,7 @@ def build_tts(audio_recording: CallAudioRecording | None = None):
         )
     if _TTS_PROVIDER == "magpie":
         pronunciations = load_pronunciations(_MAGPIE_PRONUNCIATIONS)
+        speech_aliases = load_speech_aliases(_MAGPIE_SPEECH_ALIASES)
         return MagpieZeroShotTTS(
             server=_MAGPIE_SERVER,
             prompt_path=_MAGPIE_PROMPT_PATH,
@@ -252,6 +257,7 @@ def build_tts(audio_recording: CallAudioRecording | None = None):
             use_ssl=False,
             api_key="",
             pronunciations=pronunciations.entries,
+            speech_aliases=speech_aliases.entries,
         )
     if _TTS_PROVIDER == "elevenlabs":
         if not _ELEVENLABS_VOICE_ID:

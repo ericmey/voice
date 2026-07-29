@@ -19,6 +19,7 @@ from typing import Any, cast
 from livekit.agents import APIConnectOptions, tokenize, tts, utils
 from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
 from livekit.plugins import nvidia as nvidia_plugin
+from magpie_voice_registry.aliases import apply_speech_aliases
 
 _SAMPLE_RATE = 22050
 _NUM_CHANNELS = 1
@@ -41,6 +42,7 @@ class MagpieZeroShotTTS(nvidia_plugin.TTS):
         use_ssl: bool = False,
         api_key: str = "",
         pronunciations: Mapping[str, str] | None = None,
+        speech_aliases: Mapping[str, str] | None = None,
     ) -> None:
         prompt = Path(prompt_path)
         if not prompt.is_file():
@@ -61,6 +63,7 @@ class MagpieZeroShotTTS(nvidia_plugin.TTS):
         self._prompt_path = prompt
         self._quality = quality
         self._pronunciations = dict(pronunciations or {})
+        self._speech_aliases = dict(speech_aliases or {})
 
         # LiveKit's plugin currently fixes TTS output at 16 kHz. Magpie's native
         # output is 22.05 kHz, and retaining it avoids an avoidable pre-phone
@@ -144,7 +147,7 @@ class _MagpieZeroShotStream(tts.SynthesizeStream):
                     if token is None:
                         break
                     responses = service.synthesize_online(
-                        token.token,
+                        apply_speech_aliases(token.token, self._tts._speech_aliases),
                         voice_name=None,
                         language_code=self._tts._opts.language_code,
                         sample_rate_hz=_SAMPLE_RATE,

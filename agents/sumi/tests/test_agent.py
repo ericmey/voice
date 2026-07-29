@@ -289,6 +289,8 @@ class TestTTSProviderSelection:
         sentinel = object()
         pronunciations = tmp_path / "pronunciations.json"
         pronunciations.write_text('{"Aoi": "aʊi"}')
+        aliases = tmp_path / "aliases.json"
+        aliases.write_text('{"Tsumugi": "the documentation standard"}')
 
         def fake_magpie(**kwargs):
             recorded.update(kwargs)
@@ -296,6 +298,7 @@ class TestTTSProviderSelection:
 
         monkeypatch.setattr(agent_module, "_TTS_PROVIDER", "magpie")
         monkeypatch.setattr(agent_module, "_MAGPIE_PRONUNCIATIONS", str(pronunciations))
+        monkeypatch.setattr(agent_module, "_MAGPIE_SPEECH_ALIASES", str(aliases))
         monkeypatch.setattr(agent_module, "MagpieZeroShotTTS", fake_magpie)
 
         assert agent_module.build_tts() is sentinel
@@ -306,6 +309,7 @@ class TestTTSProviderSelection:
             "use_ssl": False,
             "api_key": "",
             "pronunciations": {"Aoi": "aʊi"},
+            "speech_aliases": {"Tsumugi": "the documentation standard"},
         }
 
     def test_elevenlabs_control_is_native_streaming(self, agent_module, monkeypatch):

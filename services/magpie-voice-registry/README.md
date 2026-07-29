@@ -42,6 +42,13 @@ startup and sends the resulting Riva `custom_dictionary` on every synthesis
 request. `/healthz` exposes its entry count and SHA-256 so operators can prove
 which dictionary is live without exposing prompt paths.
 
+Set `MAGPIE_SPEECH_ALIASES` to a JSON object mapping canonical written terms to
+plain-language spoken replacements. Aliases are case-insensitive, use whole
+terms only, and apply longest keys first before synthesis. Keep semantic aliases
+separate from the IPA dictionary: they intentionally change what is spoken,
+while pronunciation entries change how the same word is pronounced. Health
+reports alias count and SHA-256 separately.
+
 ## Runtime
 
 ```bash
@@ -50,8 +57,10 @@ docker run --rm -p 5056:5056 \
   -e MAGPIE_NIM_URL=http://10.0.20.25:9101 \
   -e MAGPIE_VOICE_REGISTRY=/config/registry.json \
   -e MAGPIE_PRONUNCIATION_DICTIONARY=/config/pronunciations.json \
+  -e MAGPIE_SPEECH_ALIASES=/config/speech-aliases.json \
   -v /home/ericmey/voice/voice-prompts:/prompts:ro \
   -v /home/ericmey/voice/magpie-registry/registry.json:/config/registry.json:ro \
   -v /home/ericmey/voice/deploy/magpie/pronunciations.production.json:/config/pronunciations.json:ro \
+  -v /home/ericmey/voice/deploy/magpie/speech-aliases.production.json:/config/speech-aliases.json:ro \
   magpie-voice-registry:0.1.0
 ```
