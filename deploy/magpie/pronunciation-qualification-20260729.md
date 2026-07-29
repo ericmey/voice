@@ -48,16 +48,23 @@ Five-draw candidate results:
 | B: spaced phones, medial stress | Smug/SmugMug 5/5 | reject |
 | C: spaced phones, initial stress | Tui x4; Tumi x1 | reject |
 | D: text alias `soo moo ghee` | exact once; degraded/partial four times | reject for production reliability |
-| E: punctuated text alias `soo, moo, ghee` | conflicting replications | hold; reconcile experimental contract |
+| E: punctuated text alias `soo, moo, ghee` | position-dependent; sentence-final fails | reject for production reliability |
 
 Candidate E initially appeared to preserve three units in 5/5 renders, with
-the final unit transcribed as the letter name `G`. Two subsequent five-draw
-replications through the production registry did not reproduce that result:
-the standard `The name is ...` frame recovered no final `G` in 0/5, and the
+the final unit transcribed as the letter name `G`. The apparent contradiction
+was an uncontrolled text-position variable: those draws used a trailing clause,
+while the first reproduction ended immediately after the candidate. Controlled
+reruns converged: sentence-final recovered the final `G` in 1/5 draws in one
+set and 0/5 in another; mid-sentence recovered it in 2/3 follow-up draws. The
 bare candidate also recovered no final `G` in 0/5. Both complete, unselected
-five-draw montages were delivered for auditory comparison. Do not combine these
-sets into one rate until voice ID, request path, full text frame, and dictionary
-state are proven identical.
+five-draw montages were delivered for auditory comparison. Candidate E fails
+the sentence-final production gate even though a trailing clause can preserve
+its terminal syllable.
+
+This establishes text position as a required qualification variable. Keep the
+full frame identical within a sample set, test both terminal and mid-sentence
+conditions, label every reported rate with its frame, and accept on the weaker
+sentence-final distribution rather than pooling positions.
 
 Controls established that native `Tsumugi` is spelled letter by letter, native
 `Sumugi` collapses toward `SmugMug`, and native `tsunami` is consistently

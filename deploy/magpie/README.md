@@ -76,6 +76,14 @@ hide a pronunciation that fails in ordinary production draws. ASR transcripts
 are useful failure detectors, but Eric's auditory review remains the acceptance
 test.
 
+Text position is part of that fixed contract. Test each candidate both
+sentence-final (`The name is <candidate>.`) and mid-sentence with a trailing
+clause (`The name is <candidate>, and that is all.`). Report the frame with
+every result; do not pool draws from different positions. A candidate must pass
+on its sentence-final distribution because names routinely end production
+sentences and Magpie can preserve a name's final syllable better when later
+speech follows it.
+
 ## Zero Shot versus Flow
 
 Zero Shot is the production fleet engine: it streams, supports the qualified
