@@ -67,6 +67,15 @@ copied into each voice. Both services fail startup on a missing, empty, or
 malformed dictionary. Treat the dictionary hash in `/healthz` as the deployed
 identity and confirm phoneme changes with an auditory names test.
 
+Magpie generation is stochastic. Pronunciation qualification therefore uses at
+least five independent renders per candidate with identical text, voice, and
+quality settings. Judge the distribution and its failure rate, not the best
+sample: one correct render proves only that an outcome is possible. Do not
+promote an entry from a single render, and do not use best-of-N selection to
+hide a pronunciation that fails in ordinary production draws. ASR transcripts
+are useful failure detectors, but Eric's auditory review remains the acceptance
+test.
+
 ## Zero Shot versus Flow
 
 Zero Shot is the production fleet engine: it streams, supports the qualified
