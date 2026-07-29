@@ -71,3 +71,24 @@ Controls established that native `Tsumugi` is spelled letter by letter, native
 pronounced as the known word. The constraint is lexical rather than a general
 inability to synthesize the `/ts/` onset. No experimental candidate was promoted
 to production; the committed dictionary baseline remains live.
+
+## Musubi follow-up
+
+Musubi was evaluated separately because its baseline failure was stable rather
+than stochastic. Every candidate used five sentence-final and five mid-sentence
+draws unless noted.
+
+| Condition | ASR distribution | Result |
+| --- | --- | --- |
+| Production dictionary baseline | Musi x9; Mizi x1 | fails both positions |
+| Native G2P, Musubi override absent | Musi x10 | override is not the cause |
+| Spaced IPA `m u s u b i` | Musi x8; Muzo x1; Mizi x1 | no improvement |
+| Final-unit stress `m u s u ˈ b i` | Musi x10 | reject phoneme lane |
+| Text alias `moo soo bee` | sentence-final preserves all three ASR units 1/5 | auditory review only |
+| Punctuated text alias `moo, soo, bee` | sentence-final loses final unit 5/5 | reject |
+
+The phoneme layer cannot reliably preserve Musubi's final `bi` unit. Five
+unselected sentence-final draws of the plain text alias were delivered as one
+auditory montage. No Musubi experiment was promoted. If the montage is not
+consistently acceptable to Eric, use the semantic speech alias “the memory
+system” rather than continuing phoneme tuning.
