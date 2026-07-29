@@ -133,6 +133,19 @@ decoded as `Hannah`. Parakeet therefore cannot discriminate the target HAH-nah
 from the near-miss HAN-uh under this test, and the earlier claim that Magpie was
 rendering Hana as Hannah is withdrawn. Hana remains auditorily unresolved.
 
+An independent-generator calibration attempt used ElevenLabs with the same
+voice and model for an ordered A/B: written `Hana` first, written `Hannah`
+second. Parakeet decoded both as `Hannah`, and Eric's auditory readback was that
+both were pronounced like Hannah. ElevenLabs therefore did not produce the
+required HAH-nah/HAN-uh contrast and cannot calibrate Parakeet for this pair.
+This closes the reference attempt without establishing how Magpie renders
+`Hana`; the Magpie finding remains unresolved.
+
+A whole-spectrum similarity experiment was also rejected before use: its
+same-text and different-text score ranges overlapped, so stochastic render
+variation swamped the signal at that granularity. Those scores are not evidence
+about pronunciation.
+
 Before trusting ASR to separate any two pronunciation candidates, first test
 whether it can distinguish human-verified reference audio for them. Identical
 decodes invalidate the discriminator. Different decodes are necessary but not
