@@ -53,4 +53,6 @@ export LIVEKIT_VOICE_LOGS="${LIVEKIT_VOICE_LOGS:-/app/logs/voice}"
 # per-agent dashboard panel and alert selector (`voice-.*`) matches nothing.
 export VOICE_AGENT_NAME="$AGENT"
 
-exec uv run python "agents/${AGENT}/src/agent.py" start
+# The image is built from the frozen lockfile. Never let container startup
+# mutate that environment or pull developer-only packages from the network.
+exec uv run --no-sync python "agents/${AGENT}/src/agent.py" start

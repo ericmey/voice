@@ -138,7 +138,12 @@ services:
 # secrets/livekit-agents.env. Logs ship through the same OTLP endpoint
 # via OTLPLogExporter when VOICE_OTEL_LOGS_ENABLED=true.
 
-# Named volume for persistent Redis state. Survives container recreation
-# and Docker Desktop updates. Wiped only by `docker compose down -v`.
+# The production Redis volume predates this Compose project and carries live SIP
+# routing state. Declare that ownership honestly: this removes Compose's
+# unmanaged-volume warning and prevents `docker compose down -v` from deleting
+# the phone routing database. Bootstrap a new host with
+# `docker volume create voice_redis_data` before first start.
 volumes:
   redis_data:
+    name: voice_redis_data
+    external: true

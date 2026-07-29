@@ -1,0 +1,121 @@
+{
+  "aoi-v1": {
+    "prompt_path": "/prompts/aoi-roster-prompt-5s-peak-minus12.wav",
+    "sha256": "de47b6f3bec6a1b7199fd48be022874bf7b0df3f71fb4588b38d0744a0e74b70",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  },
+  "hana-v1": {
+    "prompt_path": "/prompts/hana-roster-prompt-5s-peak-minus12.wav",
+    "sha256": "d3f074dbabd7de354be87a15bdcaf6e54e24d5d29e821baa161756520bb24ee9",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  },
+  "katy-v1": {
+    "prompt_path": "/prompts/katy-roster-prompt-5s-peak-minus12.wav",
+    "sha256": "a11b04fc775470ec577f1ace9c2eb89f4e18aa0ee86f909d5a18271ca60ad9a7",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  },
+  "mia-v1": {
+    "prompt_path": "/prompts/mia-roster-prompt-5s-peak-minus12.wav",
+    "sha256": "c4df4bb11395be84ce92869d121000f5697dab0681b711baeab4e26d3cd96e75",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  },
+  "mizuki-v1": {
+    "prompt_path": "/prompts/mizuki-roster-prompt-5s-peak-minus12.wav",
+    "sha256": "5260ba1ade97e7c17c43466218ecba411ff670e2d55804e1c32788d1455a5ebc",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  },
+  "momo-alt-v1": {
+    "prompt_path": "/prompts/momo-alt-v1-prompt-5s-peak-minus12.wav",
+    "sha256": "871609052390188a4e6d9c4976fc0336596b4e008898fb4fb64040fbf3269c20",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  },
+  "momo-v1": {
+    "prompt_path": "/prompts/momo-v1-prompt-5s-peak-minus12.wav",
+    "sha256": "dc0102d3f264f0fc59e74e21c1570fad7ed0111705bf754f43b97eb372aa7bdb",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  },
+  "nana-v1": {
+    "prompt_path": "/prompts/nana-roster-prompt-5s-peak-minus12.wav",
+    "sha256": "d9bb5c6757f2d0ca2541d3a5409a10a75f313c533744735b518dea277f914e6f",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  },
+  "nyla-v1": {
+    "prompt_path": "/prompts/nyla-voicebook-prompt-5s-peak-minus12.wav",
+    "sha256": "8e7836a9b0f0753ac03323e44df1ef6dd1469b0e61561a328bd8caea84550e1a",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  },
+  "nyla-v2": {
+    "prompt_path": "/prompts/nyla-v2-prompt-5s-peak-minus12.wav",
+    "sha256": "c9a58162237309bf15a42c10fbed7fdd94e917fb1ad9407306b42dcdc2b9ce97",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  },
+  "rika-v1": {
+    "prompt_path": "/prompts/rika-roster-prompt-5s-peak-minus12.wav",
+    "sha256": "913074177248fab0f2b2cf142df121b0bc19e417abdcb047e782dc1087a472af",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  },
+  "shiori-v1": {
+    "prompt_path": "/prompts/shiori-roster-prompt-5s-peak-minus12.wav",
+    "sha256": "de68398b12b8298eea2ab7843547dfccd3ce5dd16a01bf683bb30830ed12f2d7",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  },
+  "sumi-v1": {
+    "prompt_path": "/prompts/sumi-roster-prompt-5s-peak-minus12.wav",
+    "sha256": "2eed56d23f4978260c1ab8afef39460298d48b7ea2bd47d01091923dea42c0b8",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  },
+  "sumi-v2": {
+    "prompt_path": "/prompts/sumi-roster-prompt-5s-peak-minus12.wav",
+    "sha256": "2eed56d23f4978260c1ab8afef39460298d48b7ea2bd47d01091923dea42c0b8",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  },
+  "tama-v1": {
+    "prompt_path": "/prompts/tama-roster-prompt-5s-peak-minus12.wav",
+    "sha256": "daa8b9eae25d0ff569e4f5e3d4fd1cda61bef5624a80a1675a46c26147ec1a2a",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  },
+  "vesper-v1": {
+    "prompt_path": "/prompts/vesper-roster-prompt-5s-peak-minus12.wav",
+    "sha256": "8a76530e34c1ecd5a4c9aab23e0f1d0a0c59bdcfc0c4693ae3be119d2ee36ae2",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  },
+  "yua-v1": {
+    "prompt_path": "/prompts/yua-roster-prompt-5s-peak-minus12.wav",
+    "sha256": "134ad58e75f97afcef551d1b22f04c41348f8b7cb4641b66f5ece1d8cda1106c",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  }
+}

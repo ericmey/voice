@@ -284,6 +284,26 @@ class TestTTSProviderSelection:
 
         assert recorded["text_mode"] == "whole_reply"
 
+    def test_magpie_uses_zero_shot_riva_extension(self, agent_module, monkeypatch):
+        recorded = {}
+        sentinel = object()
+
+        def fake_magpie(**kwargs):
+            recorded.update(kwargs)
+            return sentinel
+
+        monkeypatch.setattr(agent_module, "_TTS_PROVIDER", "magpie")
+        monkeypatch.setattr(agent_module, "MagpieZeroShotTTS", fake_magpie)
+
+        assert agent_module.build_tts() is sentinel
+        assert recorded == {
+            "server": agent_module._MAGPIE_SERVER,
+            "prompt_path": agent_module._MAGPIE_PROMPT_PATH,
+            "quality": agent_module._MAGPIE_QUALITY,
+            "use_ssl": False,
+            "api_key": "",
+        }
+
     def test_elevenlabs_control_is_native_streaming(self, agent_module, monkeypatch):
         monkeypatch.setenv("ELEVEN_API_KEY", "fake-test-key")
         monkeypatch.setattr(agent_module, "_TTS_PROVIDER", "elevenlabs")

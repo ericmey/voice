@@ -1,0 +1,9 @@
+{
+  "sumi-v1": {
+    "prompt_path": "/prompts/sumi-magpie-prompt-5s-peak-minus12.wav",
+    "sha256": "2eed56d23f4978260c1ab8afef39460298d48b7ea2bd47d01091923dea42c0b8",
+    "quality": 40,
+    "language": "en-US",
+    "sample_rate": 22050
+  }
+}

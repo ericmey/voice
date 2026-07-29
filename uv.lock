@@ -13,6 +13,7 @@ members = [
     "agent-party",
     "agent-sumi",
     "agent-yua",
+    "magpie-voice-registry",
     "parakeet-openai",
     "sdk",
     "tools",
@@ -1096,6 +1097,33 @@ sdist = { url = "https://files.pythonhosted.org/packages/7f/ae/9d60fe37d85623e68
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2e/d2/ec10b1cdf912235c2b07898be6ba2535e50f23e8980bb719f29decbd8034/livekit_protocol-1.1.21-py3-none-any.whl", hash = "sha256:ce0bb763327c91349ee8831843c4f8bd72132c4d06ac572171f2ae5c0217211d", size = 149245, upload-time = "2026-07-21T18:28:24.985Z" },
 ]
+
+[[package]]
+name = "magpie-voice-registry"
+version = "0.1.0"
+source = { editable = "services/magpie-voice-registry" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "uvicorn" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2" },
+    { name = "uvicorn", specifier = ">=0.34" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "markdown-it-py"

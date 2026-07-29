@@ -52,8 +52,9 @@ register-sip: ## Register/refresh SIP trunk + dispatch rules from ./config/ (or 
 
 # ---- agents (docker compose) ---------------------------------------
 #
-# The four agents run as containers (voice-agent-<name>) from the shared
-# voice-agent:latest image. docker-compose.agents.yaml has no build
+# The agents run as containers (voice-agent-<name>). Sumi's production Magpie
+# image is explicitly pinned in docker-compose.agents.yaml; planned seats use
+# the shared voice-agent:latest image. The compose file has no build
 # stanza, so build the image first, then bring the full stack up with
 # both compose files. Run these on the agent host (mizuki).
 

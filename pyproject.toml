@@ -111,6 +111,13 @@ root = "services/voicebook-stream/tests"
 extraPaths = ["services/voicebook-stream/src"]
 
 [[tool.pyright.executionEnvironments]]
+root = "services/magpie-voice-registry/src"
+
+[[tool.pyright.executionEnvironments]]
+root = "services/magpie-voice-registry/tests"
+extraPaths = ["services/magpie-voice-registry/src"]
+
+[[tool.pyright.executionEnvironments]]
 root = "services/parakeet-openai/src"
 
 [[tool.pyright.executionEnvironments]]

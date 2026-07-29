@@ -520,3 +520,18 @@ and request paths to fail closed.
 **Why:** Object construction proves local configuration and imports, not remote
 service availability. Treating it as readiness recreates the exact silent
 proxy failure that a backend-aware health endpoint is meant to prevent.
+
+## 2026-07-29 — Mizuki voice operations require host ffmpeg
+
+**Trigger:** Audio qualification repeatedly stalled because Mizuki lacked
+`ffmpeg`; agents kept preparing fixtures elsewhere instead of fixing the host
+dependency.
+
+**Lesson:** Install the Ubuntu `ffmpeg` package on Mizuki as part of fresh-host
+voice setup, and verify `/usr/bin/ffmpeg` from a fresh shell before qualification.
+Do not keep treating a recurring host prerequisite as an ad hoc workstation
+conversion step.
+
+**Why:** Voice work routinely needs deterministic resampling, bounded fixtures,
+format inspection, and artifact checks. Missing the shared host tool adds manual
+transfers and makes the same avoidable failure recur across evaluations.

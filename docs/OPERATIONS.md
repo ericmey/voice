@@ -34,6 +34,8 @@ Do this on the agent host (`mizuki.mey.house`):
 ```bash
 git clone <repo-url> voice
 cd voice
+sudo apt-get update
+sudo apt-get install -y ffmpeg     # host-side audio inspection and fixture preparation
 make bootstrap                  # installs deps, drops config templates
 
 # Edit the files bootstrap drops in ./config/ and

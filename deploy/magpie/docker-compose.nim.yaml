@@ -1,0 +1,39 @@
+services:
+  magpie-tts-zeroshot:
+    image: nvcr.io/nim/nvidia/magpie-tts-zeroshot@sha256:3e96aa19549d0a9ba7dc500f7aeb5eb22586df6640615ba65eaa2c24a14d341c
+    container_name: magpie-tts-zeroshot
+    restart: unless-stopped
+    environment:
+      NIM_TAGS_SELECTOR: name=magpie-tts-zeroshot
+      NIM_TELEMETRY_MODE: "0"
+      NIM_DISABLE_MODEL_DOWNLOAD: "true"
+      NIM_EXPORT_PATH: /opt/nim/export
+      TORCH_CUDA_ARCH_LIST: "12.0"
+    shm_size: 8gb
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+    volumes:
+      - /home/ericmey/voice/magpie-export-clean:/opt/nim/export:ro
+      - magpie-tts-zeroshot-cache:/opt/nim/.cache
+    ports:
+      - "10.0.20.25:9101:9000"
+      - "10.0.20.25:51052:50051"
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - http://127.0.0.1:9000/v1/health/ready
+      interval: 15s
+      timeout: 7s
+      retries: 20
+      start_period: 10m
+
+volumes:
+  magpie-tts-zeroshot-cache:
+    external: true

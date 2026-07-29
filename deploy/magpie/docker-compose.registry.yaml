@@ -1,0 +1,26 @@
+services:
+  magpie-voice-registry:
+    build:
+      context: ../../services/magpie-voice-registry
+    image: magpie-voice-registry:0.1.0
+    container_name: magpie-voice-registry
+    restart: unless-stopped
+    environment:
+      MAGPIE_NIM_URL: http://10.0.20.25:9101
+      MAGPIE_VOICE_REGISTRY: /config/registry.json
+      MAGPIE_VOICE_CAPACITY: "8"
+    volumes:
+      - /home/ericmey/voice/voice-prompts:/prompts:ro
+      - /home/ericmey/voice/magpie-registry:/config:ro
+    ports:
+      - "10.0.20.25:5056:5056"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:5056/healthz', timeout=5)); raise SystemExit(0 if d.get('ready') else 1)"
+      interval: 15s
+      timeout: 7s
+      retries: 5
+      start_period: 10s

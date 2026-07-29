@@ -51,6 +51,7 @@ from livekit.plugins import elevenlabs as elevenlabs_plugin
 from livekit.plugins import nvidia as nvidia_plugin
 from livekit.plugins import openai as openai_plugin
 from livekit.plugins import silero as silero_plugin
+from magpie_tts import MagpieZeroShotTTS
 from pedalboard import Gain, HighpassFilter, PeakFilter
 from pedalboard._pedalboard import Pedalboard
 from sdk.audio_recording import (
@@ -90,6 +91,9 @@ _TTS_BASE_URL = os.environ.get("SUMI_TTS_BASE_URL", "http://voicebook-stream:506
 _TTS_WIRE_FORMAT = os.environ.get("SUMI_TTS_WIRE_FORMAT", "pcm").strip().lower()
 _TTS_TEXT_MODE = os.environ.get("SUMI_TTS_TEXT_MODE", "coalesced").strip().lower()
 _TTS_PROVIDER = os.environ.get("SUMI_TTS_PROVIDER", "voicebook").strip().lower()
+_MAGPIE_SERVER = os.environ.get("SUMI_MAGPIE_SERVER", "10.0.20.25:51052")
+_MAGPIE_PROMPT_PATH = os.environ.get("SUMI_MAGPIE_PROMPT_PATH", "/run/voice-prompts/sumi.wav")
+_MAGPIE_QUALITY = int(os.environ.get("SUMI_MAGPIE_QUALITY", "40"))
 _ELEVENLABS_VOICE_ID = os.environ.get("SUMI_ELEVENLABS_VOICE_ID", "AEW6JTgnyoPaoB9zlK3S")
 _ELEVENLABS_MODEL = os.environ.get("SUMI_ELEVENLABS_MODEL", "eleven_flash_v2_5")
 _KOKORO_BASE_URL = os.environ.get("SUMI_KOKORO_BASE_URL", "http://kokoro-fastapi:8880/v1")
@@ -235,6 +239,14 @@ def build_tts(audio_recording: CallAudioRecording | None = None):
             capture_dir=audio_recording.host_path.parent if audio_recording else None,
             capture_call_sid=audio_recording.call_sid if audio_recording else None,
         )
+    if _TTS_PROVIDER == "magpie":
+        return MagpieZeroShotTTS(
+            server=_MAGPIE_SERVER,
+            prompt_path=_MAGPIE_PROMPT_PATH,
+            quality=_MAGPIE_QUALITY,
+            use_ssl=False,
+            api_key="",
+        )
     if _TTS_PROVIDER == "elevenlabs":
         if not _ELEVENLABS_VOICE_ID:
             raise ValueError("SUMI_ELEVENLABS_VOICE_ID is required for ElevenLabs TTS")
@@ -373,9 +385,7 @@ _LLM_MAX_TOKENS_CEILING = 256
 # already have been spoken. We cannot retract a truncated tail in a streaming
 # pipeline, but we can make the cutoff audible and keep conversation history
 # from representing the turn as a completed answer.
-_LLM_CAP_NOTICE = (
-    "\n\nI reached my reply limit before I could finish that. Ask me to continue."
-)
+_LLM_CAP_NOTICE = "\n\nI reached my reply limit before I could finish that. Ask me to continue."
 
 
 def _resolve_max_tokens() -> int:

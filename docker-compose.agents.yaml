@@ -35,6 +35,21 @@ x-agent-env: &agent-env
   VOICE_RECORD_AUDIO: "true"
 
 services:
+  agent-sumi:
+    <<: *agent-common
+    image: voice-agent:sumi-magpie-production-20260729
+    container_name: voice-agent-sumi
+    environment:
+      <<: *agent-env
+      AGENT: sumi
+      SUMI_TTS_PROVIDER: magpie
+      SUMI_MAGPIE_SERVER: 10.0.20.25:51052
+      SUMI_MAGPIE_PROMPT_PATH: /run/voice-prompts/sumi.wav
+      SUMI_MAGPIE_QUALITY: "40"
+    volumes:
+      - ./logs/voice:/app/logs/voice
+      - ./voice-prompts/sumi-roster-prompt-5s-peak-minus12.wav:/run/voice-prompts/sumi.wav:ro
+
   agent-aoi:
     <<: *agent-common
     container_name: voice-agent-aoi

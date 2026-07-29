@@ -19,13 +19,13 @@
 #                       and a "registered worker" line in its logs. Agents that
 #                       are planned but not deployed report "skip", never fail —
 #                       and get the full check automatically once they exist.
-#   7. voicebook      — TTS /healthz ready on loopback :5056
+#   7. magpie         — named registry + NIM backend ready on LAN :5056
 #   8. local-llm      — llama.cpp /health on loopback :8088
-#   9. parakeet       — Riva ready+live on loopback :9000
+#   9. parakeet       — Riva ready+live on LAN :9000
 #  10. SIP routing    — sip_inbound_trunk + sip_dispatch_rule present in Redis
 #
 # 2026-07-27: the original AGENTS list required nyla/aoi/yua/party — seats that
-# were never deployed — and did not check agent-sumi, voicebook, the LLM, or
+# were never deployed — and did not check agent-sumi, TTS, the LLM, or
 # Parakeet at all. Result: guaranteed-red every cron run for weeks, and blind to
 # the actual production path. A check that is always red is worse than no check;
 # a real failure cannot be seen inside it.
@@ -68,6 +68,7 @@ fi
 # Bounded: a wedged agent that restarted a handful of times across a long
 # uptime is fine; a crash-loop is not. Flag above this.
 MAX_RESTARTS="${VOICE_HEALTH_MAX_RESTARTS:-5}"
+LAN_HOST="${VOICE_HEALTH_LAN_HOST:-10.0.20.25}"
 
 failed=0
 declare -a RESULTS
@@ -161,22 +162,24 @@ _check_agent() {  # $1=name  $2=required|optional
 for a in "${AGENTS[@]}";          do _check_agent "$a" required; done
 for a in "${OPTIONAL_AGENTS[@]}"; do _check_agent "$a" optional; done
 
-# ---- voicebook / local-llm / parakeet (loopback HTTP contracts) ----
-if curl -fsS --max-time 4 http://127.0.0.1:5056/healthz 2>/dev/null | grep -q '"ready":true'; then
-  record "voicebook" ok "healthz ready on :5056"
+# ---- Magpie / local-llm / Parakeet (actual deployed HTTP contracts) -
+# GPU services bind to Mizuki's LAN address, not loopback. Probe the same
+# route clients use; a loopback probe stays red while a healthy service is up.
+if curl -fsS --max-time 4 "http://${LAN_HOST}:5056/healthz" 2>/dev/null | grep -Eq '"ready"[[:space:]]*:[[:space:]]*true'; then
+  record "magpie" ok "registry + NIM backend ready on ${LAN_HOST}:5056"
 else
-  record "voicebook" fail "no ready healthz on :5056"
+  record "magpie" fail "registry or NIM backend not ready on ${LAN_HOST}:5056"
 fi
 if curl -fsS --max-time 4 http://127.0.0.1:8088/health >/dev/null 2>&1; then
   record "local-llm" ok "llama.cpp /health on :8088"
 else
   record "local-llm" fail "no /health on :8088"
 fi
-if curl -fsS --max-time 4 http://127.0.0.1:9000/v1/health/ready >/dev/null 2>&1 \
-   && curl -fsS --max-time 4 http://127.0.0.1:9000/v1/health/live >/dev/null 2>&1; then
-  record "parakeet" ok "ready+live on :9000"
+if curl -fsS --max-time 4 "http://${LAN_HOST}:9000/v1/health/ready" >/dev/null 2>&1 \
+   && curl -fsS --max-time 4 "http://${LAN_HOST}:9000/v1/health/live" >/dev/null 2>&1; then
+  record "parakeet" ok "ready+live on ${LAN_HOST}:9000"
 else
-  record "parakeet" fail "ready/live not both 200 on :9000"
+  record "parakeet" fail "ready/live not both 200 on ${LAN_HOST}:9000"
 fi
 
 # ---- SIP routing (persisted in Redis) ------------------------------
